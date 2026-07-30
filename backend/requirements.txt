@@ -1,0 +1,11 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pandas==2.2.3
+numpy==1.26.4
+scipy==1.13.1
+pyproj==3.7.2
+ppigrf==2.1.0
+verde==1.9.0
+matplotlib==3.9.4
+pydantic==2.10.4
