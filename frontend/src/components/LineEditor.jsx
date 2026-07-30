@@ -39,9 +39,27 @@ export default function LineEditor({ lines, onToggleLines, drawMode, onToggleDra
               checked={!uncheckedLines.has(l.line_id)}
               onChange={(e) => handleToggle(l.line_id, e.target.checked)}
             />
-            <span style={{ flex: 1 }}>측선 #{l.line_id}</span>
+            <span style={{ flex: 1 }}>
+              측선 #{l.line_id}
+              {l.heading_group && (
+                <span
+                  title={l.heading_group === "A" ? "순방향" : "역방향"}
+                  style={{
+                    marginLeft: 6,
+                    padding: "0 5px",
+                    borderRadius: 4,
+                    fontSize: 10,
+                    background: l.heading_group === "A" ? "#dbeafe" : "#fde68a",
+                    color: l.heading_group === "A" ? "#1e40af" : "#92400e",
+                  }}
+                >
+                  {l.heading_group}
+                </span>
+              )}
+            </span>
             <span style={{ color: "#6b7280" }}>
               {l.n_points}pt / {l.length_m.toFixed(0)}m
+              {l.heading_shift_nt != null && ` / ${l.heading_shift_nt >= 0 ? "+" : ""}${l.heading_shift_nt.toFixed(1)}nT`}
             </span>
           </label>
         ))}

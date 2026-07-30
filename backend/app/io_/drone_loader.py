@@ -101,3 +101,20 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
         }
     )
     return out
+
+
+def load_drone_csvs(buffers: list) -> pd.DataFrame:
+    """Load and concatenate multiple drone CSVs (e.g. several flights).
+
+    Each file is parsed (and its sparse GGA-only fields interpolated)
+    independently before concatenation, since interpolating across a time
+    gap between two separate flights would be meaningless. The combined
+    result is re-sorted by timestamp and point_id is reassigned 0..N-1.
+    """
+    if not buffers:
+        raise DroneLoadError("드론 파일이 없습니다.")
+    parts = [load_drone_csv(buf) for buf in buffers]
+    combined = pd.concat(parts, ignore_index=True)
+    combined = combined.sort_values("timestamp").reset_index(drop=True)
+    combined["point_id"] = np.arange(len(combined), dtype=np.int64)
+    return combined

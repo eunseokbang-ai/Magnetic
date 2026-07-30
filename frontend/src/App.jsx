@@ -19,6 +19,11 @@ const DEFAULT_PARAMS = {
     time_offset_seconds: 0.0,
     reference: "mean",
   },
+  heading_correction: {
+    enabled: true,
+    quiet_percentile: 40.0,
+    max_match_distance_m: null,
+  },
 };
 
 export default function App() {
@@ -33,6 +38,8 @@ export default function App() {
   const [hoverPoint, setHoverPoint] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
   const [gridCellSize, setGridCellSize] = useState(10.0);
+  const [gridMethod, setGridMethod] = useState("spline");
+  const [gridMaxDistance, setGridMaxDistance] = useState(null);
   const [gridding, setGridding] = useState(false);
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
@@ -48,22 +55,22 @@ export default function App() {
 
   const handleError = (e) => setError(e.message || String(e));
 
-  const handleUploadDrone = async (file) => {
+  const handleUploadDrone = async (files) => {
     try {
       setError(null);
       const id = await ensureProject();
-      const summary = await api.uploadDrone(id, file);
+      const summary = await api.uploadDrone(id, files);
       setDroneSummary(summary);
     } catch (e) {
       handleError(e);
     }
   };
 
-  const handleUploadBase = async (file) => {
+  const handleUploadBase = async (files) => {
     try {
       setError(null);
       const id = await ensureProject();
-      const summary = await api.uploadBase(id, file);
+      const summary = await api.uploadBase(id, files);
       setBaseSummary(summary);
     } catch (e) {
       handleError(e);
@@ -144,7 +151,12 @@ export default function App() {
     try {
       setError(null);
       setGridding(true);
-      const resp = await api.getGrid(projectId, { value: valueField, cell_size_m: gridCellSize });
+      const resp = await api.getGrid(projectId, {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+      });
       setOverlay(resp);
       setActiveTransform("none");
     } catch (e) {
@@ -163,7 +175,13 @@ export default function App() {
         return;
       }
       setTransformLoading(true);
-      const resp = await api.getTransform(projectId, { transform: name, value: valueField, cell_size_m: gridCellSize });
+      const resp = await api.getTransform(projectId, {
+        transform: name,
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+      });
       setOverlay(resp);
       setActiveTransform(name);
     } catch (e) {
@@ -204,6 +222,10 @@ export default function App() {
           processing={processing}
           gridCellSize={gridCellSize}
           setGridCellSize={setGridCellSize}
+          gridMethod={gridMethod}
+          setGridMethod={setGridMethod}
+          gridMaxDistance={gridMaxDistance}
+          setGridMaxDistance={setGridMaxDistance}
           onGrid={handleGrid}
           gridding={gridding}
           activeTransform={activeTransform}

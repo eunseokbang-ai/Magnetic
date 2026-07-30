@@ -66,3 +66,13 @@ def load_base_csv(path_or_buffer) -> pd.DataFrame:
 
     df = df.sort_values("timestamp").reset_index(drop=True)
     return df[["timestamp", "mag"]]
+
+
+def load_base_csvs(buffers: list) -> pd.DataFrame:
+    """Load and concatenate multiple base station CSVs (e.g. logs split
+    across days, or several deployments), re-sorted by timestamp."""
+    if not buffers:
+        raise BaseLoadError("베이스 파일이 없습니다.")
+    parts = [load_base_csv(buf) for buf in buffers]
+    combined = pd.concat(parts, ignore_index=True)
+    return combined.sort_values("timestamp").reset_index(drop=True)

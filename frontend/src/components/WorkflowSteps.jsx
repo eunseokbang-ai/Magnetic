@@ -36,6 +36,10 @@ export default function WorkflowSteps({
   processing,
   gridCellSize,
   setGridCellSize,
+  gridMethod,
+  setGridMethod,
+  gridMaxDistance,
+  setGridMaxDistance,
   onGrid,
   gridding,
   activeTransform,
@@ -45,14 +49,16 @@ export default function WorkflowSteps({
   setValueField,
   error,
 }) {
-  const [droneFileName, setDroneFileName] = useState("");
-  const [baseFileName, setBaseFileName] = useState("");
+  const [droneFileNames, setDroneFileNames] = useState([]);
+  const [baseFileNames, setBaseFileNames] = useState([]);
 
   const lp = processParams.line_params;
   const dp = processParams.diurnal_params;
+  const hc = processParams.heading_correction;
 
   const updateLine = (key, val) => setProcessParams((p) => ({ ...p, line_params: { ...p.line_params, [key]: val } }));
   const updateDiurnal = (key, val) => setProcessParams((p) => ({ ...p, diurnal_params: { ...p.diurnal_params, [key]: val } }));
+  const updateHeading = (key, val) => setProcessParams((p) => ({ ...p, heading_correction: { ...p.heading_correction, [key]: val } }));
 
   return (
     <div>
@@ -66,16 +72,18 @@ export default function WorkflowSteps({
           <input
             type="file"
             accept=".csv"
+            multiple
             style={inputStyle}
             onChange={(e) => {
-              const f = e.target.files[0];
-              if (f) {
-                setDroneFileName(f.name);
-                onUploadDrone(f);
+              const files = Array.from(e.target.files);
+              if (files.length > 0) {
+                setDroneFileNames(files.map((f) => f.name));
+                onUploadDrone(files);
               }
             }}
           />
-          {droneFileName && <div style={{ color: "#6b7280" }}>{droneFileName}</div>}
+          <div style={{ color: "#6b7280" }}>여러 비행 파일을 함께 선택하면 하나로 합쳐 처리합니다.</div>
+          {droneFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{droneFileNames.join(", ")}</div>}
           {droneSummary && (
             <div style={{ color: "#374151" }}>
               포인트 수: {droneSummary.n_points}
@@ -94,16 +102,18 @@ export default function WorkflowSteps({
           <input
             type="file"
             accept=".csv"
+            multiple
             style={inputStyle}
             onChange={(e) => {
-              const f = e.target.files[0];
-              if (f) {
-                setBaseFileName(f.name);
-                onUploadBase(f);
+              const files = Array.from(e.target.files);
+              if (files.length > 0) {
+                setBaseFileNames(files.map((f) => f.name));
+                onUploadBase(files);
               }
             }}
           />
-          {baseFileName && <div style={{ color: "#6b7280" }}>{baseFileName}</div>}
+          <div style={{ color: "#6b7280" }}>여러 베이스 로그 파일을 함께 선택하면 하나로 합쳐 처리합니다.</div>
+          {baseFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{baseFileNames.join(", ")}</div>}
           {baseSummary && (
             <div style={{ color: "#374151" }}>
               포인트 수: {baseSummary.n_points}
@@ -152,6 +162,21 @@ export default function WorkflowSteps({
             </select>
           </Field>
 
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={hc.enabled} onChange={(e) => updateHeading("enabled", e.target.checked)} />
+            <span>헤딩(비행방향) 보정 사용 — 캘리브레이션 비행 없이 인접 반대방향 측선의 조용한 구간으로 추정</span>
+          </label>
+          {hc.enabled && (
+            <Field label="조용한 구간 기준 백분위 (%) — 낮을수록 더 엄격하게 조용한 지점만 사용">
+              <input
+                type="number"
+                style={inputStyle}
+                value={hc.quiet_percentile}
+                onChange={(e) => updateHeading("quiet_percentile", parseFloat(e.target.value))}
+              />
+            </Field>
+          )}
+
           <button style={buttonStyle} disabled={processing || !droneSummary || !baseSummary} onClick={onProcess}>
             {processing ? "처리 중..." : "자료 처리 실행 (필터+측선판별+보정+IGRF)"}
           </button>
@@ -161,6 +186,15 @@ export default function WorkflowSteps({
               측선 {processSummary.n_lines}개 검출 / 유효 {processSummary.n_kept} / 자동제외 {processSummary.n_excluded_auto}
               <br />
               복각(Inclination): {processSummary.inclination_deg?.toFixed(2)}°, 편각(Declination): {processSummary.declination_deg?.toFixed(2)}°
+              <br />
+              {processSummary.heading_correction?.applied ? (
+                <span>
+                  헤딩 보정 오프셋: {processSummary.heading_correction.offset_nt?.toFixed(2)} nT (매칭 {processSummary.heading_correction.n_matched_pairs}쌍 중 조용한{" "}
+                  {processSummary.heading_correction.n_quiet_pairs}쌍 사용)
+                </span>
+              ) : (
+                processSummary.heading_correction?.reason && <span style={{ color: "#b45309" }}>헤딩 보정: {processSummary.heading_correction.reason}</span>
+              )}
               <br />
               {processSummary.diurnal && !processSummary.diurnal.has_overlap && (
                 <div style={{ color: "#dc2626", marginTop: 4 }}>
@@ -191,6 +225,25 @@ export default function WorkflowSteps({
           <Field label="셀 크기 (m)">
             <input type="number" style={inputStyle} value={gridCellSize} onChange={(e) => setGridCellSize(parseFloat(e.target.value))} />
           </Field>
+          <Field label="보간 방법">
+            <select style={inputStyle} value={gridMethod} onChange={(e) => setGridMethod(e.target.value)}>
+              <option value="spline">스플라인 (가장 부드러움, 기본값)</option>
+              <option value="linear">선형(Linear)</option>
+              <option value="cubic">큐빅(Cubic)</option>
+            </select>
+          </Field>
+          <Field label="보간 반경 (m) — 비워두면 측선 간격 기반 자동 계산">
+            <input
+              type="number"
+              style={inputStyle}
+              placeholder={processSummary?.line_spacing_m ? `자동: ${Math.round(Math.max(2 * gridCellSize, 0.6 * processSummary.line_spacing_m))}` : "자동"}
+              value={gridMaxDistance ?? ""}
+              onChange={(e) => setGridMaxDistance(e.target.value === "" ? null : parseFloat(e.target.value))}
+            />
+          </Field>
+          {processSummary?.line_spacing_m && (
+            <div style={{ color: "#6b7280" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
+          )}
           <button style={buttonStyle} disabled={gridding || !processSummary} onClick={() => onGrid()}>
             {gridding ? "그리딩 중..." : "그리드 생성"}
           </button>

@@ -131,3 +131,37 @@ def detect_lines(
     out.attrs["utm_epsg"] = epsg
     out.attrs["dominant_azimuth_deg"] = dominant_azimuth
     return out
+
+
+def _perp_vector(dominant_azimuth_deg: float) -> np.ndarray:
+    """Unit vector perpendicular to the line azimuth (the cross-line axis),
+    given azimuth is the atan2(dy, dx) convention used throughout this
+    module (0 = along +x/easting, 90 = along +y/northing)."""
+    az = np.radians(dominant_azimuth_deg)
+    return np.array([-np.sin(az), np.cos(az)])
+
+
+def cross_track_coordinate(x: np.ndarray, y: np.ndarray, dominant_azimuth_deg: float) -> np.ndarray:
+    """Scalar coordinate of (x, y) points projected onto the cross-line
+    axis - i.e. how far "sideways" a point is from other lines, used to
+    order lines by adjacency."""
+    perp = _perp_vector(dominant_azimuth_deg)
+    return np.asarray(x) * perp[0] + np.asarray(y) * perp[1]
+
+
+def estimate_line_spacing_m(df: pd.DataFrame, dominant_azimuth_deg: float) -> float | None:
+    """Median perpendicular distance between adjacent accepted lines, used
+    to size the grid interpolation search radius and line-matching distance
+    for heading leveling. Returns None with fewer than 2 lines."""
+    kept = df[df["line_id"] >= 0]
+    if kept["line_id"].nunique() < 2:
+        return None
+
+    centroids = kept.groupby("line_id")[["x", "y"]].mean()
+    cross_track = cross_track_coordinate(centroids["x"].to_numpy(), centroids["y"].to_numpy(), dominant_azimuth_deg)
+    cross_track.sort()
+    spacings = np.diff(cross_track)
+    spacings = spacings[spacings > 0]
+    if spacings.size == 0:
+        return None
+    return float(np.median(spacings))

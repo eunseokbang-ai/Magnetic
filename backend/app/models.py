@@ -19,19 +19,29 @@ class DiurnalParams(BaseModel):
     reference: str = "mean"  # "mean" | "first" | numeric string
 
 
+class HeadingCorrectionParams(BaseModel):
+    enabled: bool = True
+    quiet_percentile: float = Field(40.0, ge=1, le=100)
+    max_match_distance_m: Optional[float] = None
+
+
 class ProcessParams(BaseModel):
     filter_cutoff_hz: float = Field(1.0, gt=0)
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
+    heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
 
 
 ValueField = Literal["tmi", "anomaly"]
 TransformName = Literal["rtp", "rte", "1vd", "as"]
+GridMethod = Literal["spline", "linear", "cubic"]
 
 
 class GridRequest(BaseModel):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "spline"
+    max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
 
 
@@ -39,6 +49,8 @@ class TransformRequest(BaseModel):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "spline"
+    max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
 
 

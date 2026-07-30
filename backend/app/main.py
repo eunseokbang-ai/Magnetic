@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from .io_.base_loader import BaseLoadError
@@ -48,18 +48,18 @@ def create_project():
 
 
 @app.post("/api/projects/{project_id}/upload/drone")
-async def upload_drone(project_id: str, file: UploadFile):
+async def upload_drone(project_id: str, files: list[UploadFile] = File(...)):
     project = store.get(project_id)
-    content = await file.read()
-    summary = project.load_drone(io.BytesIO(content))
+    buffers = [io.BytesIO(await f.read()) for f in files]
+    summary = project.load_drone(buffers)
     return summary
 
 
 @app.post("/api/projects/{project_id}/upload/base")
-async def upload_base(project_id: str, file: UploadFile):
+async def upload_base(project_id: str, files: list[UploadFile] = File(...)):
     project = store.get(project_id)
-    content = await file.read()
-    summary = project.load_base(io.BytesIO(content))
+    buffers = [io.BytesIO(await f.read()) for f in files]
+    summary = project.load_base(buffers)
     return summary
 
 

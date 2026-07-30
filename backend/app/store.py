@@ -9,14 +9,15 @@ import numpy as np
 import pandas as pd
 from matplotlib.path import Path as MplPath
 
-from .io_.base_loader import load_base_csv
-from .io_.drone_loader import load_drone_csv
+from .io_.base_loader import load_base_csvs
+from .io_.drone_loader import load_drone_csvs
 from .models import GridRequest, ManualExcludeRequest, ProcessParams, TransformRequest
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter
 from .processing.gridding import GridResult, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_inclination_declination
-from .processing.lines import LineDetectionParams, detect_lines
+from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
+from .processing.lines import LineDetectionParams, detect_lines, estimate_line_spacing_m
 from .processing.render import grid_to_png_overlay
 from .processing.transforms import analytic_signal, reduction_to_equator, reduction_to_pole, vertical_derivative
 
@@ -41,18 +42,20 @@ class Project:
     manual_excluded_ids: set = field(default_factory=set)
     utm_epsg: int | None = None
     dominant_azimuth_deg: float | None = None
+    line_spacing_m: float | None = None
+    heading_leveling: HeadingLevelingResult | None = None
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
 
-    def load_drone(self, path_or_buffer) -> dict:
-        self.drone_raw = load_drone_csv(path_or_buffer)
+    def load_drone(self, buffers: list) -> dict:
+        self.drone_raw = load_drone_csvs(buffers)
         return self.drone_summary()
 
-    def load_base(self, path_or_buffer) -> dict:
-        self.base_raw = load_base_csv(path_or_buffer)
+    def load_base(self, buffers: list) -> dict:
+        self.base_raw = load_base_csvs(buffers)
         return self.base_summary()
 
     def drone_summary(self) -> dict:
@@ -92,6 +95,7 @@ class Project:
         df = detect_lines(df, line_params)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
+        self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
         diurnal_result = apply_diurnal_correction(
             df["timestamp"],
@@ -120,6 +124,21 @@ class Project:
             df["lat"].to_numpy(), df["lon"].to_numpy(), df["altitude_ellipsoidal_m"].to_numpy(), df["timestamp"]
         )
 
+        hp = params.heading_correction
+        if hp.enabled:
+            self.heading_leveling = compute_heading_correction(
+                df,
+                "anomaly",
+                self.dominant_azimuth_deg,
+                self.line_spacing_m,
+                quiet_percentile=hp.quiet_percentile,
+                max_match_distance_m=hp.max_match_distance_m,
+            )
+            df["anomaly"] = apply_heading_correction(df, "anomaly", self.heading_leveling)
+            df["tmi"] = apply_heading_correction(df, "tmi", self.heading_leveling)
+        else:
+            self.heading_leveling = HeadingLevelingResult(False, "사용자가 헤딩 보정을 비활성화했습니다.", None, 0, 0)
+
         self.processed = df
         self.manual_excluded_ids = set()
         self.grid_cache = {}
@@ -137,12 +156,14 @@ class Project:
             "n_excluded_auto": int((df["line_id"] < 0).sum()),
             "n_excluded_manual": len(self.manual_excluded_ids),
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
+            "line_spacing_m": self.line_spacing_m,
             "inclination_deg": self.inclination_deg,
             "declination_deg": self.declination_deg,
             "diurnal": self.diurnal_info,
+            "heading_correction": _heading_correction_summary(self.heading_leveling),
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
-            "lines": _line_summaries(df),
+            "lines": _line_summaries(df, self.heading_leveling),
         }
 
     def _active_mask(self) -> pd.Series:
@@ -193,8 +214,16 @@ class Project:
         self.grid_cache = {}
         return self.process_summary()
 
-    def _grid_for(self, value: str, cell_size_m: float) -> GridResult:
-        key = (value, cell_size_m)
+    def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
+        if max_distance_m is not None:
+            return max_distance_m
+        if self.line_spacing_m:
+            return max(2.0 * cell_size_m, 0.6 * self.line_spacing_m)
+        return 2.0 * cell_size_m
+
+    def _grid_for(self, value: str, cell_size_m: float, method: str = "spline", max_distance_m: float | None = None) -> GridResult:
+        resolved_max_distance = self._resolve_max_distance(cell_size_m, max_distance_m)
+        key = (value, cell_size_m, method, resolved_max_distance)
         if key in self.grid_cache:
             return self.grid_cache[key]
         if self.processed is None:
@@ -202,12 +231,19 @@ class Project:
         df = self.processed
         active = self._active_mask()
         col = "anomaly" if value == "anomaly" else "tmi"
-        result = grid_points(df.loc[active, "x"].to_numpy(), df.loc[active, "y"].to_numpy(), df.loc[active, col].to_numpy(), cell_size_m)
+        result = grid_points(
+            df.loc[active, "x"].to_numpy(),
+            df.loc[active, "y"].to_numpy(),
+            df.loc[active, col].to_numpy(),
+            cell_size_m,
+            method=method,
+            max_distance_m=resolved_max_distance,
+        )
         self.grid_cache[key] = result
         return result
 
     def get_grid_overlay(self, req: GridRequest) -> dict:
-        grid = self._grid_for(req.value, req.cell_size_m)
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
         overlay = grid_to_png_overlay(
             grid.values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=(req.value == "anomaly")
@@ -217,7 +253,7 @@ class Project:
         return overlay
 
     def get_transform_overlay(self, req: TransformRequest) -> dict:
-        grid = self._grid_for(req.value, req.cell_size_m)
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
 
@@ -256,7 +292,9 @@ def _stats(series: pd.Series) -> dict:
     }
 
 
-def _line_summaries(df: pd.DataFrame) -> list[dict]:
+def _line_summaries(df: pd.DataFrame, heading_leveling: "HeadingLevelingResult | None" = None) -> list[dict]:
+    groups = heading_leveling.line_groups if heading_leveling else {}
+    shifts = heading_leveling.line_shifts if heading_leveling else {}
     lines = []
     for line_id, g in df[df["line_id"] >= 0].groupby("line_id"):
         lines.append(
@@ -266,9 +304,23 @@ def _line_summaries(df: pd.DataFrame) -> list[dict]:
                 "start_time": g["timestamp"].min().isoformat(),
                 "end_time": g["timestamp"].max().isoformat(),
                 "length_m": float(np.hypot(np.diff(g["x"]), np.diff(g["y"])).sum()),
+                "heading_group": groups.get(line_id),
+                "heading_shift_nt": shifts.get(line_id),
             }
         )
     return lines
+
+
+def _heading_correction_summary(result: "HeadingLevelingResult | None") -> dict:
+    if result is None:
+        return {"applied": False, "reason": None}
+    return {
+        "applied": result.applied,
+        "reason": result.reason,
+        "offset_nt": result.offset_nt,
+        "n_matched_pairs": result.n_matched_pairs,
+        "n_quiet_pairs": result.n_quiet_pairs,
+    }
 
 
 class ProjectStore:

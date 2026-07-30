@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import verde as vd
+from scipy.interpolate import griddata
 
 
 @dataclass
@@ -21,12 +22,22 @@ def grid_points(
     y: np.ndarray,
     values: np.ndarray,
     cell_size_m: float,
+    method: str = "spline",
     max_distance_m: float | None = None,
 ) -> GridResult:
-    """Block-mean reduce then bi-harmonic spline-interpolate scattered
-    (x, y, values) onto a regular grid at cell_size_m spacing. Cells farther
-    than max_distance_m from any input point are masked to NaN so the grid
-    doesn't extrapolate far beyond the flown lines (defaults to 2 cells)."""
+    """Block-mean reduce then interpolate scattered (x, y, values) onto a
+    regular grid at cell_size_m spacing.
+
+    method: "spline" (verde bi-harmonic spline, smoothest - default),
+    "linear" or "cubic" (scipy.interpolate.griddata).
+
+    Cells farther than max_distance_m from any input point are masked to
+    NaN so the grid doesn't extrapolate far beyond the flown lines. The
+    caller should pass a value based on the actual line spacing (see
+    processing.lines.estimate_line_spacing_m) - a plain multiple of
+    cell_size_m is usually far smaller than the gap between adjacent lines
+    and leaves most of the survey block masked out. Defaults to 2 cells
+    when not provided, which only fills a narrow band along each line."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     values = np.asarray(values, dtype=float)
@@ -39,12 +50,23 @@ def grid_points(
     reducer = vd.BlockReduce(reduction="mean", spacing=cell_size_m)
     (x_r, y_r), values_r = reducer.filter((x, y), values)
 
-    spline = vd.Spline()
-    spline.fit((x_r, y_r), values_r)
-
     shape_coords = vd.grid_coordinates(region, spacing=cell_size_m)
     easting_2d, northing_2d = shape_coords
-    grid_values = spline.predict((easting_2d, northing_2d))
+
+    if method == "spline":
+        spline = vd.Spline()
+        spline.fit((x_r, y_r), values_r)
+        grid_values = spline.predict((easting_2d, northing_2d))
+    elif method in ("linear", "cubic"):
+        grid_values = griddata((x_r, y_r), values_r, (easting_2d, northing_2d), method=method)
+        # griddata leaves NaN outside the convex hull; fall back to nearest
+        # so the max_distance_m mask below is the only thing trimming edges.
+        nan_mask = np.isnan(grid_values)
+        if nan_mask.any():
+            nearest = griddata((x_r, y_r), values_r, (easting_2d, northing_2d), method="nearest")
+            grid_values = np.where(nan_mask, nearest, grid_values)
+    else:
+        raise ValueError(f"알 수 없는 보간 방법입니다: {method}")
 
     if max_distance_m is None:
         max_distance_m = 2.0 * cell_size_m

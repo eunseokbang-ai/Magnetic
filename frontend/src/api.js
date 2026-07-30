@@ -22,15 +22,15 @@ export function createProject() {
   return request("/projects", { method: "POST" });
 }
 
-export function uploadDrone(projectId, file) {
+export function uploadDrone(projectId, files) {
   const form = new FormData();
-  form.append("file", file);
+  for (const f of files) form.append("files", f);
   return request(`/projects/${projectId}/upload/drone`, { method: "POST", body: form });
 }
 
-export function uploadBase(projectId, file) {
+export function uploadBase(projectId, files) {
   const form = new FormData();
-  form.append("file", file);
+  for (const f of files) form.append("files", f);
   return request(`/projects/${projectId}/upload/base`, { method: "POST", body: form });
 }
 
