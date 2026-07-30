@@ -5,6 +5,7 @@ import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
 import "leaflet-draw";
 import { makeColorScale } from "../colormap";
+import { minMax } from "../arrayUtils";
 
 function PointLayer({ points, valueField, vmin, vmax, cmapKind, onHover }) {
   const map = useMap();
@@ -54,9 +55,11 @@ function FitBounds({ points }) {
     if (fitted.current || !points || points.length === 0) return;
     const lats = points.map((p) => p.lat);
     const lons = points.map((p) => p.lon);
+    const [latMin, latMax] = minMax(lats);
+    const [lonMin, lonMax] = minMax(lons);
     const bounds = [
-      [Math.min(...lats), Math.min(...lons)],
-      [Math.max(...lats), Math.max(...lons)],
+      [latMin, lonMin],
+      [latMax, lonMax],
     ];
     map.fitBounds(bounds, { padding: [20, 20] });
     fitted.current = true;

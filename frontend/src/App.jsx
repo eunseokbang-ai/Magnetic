@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import * as api from "./api";
+import { minMax } from "./arrayUtils";
 import MapView from "./components/MapView";
 import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
@@ -205,7 +206,8 @@ export default function App() {
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
     if (points.length > 0) {
       const values = points.map((p) => p.value);
-      return { vmin: Math.min(...values), vmax: Math.max(...values) };
+      const [vmin, vmax] = minMax(values);
+      return { vmin, vmax };
     }
     return { vmin: 0, vmax: 1 };
   }, [processSummary, valueField, points]);
