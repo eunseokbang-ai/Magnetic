@@ -326,6 +326,8 @@ def _line_summaries(df: pd.DataFrame, heading_leveling: "HeadingLevelingResult |
                 "start_time": g["timestamp"].min().isoformat(),
                 "end_time": g["timestamp"].max().isoformat(),
                 "length_m": float(np.hypot(np.diff(g["x"]), np.diff(g["y"])).sum()),
+                "centroid_lat": float(g["lat"].mean()),
+                "centroid_lon": float(g["lon"].mean()),
                 "heading_group": groups.get(line_id),
                 "heading_shift_nt": shifts.get(line_id),
             }

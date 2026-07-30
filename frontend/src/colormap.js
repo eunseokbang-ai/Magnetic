@@ -43,6 +43,46 @@ const GRAY_STOPS = [
   [20, 20, 20], [255, 255, 255],
 ];
 
+// Approximates the classic Geosoft Oasis Montaj default grid color table
+// (dark blue -> blue -> cyan -> green -> yellow -> orange -> red -> magenta
+// -> pink). Control points are unevenly spaced, unlike the other palettes
+// above, so they're resampled into an evenly-spaced array once at load time
+// (matches backend/app/processing/colormaps.py's control points).
+const GEOSOFT_RAINBOW_CONTROL_POINTS = [
+  [0.0, [10, 10, 120]],
+  [0.1, [20, 60, 200]],
+  [0.2, [0, 160, 220]],
+  [0.3, [0, 210, 190]],
+  [0.4, [0, 200, 90]],
+  [0.5, [140, 220, 40]],
+  [0.58, [255, 255, 0]],
+  [0.66, [255, 180, 0]],
+  [0.74, [255, 90, 0]],
+  [0.82, [230, 20, 20]],
+  [0.9, [200, 20, 160]],
+  [1.0, [255, 200, 235]],
+];
+
+function resampleControlPoints(controlPoints, n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    let j = 0;
+    while (j < controlPoints.length - 2 && controlPoints[j + 1][0] < t) j++;
+    const [t0, c0] = controlPoints[j];
+    const [t1, c1] = controlPoints[j + 1];
+    const frac = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+    out.push([
+      Math.round(c0[0] + (c1[0] - c0[0]) * frac),
+      Math.round(c0[1] + (c1[1] - c0[1]) * frac),
+      Math.round(c0[2] + (c1[2] - c0[2]) * frac),
+    ]);
+  }
+  return out;
+}
+
+const GEOSOFT_RAINBOW_STOPS = resampleControlPoints(GEOSOFT_RAINBOW_CONTROL_POINTS, 64);
+
 const COLORMAPS = {
   viridis: VIRIDIS_STOPS,
   plasma: PLASMA_STOPS,
@@ -51,6 +91,7 @@ const COLORMAPS = {
   RdBu_r: RDBU_R_STOPS,
   Spectral_r: SPECTRAL_R_STOPS,
   gray: GRAY_STOPS,
+  geosoft_rainbow: GEOSOFT_RAINBOW_STOPS,
 };
 
 export const COLORMAP_OPTIONS = [
@@ -61,6 +102,7 @@ export const COLORMAP_OPTIONS = [
   { value: "RdBu_r", label: "Red-Blue (발산)" },
   { value: "Spectral_r", label: "Spectral (발산)" },
   { value: "gray", label: "Grayscale" },
+  { value: "geosoft_rainbow", label: "Geosoft Rainbow (물리탐사 표준)" },
 ];
 
 function interpolateStops(stops, t) {

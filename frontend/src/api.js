@@ -66,3 +66,9 @@ export function getGrid(projectId, req) {
 export function getTransform(projectId, req) {
   return request(`/projects/${projectId}/transform`, { method: "POST", body: JSON.stringify(req) });
 }
+
+export function uploadOverlayImage(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/overlay-images`, { method: "POST", body: form });
+}

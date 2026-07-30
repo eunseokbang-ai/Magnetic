@@ -57,6 +57,38 @@ function FitBounds({ points }) {
   return null;
 }
 
+// Line count is normally a few dozen at most, so plain Leaflet markers (with
+// no per-point performance concerns) are fine here - unlike PointLayer this
+// doesn't need the canvas approach.
+function LineLabels({ lines, visible }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    if (!visible || !lines) return;
+    for (const l of lines) {
+      if (l.centroid_lat == null || l.centroid_lon == null) continue;
+      const icon = L.divIcon({
+        className: "line-number-label",
+        html: `<div style="background:rgba(37,99,235,0.9);color:white;font-size:11px;font-weight:600;padding:1px 5px;border-radius:4px;white-space:nowrap;transform:translate(-50%,-50%);">#${l.line_id}</div>`,
+        iconSize: [0, 0],
+      });
+      L.marker([l.centroid_lat, l.centroid_lon], { icon, interactive: false }).addTo(group);
+    }
+  }, [lines, visible]);
+
+  return null;
+}
+
 function DrawControl({ enabled, onShapeDrawn }) {
   const map = useMap();
   const controlRef = useRef(null);
@@ -115,11 +147,17 @@ export default function MapView({
   colorRange,
   cmapName,
   overlay,
+  gridOpacity,
+  showPointsOverGrid,
+  overlayLayers,
+  lines,
+  showLineLabels,
   onHoverPoint,
   drawMode,
   onShapeDrawn,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
+  const pointsVisible = !overlay || showPointsOverGrid;
 
   return (
     <MapContainer center={center} zoom={13} style={{ height: "100%", width: "100%" }} preferCanvas>
@@ -142,17 +180,26 @@ export default function MapView({
       </LayersControl>
 
       <FitBounds points={points} />
-      {overlay ? (
-        <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={0.85} />
-      ) : (
-        <PointLayer
-          points={points}
-          vmin={colorRange.vmin}
-          vmax={colorRange.vmax}
-          cmapName={cmapName}
-          onHover={onHoverPoint}
-        />
-      )}
+
+      {/* user-uploaded reference layers (e.g. GeoTIFF geology maps), bottom to top */}
+      {(overlayLayers || [])
+        .filter((l) => l.visible)
+        .map((l) => (
+          <ImageOverlay key={l.id} url={l.image_data_url} bounds={l.bounds} opacity={l.opacity} />
+        ))}
+
+      {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
+
+      <PointLayer
+        points={pointsVisible ? points : []}
+        vmin={colorRange.vmin}
+        vmax={colorRange.vmax}
+        cmapName={cmapName}
+        onHover={onHoverPoint}
+      />
+
+      <LineLabels lines={lines} visible={showLineLabels} />
+
       <DrawControl enabled={drawMode} onShapeDrawn={onShapeDrawn} />
     </MapContainer>
   );

@@ -5,6 +5,7 @@ import MapView from "./components/MapView";
 import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import LineEditor from "./components/LineEditor";
+import LayerManager from "./components/LayerManager";
 
 const DEFAULT_PARAMS = {
   filter_cutoff_hz: 1.0,
@@ -49,6 +50,12 @@ export default function App() {
   const [error, setError] = useState(null);
   const [cmapName, setCmapName] = useState("RdYlBu_r");
   const [manualRange, setManualRange] = useState({ enabled: false, vmin: null, vmax: null });
+  const [gridOpacity, setGridOpacity] = useState(0.85);
+  const [showPointsOverGrid, setShowPointsOverGrid] = useState(true);
+  const [showLineLabels, setShowLineLabels] = useState(false);
+  const [overlayLayers, setOverlayLayers] = useState([]);
+  const [overlayUploading, setOverlayUploading] = useState(false);
+  const [overlayError, setOverlayError] = useState(null);
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -209,6 +216,42 @@ export default function App() {
     }
   };
 
+  const handleUploadOverlayImage = async (file) => {
+    try {
+      setOverlayError(null);
+      setOverlayUploading(true);
+      const resp = await api.uploadOverlayImage(file);
+      setOverlayLayers((prev) => [
+        ...prev,
+        { id: `${Date.now()}-${Math.random()}`, name: resp.name, image_data_url: resp.image_data_url, bounds: resp.bounds, opacity: 0.8, visible: true },
+      ]);
+    } catch (e) {
+      setOverlayError(e.message || String(e));
+    } finally {
+      setOverlayUploading(false);
+    }
+  };
+
+  const handleToggleOverlayVisible = (id, visible) =>
+    setOverlayLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible } : l)));
+
+  const handleSetOverlayOpacity = (id, opacity) =>
+    setOverlayLayers((prev) => prev.map((l) => (l.id === id ? { ...l, opacity } : l)));
+
+  const handleRemoveOverlay = (id) => setOverlayLayers((prev) => prev.filter((l) => l.id !== id));
+
+  const handleMoveOverlay = (id, direction) => {
+    setOverlayLayers((prev) => {
+      const idx = prev.findIndex((l) => l.id === id);
+      if (idx === -1) return prev;
+      const swapWith = direction === "up" ? idx + 1 : idx - 1;
+      if (swapWith < 0 || swapWith >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      return next;
+    });
+  };
+
   const autoColorRange = useMemo(() => {
     const stats = valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats;
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
@@ -251,6 +294,8 @@ export default function App() {
           setGridMethod={setGridMethod}
           gridMaxDistance={gridMaxDistance}
           setGridMaxDistance={setGridMaxDistance}
+          gridOpacity={gridOpacity}
+          setGridOpacity={setGridOpacity}
           onGrid={handleGrid}
           gridding={gridding}
           activeTransform={activeTransform}
@@ -268,6 +313,11 @@ export default function App() {
           colorRange={colorRange}
           cmapName={cmapName}
           overlay={overlay}
+          gridOpacity={gridOpacity}
+          showPointsOverGrid={showPointsOverGrid}
+          overlayLayers={overlayLayers}
+          lines={processSummary?.lines}
+          showLineLabels={showLineLabels}
           onHoverPoint={setHoverPoint}
           drawMode={drawMode}
           onShapeDrawn={handleShapeDrawn}
@@ -286,6 +336,22 @@ export default function App() {
           onResetManual={handleResetManual}
           nManualIncluded={processSummary?.n_manual_included}
           nManualExcluded={processSummary?.n_manual_excluded}
+          showPointsOverGrid={showPointsOverGrid}
+          onToggleShowPointsOverGrid={setShowPointsOverGrid}
+          showLineLabels={showLineLabels}
+          onToggleShowLineLabels={setShowLineLabels}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>12. 참조 레이어 (지질도 등 GeoTIFF)</h2>
+        <LayerManager
+          layers={overlayLayers}
+          onUpload={handleUploadOverlayImage}
+          onToggleVisible={handleToggleOverlayVisible}
+          onSetOpacity={handleSetOverlayOpacity}
+          onMove={handleMoveOverlay}
+          onRemove={handleRemoveOverlay}
+          uploading={overlayUploading}
+          error={overlayError}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>

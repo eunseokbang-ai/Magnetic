@@ -158,13 +158,18 @@ def main():
     print("manual vmin/vmax grid response range:", manual_range_resp["vmin"], manual_range_resp["vmax"])
     assert manual_range_resp["vmin"] == 1000.0 and manual_range_resp["vmax"] == 2000.0
 
-    # colormap selection should be honored
-    r = client.post(
-        f"/api/projects/{project_id}/grid",
-        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "cmap": "turbo"},
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["cmap"] == "turbo"
+    # colormap selection should be honored, including the custom
+    # geosoft_rainbow palette registered at app startup
+    for cmap_name in ["turbo", "geosoft_rainbow"]:
+        r = client.post(
+            f"/api/projects/{project_id}/grid",
+            json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "cmap": cmap_name},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["cmap"] == cmap_name
+
+    # line summaries should carry a centroid for map number labels
+    assert all(l["centroid_lat"] is not None and l["centroid_lon"] is not None for l in summary["lines"])
 
     # confirm the auto max_distance (line-spacing based) fills far more of
     # the block than the old fixed 2*cell_size default would have
@@ -194,7 +199,34 @@ def main():
     r = client.get("/api/projects/does-not-exist/summary")
     assert r.status_code == 400, r.text
 
+    _check_overlay_image_upload(client)
+
     print("\nALL CHECKS PASSED")
+
+
+def _check_overlay_image_upload(client):
+    """GeoTIFF overlay layer endpoint - stateless, not project-scoped."""
+    import numpy as np
+    import rasterio
+    from rasterio.crs import CRS
+    from rasterio.transform import from_origin
+
+    path = "/tmp/_e2e_test_overlay.tif"
+    transform = from_origin(590000, 5155000, 10, 10)
+    crs = CRS.from_epsg(32648)
+    data = (np.indices((50, 50)).sum(axis=0) % 3).astype("uint8")
+    with rasterio.open(path, "w", driver="GTiff", height=50, width=50, count=1, dtype="uint8", crs=crs, transform=transform) as dst:
+        dst.write(data, 1)
+        dst.write_colormap(1, {0: (255, 0, 0, 255), 1: (0, 255, 0, 255), 2: (0, 0, 255, 255)})
+
+    with open(path, "rb") as f:
+        r = client.post("/api/overlay-images", files={"file": ("geology.tif", f, "image/tiff")})
+    assert r.status_code == 200, r.text
+    resp = r.json()
+    print("overlay image bounds:", resp["bounds"])
+    assert resp["image_data_url"].startswith("data:image/png;base64,")
+    assert resp["name"] == "geology.tif"
+    assert len(resp["bounds"]) == 2 and len(resp["bounds"][0]) == 2
 
 
 if __name__ == "__main__":

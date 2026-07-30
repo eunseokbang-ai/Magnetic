@@ -8,7 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
 from .models import GridRequest, ManualExcludeRequest, ProcessParams, TransformRequest
+from .processing.colormaps import register_custom_colormaps
+from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .store import ProjectError, store
+
+register_custom_colormaps()
 
 app = FastAPI(title="드론 자력탐사 자료 처리 API")
 
@@ -36,6 +40,13 @@ async def drone_error_handler(request, exc: DroneLoadError):
 
 @app.exception_handler(BaseLoadError)
 async def base_error_handler(request, exc: BaseLoadError):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(OverlayImageError)
+async def overlay_image_error_handler(request, exc: OverlayImageError):
     from fastapi.responses import JSONResponse
 
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -99,6 +110,13 @@ def grid(project_id: str, req: GridRequest):
 def transform(project_id: str, req: TransformRequest):
     project = store.get(project_id)
     return project.get_transform_overlay(req)
+
+
+@app.post("/api/overlay-images")
+async def upload_overlay_image(file: UploadFile):
+    content = await file.read()
+    name = file.filename or "overlay"
+    return load_geotiff_overlay(io.BytesIO(content), name=name)
 
 
 @app.get("/api/health")

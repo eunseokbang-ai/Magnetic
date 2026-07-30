@@ -10,6 +10,10 @@ export default function LineEditor({
   onResetManual,
   nManualIncluded,
   nManualExcluded,
+  showPointsOverGrid,
+  onToggleShowPointsOverGrid,
+  showLineLabels,
+  onToggleShowLineLabels,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -30,6 +34,15 @@ export default function LineEditor({
       <div style={{ fontSize: 12, color: "#374151" }}>
         측선 체크를 해제하면 지도/그리딩에서 제외됩니다. 수동 포함: <b>{nManualIncluded ?? 0}</b> / 수동 제외: <b>{nManualExcluded ?? 0}</b>
       </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+        <input type="checkbox" checked={showLineLabels} onChange={(e) => onToggleShowLineLabels(e.target.checked)} />
+        <span>지도에 측선 번호 표시</span>
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+        <input type="checkbox" checked={showPointsOverGrid} onChange={(e) => onToggleShowPointsOverGrid(e.target.checked)} />
+        <span>그리드 위에 측선 점 표시</span>
+      </label>
 
       <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
         {lines.map((l) => (

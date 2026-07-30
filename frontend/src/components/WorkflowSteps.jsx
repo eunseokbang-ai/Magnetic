@@ -40,6 +40,8 @@ export default function WorkflowSteps({
   setGridMethod,
   gridMaxDistance,
   setGridMaxDistance,
+  gridOpacity,
+  setGridOpacity,
   onGrid,
   gridding,
   activeTransform,
@@ -245,6 +247,16 @@ export default function WorkflowSteps({
           {processSummary?.line_spacing_m && (
             <div style={{ color: "#6b7280" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
           )}
+          <Field label={`그리드 불투명도: ${Math.round(gridOpacity * 100)}%`}>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={gridOpacity}
+              onChange={(e) => setGridOpacity(parseFloat(e.target.value))}
+            />
+          </Field>
           <button style={buttonStyle} disabled={gridding || !processSummary} onClick={() => onGrid()}>
             {gridding ? "그리딩 중..." : "그리드 생성"}
           </button>
