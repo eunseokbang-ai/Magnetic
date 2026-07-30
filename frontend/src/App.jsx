@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import MapView from "./components/MapView";
 import Legend from "./components/Legend";
@@ -46,11 +46,20 @@ export default function App() {
   const [overlay, setOverlay] = useState(null);
   const [error, setError] = useState(null);
 
+  // Drone and base uploads can both fire ensureProject() before the
+  // projectId state update from the first call has re-rendered, which
+  // would otherwise create two separate backend projects. Sharing the
+  // in-flight creation promise keeps both uploads on the same project.
+  const projectCreationRef = useRef(null);
   const ensureProject = useCallback(async () => {
     if (projectId) return projectId;
-    const res = await api.createProject();
-    setProjectId(res.project_id);
-    return res.project_id;
+    if (!projectCreationRef.current) {
+      projectCreationRef.current = api.createProject().then((res) => {
+        setProjectId(res.project_id);
+        return res.project_id;
+      });
+    }
+    return projectCreationRef.current;
   }, [projectId]);
 
   const handleError = (e) => setError(e.message || String(e));

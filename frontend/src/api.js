@@ -9,9 +9,18 @@ async function request(path, options = {}) {
     let detail = res.statusText;
     try {
       const data = await res.json();
-      detail = data.detail || JSON.stringify(data);
+      if (typeof data.detail === "string") {
+        detail = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // FastAPI/Pydantic validation errors: [{loc, msg, type}, ...]
+        detail = data.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      } else if (data.detail) {
+        detail = JSON.stringify(data.detail);
+      } else {
+        detail = JSON.stringify(data);
+      }
     } catch {
-      // ignore
+      // ignore, keep statusText
     }
     throw new Error(detail);
   }
