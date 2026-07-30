@@ -72,3 +72,30 @@ export function uploadOverlayImage(file) {
   form.append("file", file);
   return request(`/overlay-images`, { method: "POST", body: form });
 }
+
+export function uploadDem(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/upload/dem`, { method: "POST", body: form });
+}
+
+export function clearDem(projectId) {
+  return request(`/projects/${projectId}/dem`, { method: "DELETE" });
+}
+
+export function runInversion(projectId, params) {
+  return request(`/projects/${projectId}/inversion`, { method: "POST", body: JSON.stringify(params) });
+}
+
+export function getInversionSlice(projectId, req) {
+  return request(`/projects/${projectId}/inversion/slice`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getInversionSection(projectId, req) {
+  return request(`/projects/${projectId}/inversion/section`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getInversionVolume(projectId, threshold) {
+  const q = threshold != null ? `?threshold=${threshold}` : "";
+  return request(`/projects/${projectId}/inversion/volume${q}`);
+}

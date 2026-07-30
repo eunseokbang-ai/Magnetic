@@ -7,7 +7,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
-from .models import GridRequest, ManualExcludeRequest, ProcessParams, TransformRequest
+from .models import (
+    GridRequest,
+    InversionParams,
+    InversionSectionRequest,
+    InversionSliceRequest,
+    ManualExcludeRequest,
+    ProcessParams,
+    TransformRequest,
+)
 from .processing.colormaps import register_custom_colormaps
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .store import ProjectError, store
@@ -117,6 +125,44 @@ async def upload_overlay_image(file: UploadFile):
     content = await file.read()
     name = file.filename or "overlay"
     return load_geotiff_overlay(io.BytesIO(content), name=name)
+
+
+@app.post("/api/projects/{project_id}/upload/dem")
+async def upload_dem(project_id: str, file: UploadFile):
+    project = store.get(project_id)
+    content = await file.read()
+    name = file.filename or "dem.tif"
+    return project.load_dem(content, name)
+
+
+@app.delete("/api/projects/{project_id}/dem")
+def delete_dem(project_id: str):
+    project = store.get(project_id)
+    return project.clear_dem()
+
+
+@app.post("/api/projects/{project_id}/inversion")
+def run_inversion(project_id: str, params: InversionParams):
+    project = store.get(project_id)
+    return project.run_inversion(params)
+
+
+@app.post("/api/projects/{project_id}/inversion/slice")
+def inversion_slice(project_id: str, req: InversionSliceRequest):
+    project = store.get(project_id)
+    return project.get_inversion_horizontal_slice(req)
+
+
+@app.post("/api/projects/{project_id}/inversion/section")
+def inversion_section(project_id: str, req: InversionSectionRequest):
+    project = store.get(project_id)
+    return project.get_inversion_vertical_section(req)
+
+
+@app.get("/api/projects/{project_id}/inversion/volume")
+def inversion_volume(project_id: str, threshold: float | None = None):
+    project = store.get(project_id)
+    return project.get_inversion_volume(threshold)
 
 
 @app.get("/api/health")

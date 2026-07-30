@@ -6,6 +6,17 @@ import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import LineEditor from "./components/LineEditor";
 import LayerManager from "./components/LayerManager";
+import InversionPanel from "./components/InversionPanel";
+import InversionVolumeView from "./components/InversionVolumeView";
+
+const DEFAULT_INVERSION_PARAMS = {
+  obs_cell_size_m: 30.0,
+  depth_extent_m: 150.0,
+  n_layers: 8,
+  assumed_agl_m: 50.0,
+  regularization_strength: 1.0,
+  n_irls_iterations: 5,
+};
 
 const DEFAULT_PARAMS = {
   filter_cutoff_hz: 1.0,
@@ -56,6 +67,21 @@ export default function App() {
   const [overlayLayers, setOverlayLayers] = useState([]);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [overlayError, setOverlayError] = useState(null);
+
+  const [demStatus, setDemStatus] = useState(null);
+  const [demUploading, setDemUploading] = useState(false);
+  const [inversionParams, setInversionParams] = useState(DEFAULT_INVERSION_PARAMS);
+  const [inversionRunning, setInversionRunning] = useState(false);
+  const [inversionSummary, setInversionSummary] = useState(null);
+  const [inversionError, setInversionError] = useState(null);
+  const [sliceLayerIndex, setSliceLayerIndex] = useState(0);
+  const [sliceThreshold, setSliceThreshold] = useState("");
+  const [sectionDrawMode, setSectionDrawMode] = useState(false);
+  const [sectionThreshold, setSectionThreshold] = useState("");
+  const [sectionResult, setSectionResult] = useState(null);
+  const [sectionLoading, setSectionLoading] = useState(false);
+  const [volumeThreshold, setVolumeThreshold] = useState("");
+  const [volumeData, setVolumeData] = useState(null);
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -110,6 +136,9 @@ export default function App() {
       setProcessSummary(summary);
       setOverlay(null);
       setActiveTransform("none");
+      setInversionSummary(null);
+      setSectionResult(null);
+      setVolumeData(null);
       await refreshPoints(projectId, valueField);
     } catch (e) {
       handleError(e);
@@ -252,6 +281,95 @@ export default function App() {
     });
   };
 
+  const handleUploadDem = async (file) => {
+    try {
+      setInversionError(null);
+      setDemUploading(true);
+      const resp = await api.uploadDem(projectId, file);
+      setDemStatus(resp);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setDemUploading(false);
+    }
+  };
+
+  const handleClearDem = async () => {
+    try {
+      await api.clearDem(projectId);
+      setDemStatus(null);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    }
+  };
+
+  const handleRunInversion = async () => {
+    try {
+      setInversionError(null);
+      setInversionRunning(true);
+      const resp = await api.runInversion(projectId, inversionParams);
+      setInversionSummary(resp);
+      setSliceLayerIndex(0);
+      setSectionResult(null);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setInversionRunning(false);
+    }
+  };
+
+  const handleShowInversionSlice = async () => {
+    try {
+      setError(null);
+      const resp = await api.getInversionSlice(projectId, {
+        layer_index: sliceLayerIndex,
+        threshold: sliceThreshold === "" ? null : sliceThreshold,
+      });
+      setOverlay(resp);
+      setActiveTransform("inversion_slice");
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
+  const handleToggleSectionDrawMode = () => setSectionDrawMode((v) => !v);
+
+  const handleSectionPathDrawn = async (latlngCoords) => {
+    setSectionDrawMode(false);
+    try {
+      setInversionError(null);
+      setSectionLoading(true);
+      const resp = await api.getInversionSection(projectId, {
+        path: latlngCoords,
+        threshold: sectionThreshold === "" ? null : sectionThreshold,
+      });
+      setSectionResult(resp);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setSectionLoading(false);
+    }
+  };
+
+  const handleMapShapeDrawn = (coords) => {
+    if (sectionDrawMode) {
+      handleSectionPathDrawn(coords);
+    } else {
+      handleShapeDrawn(coords);
+    }
+  };
+
+  const handleOpenVolume = async () => {
+    try {
+      setInversionError(null);
+      const threshold = volumeThreshold === "" ? null : volumeThreshold;
+      const resp = await api.getInversionVolume(projectId, threshold);
+      setVolumeData({ ...resp, threshold });
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    }
+  };
+
   const autoColorRange = useMemo(() => {
     const stats = valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats;
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
@@ -271,7 +389,14 @@ export default function App() {
   }, [manualRange, autoColorRange]);
 
   const legendStats = overlay?.stats || (valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats);
-  const legendLabel = activeTransform !== "none" ? activeTransform.toUpperCase() : valueField === "anomaly" ? "자력 이상" : "TMI";
+  const legendLabel =
+    activeTransform === "inversion_slice"
+      ? "역산 자화율 (SI)"
+      : activeTransform !== "none"
+        ? activeTransform.toUpperCase()
+        : valueField === "anomaly"
+          ? "자력 이상"
+          : "TMI";
   const legendRange = overlay ? { vmin: overlay.vmin, vmax: overlay.vmax } : colorRange;
 
   return (
@@ -319,9 +444,11 @@ export default function App() {
           lines={processSummary?.lines}
           showLineLabels={showLineLabels}
           onHoverPoint={setHoverPoint}
-          drawMode={drawMode}
-          onShapeDrawn={handleShapeDrawn}
+          drawMode={drawMode || sectionDrawMode}
+          drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
+          onShapeDrawn={handleMapShapeDrawn}
         />
+        {volumeData && <InversionVolumeView data={volumeData} onClose={() => setVolumeData(null)} />}
       </div>
 
       <div style={{ width: 280, borderLeft: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}>
@@ -352,6 +479,35 @@ export default function App() {
           onRemove={handleRemoveOverlay}
           uploading={overlayUploading}
           error={overlayError}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>13. 3차원 역산 (실험적)</h2>
+        <InversionPanel
+          ready={!!processSummary}
+          demStatus={demStatus}
+          demUploading={demUploading}
+          onUploadDem={handleUploadDem}
+          onClearDem={handleClearDem}
+          params={inversionParams}
+          setParams={setInversionParams}
+          onRun={handleRunInversion}
+          running={inversionRunning}
+          summary={inversionSummary}
+          error={inversionError}
+          sliceLayerIndex={sliceLayerIndex}
+          setSliceLayerIndex={setSliceLayerIndex}
+          sliceThreshold={sliceThreshold}
+          setSliceThreshold={setSliceThreshold}
+          onShowSlice={handleShowInversionSlice}
+          sectionDrawMode={sectionDrawMode}
+          onToggleSectionDrawMode={handleToggleSectionDrawMode}
+          sectionThreshold={sectionThreshold}
+          setSectionThreshold={setSectionThreshold}
+          sectionResult={sectionResult}
+          sectionLoading={sectionLoading}
+          onOpenVolume={handleOpenVolume}
+          volumeThreshold={volumeThreshold}
+          setVolumeThreshold={setVolumeThreshold}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>

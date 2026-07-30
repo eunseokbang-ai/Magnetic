@@ -1,24 +1,46 @@
 """In-memory per-project state and pipeline orchestration."""
 from __future__ import annotations
 
+import io
 import threading
 import uuid
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
+import rasterio
 from matplotlib.path import Path as MplPath
+from pyproj import Transformer
 
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
-from .models import GridRequest, ManualExcludeRequest, ProcessParams, TransformRequest
+from .models import (
+    GridRequest,
+    InversionParams,
+    InversionSectionRequest,
+    InversionSliceRequest,
+    ManualExcludeRequest,
+    ProcessParams,
+    TransformRequest,
+)
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter
 from .processing.gridding import GridResult, grid_points
-from .processing.igrf import compute_igrf_total_field, mean_inclination_declination
+from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
+from .processing.inversion import (
+    InversionError,
+    InversionResult,
+    build_mesh,
+    build_sensitivity_matrix,
+    horizontal_slice,
+    invert,
+    render_section_png,
+)
+from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
 from .processing.lines import LineDetectionParams, detect_lines, estimate_line_spacing_m
 from .processing.render import grid_to_png_overlay
+from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import analytic_signal, reduction_to_equator, reduction_to_pole, vertical_derivative
 
 DEFAULT_CMAPS = {
@@ -52,6 +74,11 @@ class Project:
     diurnal_info: dict | None = None
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
+    dem_bytes: bytes | None = None
+    dem_name: str | None = None
+    inversion_result: InversionResult | None = None
+    inversion_params: InversionParams | None = None
+    inversion_field_intensity_nt: float | None = None
 
     def load_drone(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
@@ -300,6 +327,199 @@ class Project:
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["transform"] = req.transform
         return overlay
+
+    def load_dem(self, data: bytes, name: str) -> dict:
+        try:
+            with rasterio.open(io.BytesIO(data)) as src:
+                if src.crs is None:
+                    raise ProjectError("DEM GeoTIFF에 좌표계(CRS) 정보가 없습니다.")
+                bounds = src.bounds
+                width, height = src.width, src.height
+        except rasterio.errors.RasterioIOError as exc:
+            raise ProjectError(f"DEM 파일을 열 수 없습니다: {exc}") from exc
+        self.dem_bytes = data
+        self.dem_name = name
+        return {"name": name, "width": width, "height": height, "bounds": list(bounds)}
+
+    def clear_dem(self) -> dict:
+        self.dem_bytes = None
+        self.dem_name = None
+        return {"cleared": True}
+
+    def run_inversion(self, params: InversionParams) -> dict:
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed
+        active = self._active_mask()
+        sub = df.loc[active]
+        if len(sub) < 20:
+            raise ProjectError("역산을 위한 유효 포인트가 부족합니다.")
+        col = "anomaly" if params.value == "anomaly" else "tmi"
+
+        max_distance = self._resolve_max_distance(params.obs_cell_size_m, None)
+        obs_grid = grid_points(
+            sub["x"].to_numpy(), sub["y"].to_numpy(), sub[col].to_numpy(),
+            params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+        )
+        alt_grid = grid_points(
+            sub["x"].to_numpy(), sub["y"].to_numpy(), sub["altitude_ellipsoidal_m"].to_numpy(),
+            params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+        )
+
+        ny, nx = obs_grid.values.shape
+        if nx * ny > 2500:
+            raise ProjectError(
+                f"관측 격자가 너무 촘촘합니다 ({nx}x{ny}={nx*ny}점) - 격자 크기(obs_cell_size_m)를 늘려주세요."
+            )
+
+        if self.dem_bytes is not None:
+            try:
+                ground_elev = load_dem_geotiff(io.BytesIO(self.dem_bytes), obs_grid.easting, obs_grid.northing, self.utm_epsg)
+            except TerrainError as exc:
+                raise ProjectError(str(exc)) from exc
+        else:
+            point_ground = estimate_ground_elevation(sub["altitude_ellipsoidal_m"].to_numpy(), params.assumed_agl_m)
+            ground_result = grid_points(
+                sub["x"].to_numpy(), sub["y"].to_numpy(), point_ground,
+                params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+            )
+            ground_elev = ground_result.values
+
+        try:
+            mesh = build_mesh(
+                obs_grid.easting, obs_grid.northing, ground_elev,
+                cell_size_m=params.obs_cell_size_m, depth_extent_m=params.depth_extent_m, n_layers=params.n_layers,
+            )
+        except InversionError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        n_mesh_cells = int(mesh.active.sum())
+        if n_mesh_cells > 30000:
+            raise ProjectError(
+                f"역산 메쉬가 너무 큽니다 ({n_mesh_cells}셀) - 격자 크기를 늘리거나 레이어 수/심도를 줄여주세요."
+            )
+
+        easting_2d, northing_2d = np.meshgrid(obs_grid.easting, obs_grid.northing)
+        obs_mask = np.isfinite(obs_grid.values) & np.isfinite(alt_grid.values)
+        obs_x = easting_2d[obs_mask]
+        obs_y = northing_2d[obs_mask]
+        obs_z = alt_grid.values[obs_mask]
+        data_nt = obs_grid.values[obs_mask]
+        if len(data_nt) < 10:
+            raise ProjectError("역산을 위한 유효 관측 격자점이 부족합니다.")
+
+        field_intensity_nt = mean_field_intensity_nt(
+            sub["lat"].to_numpy(), sub["lon"].to_numpy(), sub["altitude_ellipsoidal_m"].to_numpy(), sub["timestamp"]
+        )
+        self.inversion_field_intensity_nt = field_intensity_nt
+
+        try:
+            G, rows, cols, layers = build_sensitivity_matrix(
+                obs_x, obs_y, obs_z, mesh, self.inclination_deg, self.declination_deg, field_intensity_nt
+            )
+            result = invert(
+                G, data_nt, mesh, rows, cols, layers,
+                regularization_strength=params.regularization_strength,
+                n_irls_iterations=params.n_irls_iterations,
+            )
+        except InversionError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        self.inversion_result = result
+        self.inversion_params = params
+
+        active_chi = result.susceptibility[result.susceptibility > 0]
+        return {
+            "n_obs": result.n_obs,
+            "n_active_cells": result.n_active_cells,
+            "rms_misfit_nt": result.rms_misfit_nt,
+            "iterations": result.iterations,
+            "n_layers": params.n_layers,
+            "cell_size_m": mesh.cell_size_m,
+            "layer_thickness_m": mesh.layer_thickness_m,
+            "elevation_range_m": [float(mesh.z_centers.min()), float(mesh.z_centers.max())],
+            "field": {
+                "inclination_deg": self.inclination_deg,
+                "declination_deg": self.declination_deg,
+                "field_intensity_nt": field_intensity_nt,
+            },
+            "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
+            "used_dem": self.dem_bytes is not None,
+        }
+
+    def get_inversion_horizontal_slice(self, req: InversionSliceRequest) -> dict:
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        mesh = self.inversion_result.mesh
+        try:
+            slice_2d = horizontal_slice(self.inversion_result, req.layer_index, req.threshold)
+            overlay = grid_to_png_overlay(
+                slice_2d, mesh.x_centers, mesh.y_centers, self.utm_epsg,
+                cmap_name=req.cmap or "geosoft_rainbow", symmetric=False, vmin=req.vmin, vmax=req.vmax,
+            )
+        except (InversionError, ValueError) as exc:
+            raise ProjectError(str(exc)) from exc
+        layer_index = int(np.clip(req.layer_index, 0, mesh.active.shape[2] - 1))
+        overlay["stats"] = _stats(pd.Series(slice_2d.ravel()))
+        overlay["layer_index"] = layer_index
+        overlay["n_layers"] = int(mesh.active.shape[2])
+        overlay["elevation_m"] = float(mesh.z_centers[layer_index])
+        return overlay
+
+    def get_inversion_vertical_section(self, req: InversionSectionRequest) -> dict:
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다.")
+        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+        lats = [pt[0] for pt in req.path]
+        lons = [pt[1] for pt in req.path]
+        vx, vy = transformer.transform(lons, lats)
+        path_x, path_y = _densify_path(np.asarray(vx), np.asarray(vy), req.sample_spacing_m)
+        try:
+            section, distance = _inversion_vertical_section(self.inversion_result, path_x, path_y, req.threshold)
+            png = render_section_png(
+                section, distance, self.inversion_result.mesh.z_centers,
+                cmap_name=req.cmap or "geosoft_rainbow", vmin=req.vmin, vmax=req.vmax,
+            )
+        except InversionError as exc:
+            raise ProjectError(str(exc)) from exc
+        png["stats"] = _stats(pd.Series(section.ravel()))
+        return png
+
+    def get_inversion_volume(self, threshold: float | None = None) -> dict:
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        result = self.inversion_result
+        mesh = result.mesh
+        x0 = float(mesh.x_centers.mean())
+        y0 = float(mesh.y_centers.mean())
+        Y, X, Z = np.meshgrid(mesh.y_centers - y0, mesh.x_centers - x0, mesh.z_centers, indexing="ij")
+        chi = result.susceptibility
+        if threshold is not None:
+            chi = np.where(chi >= threshold, chi, 0.0)
+        active_chi = result.susceptibility[result.susceptibility > 0]
+        return {
+            "x": X.ravel().tolist(),
+            "y": Y.ravel().tolist(),
+            "z": Z.ravel().tolist(),
+            "value": chi.ravel().tolist(),
+            "shape": list(mesh.active.shape),
+            "stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
+        }
+
+
+def _densify_path(x: np.ndarray, y: np.ndarray, spacing_m: float) -> tuple[np.ndarray, np.ndarray]:
+    seg_len = np.hypot(np.diff(x), np.diff(y))
+    cum = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = cum[-1]
+    if total <= 0:
+        return x, y
+    n_samples = max(2, int(total / spacing_m) + 1)
+    sample_dist = np.linspace(0.0, total, n_samples)
+    sample_x = np.interp(sample_dist, cum, x)
+    sample_y = np.interp(sample_dist, cum, y)
+    return sample_x, sample_y
 
 
 def _stats(series: pd.Series) -> dict:

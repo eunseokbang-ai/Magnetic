@@ -63,3 +63,34 @@ class ManualExcludeRequest(BaseModel):
     action: Optional[Literal["exclude", "include"]] = None
     line_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
+
+
+class InversionParams(BaseModel):
+    value: ValueField = "anomaly"
+    obs_cell_size_m: float = Field(20.0, gt=0)  # observation/mesh horizontal cell size
+    depth_extent_m: float = Field(100.0, gt=0)
+    n_layers: int = Field(8, ge=1, le=30)
+    assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
+    regularization_strength: float = Field(1.0, gt=0)
+    n_irls_iterations: int = Field(5, ge=1, le=20)
+
+
+class InversionSliceRequest(BaseModel):
+    layer_index: int = Field(0, ge=0)
+    threshold: Optional[float] = None
+    cmap: Optional[str] = None
+    vmin: Optional[float] = None
+    vmax: Optional[float] = None
+
+
+class InversionSectionRequest(BaseModel):
+    path: list[list[float]] = Field(..., min_length=2)  # [[lat, lon], ...]
+    threshold: Optional[float] = None
+    cmap: Optional[str] = None
+    vmin: Optional[float] = None
+    vmax: Optional[float] = None
+    sample_spacing_m: float = Field(10.0, gt=0)
+
+
+class InversionVolumeRequest(BaseModel):
+    threshold: Optional[float] = None

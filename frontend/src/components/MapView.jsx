@@ -89,7 +89,7 @@ function LineLabels({ lines, visible }) {
   return null;
 }
 
-function DrawControl({ enabled, onShapeDrawn }) {
+function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn }) {
   const map = useMap();
   const controlRef = useRef(null);
   const groupRef = useRef(null);
@@ -101,7 +101,11 @@ function DrawControl({ enabled, onShapeDrawn }) {
     }
     const handleCreated = (e) => {
       const layer = e.layer;
-      const latlngs = layer.getLatLngs()[0] || layer.getLatLngs();
+      // Polygon/rectangle getLatLngs() nests one ring array deep; polyline
+      // returns a flat array of LatLngs directly - Array.isArray on the
+      // first element (an array vs. a LatLng object) tells them apart.
+      const rawLatLngs = layer.getLatLngs();
+      const latlngs = Array.isArray(rawLatLngs[0]) ? rawLatLngs[0] : rawLatLngs;
       const coords = latlngs.map((ll) => [ll.lat, ll.lng]);
       onShapeDrawn && onShapeDrawn(coords);
       groupRef.current.clearLayers();
@@ -111,33 +115,36 @@ function DrawControl({ enabled, onShapeDrawn }) {
   }, [map, onShapeDrawn]);
 
   useEffect(() => {
-    if (enabled && !controlRef.current) {
-      controlRef.current = new L.Control.Draw({
-        draw: {
-          polygon: { allowIntersection: false, showArea: false },
-          // leaflet-draw's readableArea() throws ("type is not defined") on
-          // Leaflet 1.9.x when the rectangle tooltip tries to show area, so
-          // this stays off - see https://github.com/Leaflet/Leaflet.draw/issues/1026
-          rectangle: { showArea: false },
-          circle: false,
-          circlemarker: false,
-          marker: false,
-          polyline: false,
-        },
-        edit: false,
-      });
-      map.addControl(controlRef.current);
-    } else if (!enabled && controlRef.current) {
+    if (controlRef.current) {
       map.removeControl(controlRef.current);
       controlRef.current = null;
     }
+    if (!enabled) return undefined;
+
+    const isPolyline = shapeType === "polyline";
+    controlRef.current = new L.Control.Draw({
+      draw: {
+        polygon: isPolyline ? false : { allowIntersection: false, showArea: false },
+        // leaflet-draw's readableArea() throws ("type is not defined") on
+        // Leaflet 1.9.x when the rectangle tooltip tries to show area, so
+        // this stays off - see https://github.com/Leaflet/Leaflet.draw/issues/1026
+        rectangle: isPolyline ? false : { showArea: false },
+        polyline: isPolyline ? { showLength: false } : false,
+        circle: false,
+        circlemarker: false,
+        marker: false,
+      },
+      edit: false,
+    });
+    map.addControl(controlRef.current);
+
     return () => {
       if (controlRef.current) {
         map.removeControl(controlRef.current);
         controlRef.current = null;
       }
     };
-  }, [enabled, map]);
+  }, [enabled, shapeType, map]);
 
   return null;
 }
@@ -154,6 +161,7 @@ export default function MapView({
   showLineLabels,
   onHoverPoint,
   drawMode,
+  drawShapeType,
   onShapeDrawn,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
@@ -200,7 +208,7 @@ export default function MapView({
 
       <LineLabels lines={lines} visible={showLineLabels} />
 
-      <DrawControl enabled={drawMode} onShapeDrawn={onShapeDrawn} />
+      <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
     </MapContainer>
   );
 }

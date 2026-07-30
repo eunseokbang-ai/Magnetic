@@ -200,8 +200,99 @@ def main():
     assert r.status_code == 400, r.text
 
     _check_overlay_image_upload(client)
+    _check_inversion(client, project_id, pts)
 
     print("\nALL CHECKS PASSED")
+
+
+def _check_inversion(client, project_id, pts):
+    """3D inversion tab: run + horizontal slice + vertical section + 3D
+    volume + DEM upload/use/clear + guardrail error paths."""
+    r = client.post(
+        f"/api/projects/{project_id}/inversion",
+        json={"obs_cell_size_m": 40.0, "depth_extent_m": 150.0, "n_layers": 8},
+    )
+    assert r.status_code == 200, r.text
+    inv_summary = r.json()
+    print("inversion summary:", {k: v for k, v in inv_summary.items() if k != "field"})
+    assert inv_summary["n_obs"] > 0 and inv_summary["n_active_cells"] > 0
+    assert inv_summary["susceptibility_stats"]["max"] is not None
+
+    r = client.post(f"/api/projects/{project_id}/inversion/slice", json={"layer_index": 2})
+    assert r.status_code == 200, r.text
+    slice_resp = r.json()
+    assert slice_resp["image_data_url"].startswith("data:image/png;base64,")
+    assert slice_resp["n_layers"] == 8
+
+    r = client.post(f"/api/projects/{project_id}/inversion/slice", json={"layer_index": 2, "threshold": 0.05})
+    assert r.status_code == 200, r.text
+
+    lats = [p["lat"] for p in pts]
+    lons = [p["lon"] for p in pts]
+    clat, clon = sum(lats) / len(lats), sum(lons) / len(lons)
+    d = 0.003
+    path = [[clat - d, clon - d], [clat + d, clon + d]]
+    r = client.post(f"/api/projects/{project_id}/inversion/section", json={"path": path})
+    assert r.status_code == 200, r.text
+    section_resp = r.json()
+    assert section_resp["image_data_url"].startswith("data:image/png;base64,")
+    assert len(section_resp["elevation_m"]) == 8
+
+    r = client.get(f"/api/projects/{project_id}/inversion/volume")
+    assert r.status_code == 200, r.text
+    volume = r.json()
+    ny, nx, nz = volume["shape"]
+    assert len(volume["x"]) == ny * nx * nz == len(volume["value"])
+
+    # DEM upload: build a synthetic GeoTIFF covering the survey extent,
+    # confirm it's actually used, then clear it back to GPS-AGL estimation.
+    import numpy as np
+    import rasterio
+    from rasterio.crs import CRS
+    from rasterio.transform import from_origin
+
+    from app.store import store as project_store
+
+    project = project_store.get(project_id)
+    df = project.processed
+    xmin, xmax = df["x"].min() - 500, df["x"].max() + 500
+    ymin, ymax = df["y"].min() - 500, df["y"].max() + 500
+    dem_path = "/tmp/_e2e_inversion_dem.tif"
+    w, h = 60, 60
+    transform = from_origin(xmin, ymax, (xmax - xmin) / w, (ymax - ymin) / h)
+    crs = CRS.from_epsg(project.utm_epsg)
+    elev = (1350 + 0.01 * np.random.randn(h, w)).astype("float32")
+    with rasterio.open(dem_path, "w", driver="GTiff", height=h, width=w, count=1, dtype="float32", crs=crs, transform=transform) as dst:
+        dst.write(elev, 1)
+
+    with open(dem_path, "rb") as f:
+        r = client.post(f"/api/projects/{project_id}/upload/dem", files={"file": ("dem.tif", f, "image/tiff")})
+    assert r.status_code == 200, r.text
+
+    r = client.post(
+        f"/api/projects/{project_id}/inversion",
+        json={"obs_cell_size_m": 40.0, "depth_extent_m": 150.0, "n_layers": 6},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["used_dem"] is True
+
+    r = client.delete(f"/api/projects/{project_id}/dem")
+    assert r.status_code == 200, r.text
+    assert r.json()["cleared"] is True
+
+    # guardrail: an unreasonably fine observation grid should be rejected
+    # with a friendly error rather than hanging on a huge dense mesh.
+    r = client.post(
+        f"/api/projects/{project_id}/inversion",
+        json={"obs_cell_size_m": 2.0, "depth_extent_m": 100.0, "n_layers": 8},
+    )
+    assert r.status_code == 400, r.text
+
+    # error path: slice/section before inversion has been run
+    r2 = client.post("/api/projects")
+    fresh_id = r2.json()["project_id"]
+    r = client.post(f"/api/projects/{fresh_id}/inversion/slice", json={"layer_index": 0})
+    assert r.status_code == 400, r.text
 
 
 def _check_overlay_image_upload(client):

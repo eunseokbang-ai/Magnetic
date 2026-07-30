@@ -56,3 +56,18 @@ def mean_inclination_declination(lat: np.ndarray, lon: np.ndarray, altitude_elli
     inclination = float(np.degrees(np.arctan2(-bu, h_horiz)))
     declination = float(np.degrees(np.arctan2(be, bn)))
     return inclination, declination
+
+
+def mean_field_intensity_nt(lat: np.ndarray, lon: np.ndarray, altitude_ellipsoidal_m: np.ndarray, dates: pd.Series) -> float:
+    """Representative (mean-location) IGRF total field intensity in nT,
+    used to convert susceptibility to induced magnetization for the 3D
+    inversion forward model."""
+    lat_c = float(np.nanmean(lat))
+    lon_c = float(np.nanmean(lon))
+    h_km = float(np.nanmean(altitude_ellipsoidal_m)) / 1000.0
+    dates_dt = pd.to_datetime(pd.Series(dates))
+    date_c = pd.Timestamp(int(dates_dt.astype("int64").mean())).round("s").to_pydatetime()
+
+    be, bn, bu = ppigrf.igrf(lon_c, lat_c, h_km, date_c)
+    be, bn, bu = float(np.ravel(be)[0]), float(np.ravel(bn)[0]), float(np.ravel(bu)[0])
+    return float(np.sqrt(be**2 + bn**2 + bu**2))

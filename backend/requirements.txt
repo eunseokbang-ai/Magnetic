@@ -10,3 +10,5 @@ verde==1.9.0
 matplotlib==3.9.4
 pydantic==2.10.4
 rasterio==1.4.4
+choclo==0.3.2
+numba==0.66.0
