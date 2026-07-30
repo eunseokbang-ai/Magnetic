@@ -227,9 +227,10 @@ export default function WorkflowSteps({
           </Field>
           <Field label="보간 방법">
             <select style={inputStyle} value={gridMethod} onChange={(e) => setGridMethod(e.target.value)}>
-              <option value="spline">스플라인 (가장 부드러움, 기본값)</option>
-              <option value="linear">선형(Linear)</option>
-              <option value="cubic">큐빅(Cubic)</option>
+              <option value="nearest">원본 셀 (가장 빠름, 기본값)</option>
+              <option value="linear">선형(Linear) - 보통 속도</option>
+              <option value="cubic">큐빅(Cubic) - 느림</option>
+              <option value="spline">스플라인 (가장 부드러움, 가장 느림)</option>
             </select>
           </Field>
           <Field label="보간 반경 (m) — 비워두면 측선 간격 기반 자동 계산">

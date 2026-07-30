@@ -25,11 +25,12 @@ def grid_to_png_overlay(
     if finite.size == 0:
         raise ValueError("표시할 유효한 그리드 값이 없습니다.")
 
+    explicit_range = vmin is not None and vmax is not None
     if vmin is None:
         vmin = float(np.nanpercentile(finite, 2))
     if vmax is None:
         vmax = float(np.nanpercentile(finite, 98))
-    if symmetric:
+    if symmetric and not explicit_range:
         m = max(abs(vmin), abs(vmax))
         vmin, vmax = -m, m
     if vmin == vmax:

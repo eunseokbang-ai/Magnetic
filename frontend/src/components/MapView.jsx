@@ -6,44 +6,34 @@ import "leaflet-draw/dist/leaflet.draw.css";
 import "leaflet-draw";
 import { makeColorScale } from "../colormap";
 import { minMax } from "../arrayUtils";
+import pointCanvasLayer from "../leafletPointCanvasLayer";
 
-function PointLayer({ points, valueField, vmin, vmax, cmapKind, onHover }) {
+// Direct-to-canvas rendering (see leafletPointCanvasLayer.js) instead of one
+// L.circleMarker per point - at 100k+ points, per-marker object creation and
+// event-listener registration is the actual bottleneck, and it was rebuilt
+// from scratch on every color-range/value-field tweak. The layer is created
+// once and only re-painted via setData() afterwards.
+function PointLayer({ points, vmin, vmax, cmapName, onHover }) {
   const map = useMap();
   const layerRef = useRef(null);
+  const onHoverRef = useRef(onHover);
+  onHoverRef.current = onHover;
 
   useEffect(() => {
-    if (!layerRef.current) {
-      layerRef.current = L.layerGroup().addTo(map);
-    }
-    const layer = layerRef.current;
-    layer.clearLayers();
-    if (!points || points.length === 0) return;
-
-    const colorScale = makeColorScale(cmapKind, vmin, vmax);
-    const renderer = L.canvas({ padding: 0.5 });
-    for (const p of points) {
-      const excluded = p.excluded;
-      const color = excluded ? "#9ca3af" : colorScale(p.value);
-      const marker = L.circleMarker([p.lat, p.lon], {
-        renderer,
-        radius: excluded ? 1.5 : 2.5,
-        color,
-        fillColor: color,
-        fillOpacity: excluded ? 0.35 : 0.9,
-        weight: 0,
-        opacity: excluded ? 0.35 : 0.9,
-      });
-      marker.on("mouseover", () => onHover && onHover(p));
-      layer.addLayer(marker);
-    }
-  }, [points, valueField, vmin, vmax, cmapKind, map, onHover]);
-
-  useEffect(() => () => {
-    if (layerRef.current) {
-      layerRef.current.remove();
+    const layer = pointCanvasLayer([], { onHover: (p) => onHoverRef.current && onHoverRef.current(p) });
+    layer.addTo(map);
+    layerRef.current = layer;
+    return () => {
+      layer.remove();
       layerRef.current = null;
-    }
+    };
   }, [map]);
+
+  useEffect(() => {
+    if (!layerRef.current) return;
+    const colorScale = makeColorScale(cmapName, vmin, vmax);
+    layerRef.current.setData(points || [], colorScale);
+  }, [points, vmin, vmax, cmapName]);
 
   return null;
 }
@@ -122,9 +112,8 @@ function DrawControl({ enabled, onShapeDrawn }) {
 
 export default function MapView({
   points,
-  valueField,
   colorRange,
-  cmapKind,
+  cmapName,
   overlay,
   onHoverPoint,
   drawMode,
@@ -158,10 +147,9 @@ export default function MapView({
       ) : (
         <PointLayer
           points={points}
-          valueField={valueField}
           vmin={colorRange.vmin}
           vmax={colorRange.vmax}
-          cmapKind={cmapKind}
+          cmapName={cmapName}
           onHover={onHoverPoint}
         />
       )}

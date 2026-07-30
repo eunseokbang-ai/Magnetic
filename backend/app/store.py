@@ -39,7 +39,10 @@ class Project:
     drone_raw: pd.DataFrame | None = None
     base_raw: pd.DataFrame | None = None
     processed: pd.DataFrame | None = None
-    manual_excluded_ids: set = field(default_factory=set)
+    # point_id -> True (force include, even if auto-excluded) | False (force
+    # exclude, even if auto-included). Absent point_ids fall back to the
+    # automatic line_id>=0 result.
+    manual_overrides: dict = field(default_factory=dict)
     utm_epsg: int | None = None
     dominant_azimuth_deg: float | None = None
     line_spacing_m: float | None = None
@@ -140,7 +143,7 @@ class Project:
             self.heading_leveling = HeadingLevelingResult(False, "사용자가 헤딩 보정을 비활성화했습니다.", None, 0, 0)
 
         self.processed = df
-        self.manual_excluded_ids = set()
+        self.manual_overrides = {}
         self.grid_cache = {}
         self.last_params = params
         return self.process_summary()
@@ -154,7 +157,8 @@ class Project:
             "n_lines": n_lines,
             "n_kept": int(active.sum()),
             "n_excluded_auto": int((df["line_id"] < 0).sum()),
-            "n_excluded_manual": len(self.manual_excluded_ids),
+            "n_manual_included": sum(1 for v in self.manual_overrides.values() if v),
+            "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
             "line_spacing_m": self.line_spacing_m,
             "inclination_deg": self.inclination_deg,
@@ -168,10 +172,11 @@ class Project:
 
     def _active_mask(self) -> pd.Series:
         df = self.processed
-        mask = df["line_id"] >= 0
-        if self.manual_excluded_ids:
-            mask &= ~df["point_id"].isin(self.manual_excluded_ids)
-        return mask
+        auto = df["line_id"] >= 0
+        if not self.manual_overrides:
+            return auto
+        override = df["point_id"].map(self.manual_overrides)
+        return override.where(override.notna(), auto).astype(bool)
 
     def get_points(self, value: str) -> list[dict]:
         if self.processed is None:
@@ -196,6 +201,12 @@ class Project:
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         df = self.processed
+
+        if req.mode == "reset":
+            self.manual_overrides = {}
+            self.grid_cache = {}
+            return self.process_summary()
+
         if req.mode == "lines":
             if not req.line_ids:
                 raise ProjectError("line_ids가 필요합니다.")
@@ -207,10 +218,12 @@ class Project:
             inside = poly_path.contains_points(np.column_stack([df["lon"], df["lat"]]))
             target_ids = set(df.loc[inside, "point_id"])
 
-        if req.action == "exclude":
-            self.manual_excluded_ids |= target_ids
-        else:
-            self.manual_excluded_ids -= target_ids
+        # action="include" force-includes points regardless of automatic
+        # line detection (e.g. restoring a turbulence segment the auto
+        # detector dropped); action="exclude" force-excludes regardless.
+        forced_value = req.action == "include"
+        for pid in target_ids:
+            self.manual_overrides[int(pid)] = forced_value
         self.grid_cache = {}
         return self.process_summary()
 
@@ -246,7 +259,14 @@ class Project:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
         overlay = grid_to_png_overlay(
-            grid.values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=(req.value == "anomaly")
+            grid.values,
+            grid.easting,
+            grid.northing,
+            self.utm_epsg,
+            cmap_name=cmap,
+            symmetric=(req.value == "anomaly"),
+            vmin=req.vmin,
+            vmax=req.vmax,
         )
         overlay["stats"] = _stats(pd.Series(grid.values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
@@ -273,7 +293,9 @@ class Project:
             raise ProjectError(f"알 수 없는 변환입니다: {req.transform}")
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
-        overlay = grid_to_png_overlay(values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=symmetric)
+        overlay = grid_to_png_overlay(
+            values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=symmetric, vmin=req.vmin, vmax=req.vmax
+        )
         overlay["stats"] = _stats(pd.Series(values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["transform"] = req.transform

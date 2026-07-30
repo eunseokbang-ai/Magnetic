@@ -92,7 +92,7 @@ def main():
     )
     assert r.status_code == 200, r.text
     summary2 = r.json()
-    print("after manual exclude, n_kept:", summary2["n_kept"], "n_excluded_manual:", summary2["n_excluded_manual"])
+    print("after manual exclude, n_kept:", summary2["n_kept"], "n_manual_excluded:", summary2["n_manual_excluded"])
     assert summary2["n_kept"] < summary["n_kept"]
 
     # manual polygon exclude (small box around the survey centroid)
@@ -108,20 +108,63 @@ def main():
     assert r.status_code == 200, r.text
     print("after polygon exclude, n_kept:", r.json()["n_kept"])
 
-    # undo the line exclusion to leave enough points for gridding
+    # force-include a batch of auto-excluded points (e.g. a turbulence
+    # segment the auto line-detector correctly dropped but the user wants
+    # back) - pick a polygon around some points with line_id == -1
+    excluded_pts = [p for p in pts if p["excluded"] and p["line_id"] < 0]
+    assert excluded_pts, "expected some auto-excluded points to restore"
+    target = excluded_pts[len(excluded_pts) // 2]
+    d2 = 0.0005
+    restore_polygon = [
+        [target["lat"] - d2, target["lon"] - d2],
+        [target["lat"] - d2, target["lon"] + d2],
+        [target["lat"] + d2, target["lon"] + d2],
+        [target["lat"] + d2, target["lon"] - d2],
+    ]
+    before_kept = r.json()["n_kept"]
     r = client.post(
         f"/api/projects/{project_id}/manual-exclude",
-        json={"mode": "lines", "action": "include", "line_ids": [first_line]},
+        json={"mode": "polygon", "action": "include", "polygon": restore_polygon},
     )
     assert r.status_code == 200, r.text
+    summary_restored = r.json()
+    print("after force-include, n_kept:", summary_restored["n_kept"], "n_manual_included:", summary_restored["n_manual_included"])
+    assert summary_restored["n_kept"] > before_kept, "force-including auto-excluded points should raise n_kept"
+    assert summary_restored["n_manual_included"] > 0
 
-    grid_nan_pcts = {}
-    for method in ["spline", "linear", "cubic"]:
+    # full reset should return to the original automatic n_kept
+    r = client.post(f"/api/projects/{project_id}/manual-exclude", json={"mode": "reset"})
+    assert r.status_code == 200, r.text
+    summary_reset = r.json()
+    print("after reset, n_kept:", summary_reset["n_kept"])
+    assert summary_reset["n_kept"] == summary["n_kept"]
+    assert summary_reset["n_manual_included"] == 0 and summary_reset["n_manual_excluded"] == 0
+
+    for method in ["nearest", "spline", "linear", "cubic"]:
         r = client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0, "method": method})
         assert r.status_code == 200, r.text
         grid_resp = r.json()
         print(f"grid[{method}] bounds:", grid_resp["bounds"], "stats:", grid_resp["stats"])
         assert grid_resp["image_data_url"].startswith("data:image/png;base64,")
+
+    # manual vmin/vmax should be honored as-is (not overridden by the
+    # symmetric-around-zero auto-expansion for anomaly grids)
+    r = client.post(
+        f"/api/projects/{project_id}/grid",
+        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "vmin": 1000.0, "vmax": 2000.0},
+    )
+    assert r.status_code == 200, r.text
+    manual_range_resp = r.json()
+    print("manual vmin/vmax grid response range:", manual_range_resp["vmin"], manual_range_resp["vmax"])
+    assert manual_range_resp["vmin"] == 1000.0 and manual_range_resp["vmax"] == 2000.0
+
+    # colormap selection should be honored
+    r = client.post(
+        f"/api/projects/{project_id}/grid",
+        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "cmap": "turbo"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["cmap"] == "turbo"
 
     # confirm the auto max_distance (line-spacing based) fills far more of
     # the block than the old fixed 2*cell_size default would have

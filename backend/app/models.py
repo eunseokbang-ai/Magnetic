@@ -34,28 +34,32 @@ class ProcessParams(BaseModel):
 
 ValueField = Literal["tmi", "anomaly"]
 TransformName = Literal["rtp", "rte", "1vd", "as"]
-GridMethod = Literal["spline", "linear", "cubic"]
+GridMethod = Literal["nearest", "linear", "cubic", "spline"]
 
 
 class GridRequest(BaseModel):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "spline"
+    method: GridMethod = "nearest"
     max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
+    vmin: Optional[float] = None
+    vmax: Optional[float] = None
 
 
 class TransformRequest(BaseModel):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "spline"
+    method: GridMethod = "nearest"
     max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
+    vmin: Optional[float] = None
+    vmax: Optional[float] = None
 
 
 class ManualExcludeRequest(BaseModel):
-    mode: Literal["lines", "polygon"]
-    action: Literal["exclude", "include"]
+    mode: Literal["lines", "polygon", "reset"]
+    action: Optional[Literal["exclude", "include"]] = None
     line_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]

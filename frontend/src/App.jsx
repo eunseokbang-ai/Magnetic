@@ -38,14 +38,17 @@ export default function App() {
   const [valueField, setValueField] = useState("anomaly");
   const [hoverPoint, setHoverPoint] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
+  const [drawAction, setDrawAction] = useState("exclude");
   const [gridCellSize, setGridCellSize] = useState(10.0);
-  const [gridMethod, setGridMethod] = useState("spline");
+  const [gridMethod, setGridMethod] = useState("nearest");
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
   const [gridding, setGridding] = useState(false);
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
   const [overlay, setOverlay] = useState(null);
   const [error, setError] = useState(null);
+  const [cmapName, setCmapName] = useState("RdYlBu_r");
+  const [manualRange, setManualRange] = useState({ enabled: false, vmin: null, vmax: null });
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -134,7 +137,7 @@ export default function App() {
   const handleShapeDrawn = async (latlngCoords) => {
     try {
       setError(null);
-      const summary = await api.manualExclude(projectId, { mode: "polygon", action: "exclude", polygon: latlngCoords });
+      const summary = await api.manualExclude(projectId, { mode: "polygon", action: drawAction, polygon: latlngCoords });
       setProcessSummary(summary);
       await refreshPoints(projectId, valueField);
       setOverlay(null);
@@ -143,12 +146,11 @@ export default function App() {
     }
   };
 
-  const handleClearManual = async () => {
+  const handleResetManual = async () => {
     if (!processSummary) return;
     try {
       setError(null);
-      const allLineIds = processSummary.lines.map((l) => l.line_id);
-      const summary = await api.manualExclude(projectId, { mode: "lines", action: "include", line_ids: allLineIds });
+      const summary = await api.manualExclude(projectId, { mode: "reset" });
       setProcessSummary(summary);
       await refreshPoints(projectId, valueField);
       setOverlay(null);
@@ -166,6 +168,9 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        cmap: cmapName,
+        vmin: manualRange.enabled ? manualRange.vmin : null,
+        vmax: manualRange.enabled ? manualRange.vmax : null,
       });
       setOverlay(resp);
       setActiveTransform("none");
@@ -191,6 +196,9 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        cmap: cmapName,
+        vmin: manualRange.enabled ? manualRange.vmin : null,
+        vmax: manualRange.enabled ? manualRange.vmax : null,
       });
       setOverlay(resp);
       setActiveTransform(name);
@@ -201,7 +209,7 @@ export default function App() {
     }
   };
 
-  const colorRange = useMemo(() => {
+  const autoColorRange = useMemo(() => {
     const stats = valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats;
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
     if (points.length > 0) {
@@ -212,9 +220,15 @@ export default function App() {
     return { vmin: 0, vmax: 1 };
   }, [processSummary, valueField, points]);
 
+  const colorRange = useMemo(() => {
+    if (manualRange.enabled && manualRange.vmin != null && manualRange.vmax != null) {
+      return { vmin: manualRange.vmin, vmax: manualRange.vmax };
+    }
+    return autoColorRange;
+  }, [manualRange, autoColorRange]);
+
   const legendStats = overlay?.stats || (valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats);
   const legendLabel = activeTransform !== "none" ? activeTransform.toUpperCase() : valueField === "anomaly" ? "자력 이상" : "TMI";
-  const legendCmapKind = valueField === "anomaly" || activeTransform !== "none" ? "anomaly" : "tmi";
   const legendRange = overlay ? { vmin: overlay.vmin, vmax: overlay.vmax } : colorRange;
 
   return (
@@ -251,9 +265,8 @@ export default function App() {
       <div style={{ flex: 1, position: "relative" }}>
         <MapView
           points={points}
-          valueField={valueField}
           colorRange={colorRange}
-          cmapKind={valueField === "anomaly" ? "anomaly" : "tmi"}
+          cmapName={cmapName}
           overlay={overlay}
           onHoverPoint={setHoverPoint}
           drawMode={drawMode}
@@ -267,9 +280,12 @@ export default function App() {
           lines={processSummary?.lines}
           onToggleLines={handleToggleLines}
           drawMode={drawMode}
+          drawAction={drawAction}
+          onSetDrawAction={setDrawAction}
           onToggleDrawMode={() => setDrawMode((v) => !v)}
-          onClearPolygonExclusions={handleClearManual}
-          nExcludedManual={processSummary?.n_excluded_manual}
+          onResetManual={handleResetManual}
+          nManualIncluded={processSummary?.n_manual_included}
+          nManualExcluded={processSummary?.n_manual_excluded}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>
@@ -278,7 +294,10 @@ export default function App() {
           unit="nT"
           vmin={legendRange.vmin}
           vmax={legendRange.vmax}
-          cmapKind={legendCmapKind}
+          cmapName={cmapName}
+          onCmapChange={setCmapName}
+          manualRange={manualRange}
+          onManualRangeChange={setManualRange}
           stats={legendStats}
           hoverPoint={hoverPoint}
         />

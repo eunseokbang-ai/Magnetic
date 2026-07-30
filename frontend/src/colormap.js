@@ -1,5 +1,7 @@
-// Small dependency-free colormaps matching the backend's default choices
-// closely enough for consistent point/grid coloring.
+// Small dependency-free colormaps. Names match valid matplotlib colormap
+// names 1:1 so the same choice can be sent as the backend's `cmap` request
+// field for grid/transform PNG rendering and stay visually consistent with
+// the point layer's client-side coloring.
 
 const VIRIDIS_STOPS = [
   [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142],
@@ -7,10 +9,58 @@ const VIRIDIS_STOPS = [
   [180, 222, 44], [253, 231, 37],
 ];
 
-const RDYLBU_STOPS = [
-  [165, 0, 38], [215, 48, 39], [244, 109, 67], [253, 174, 97],
-  [254, 224, 144], [255, 255, 191], [224, 243, 248], [171, 217, 233],
-  [116, 173, 209], [69, 117, 180], [49, 54, 149],
+const PLASMA_STOPS = [
+  [13, 8, 135], [84, 2, 163], [139, 10, 165], [185, 50, 137],
+  [219, 92, 104], [244, 136, 73], [254, 188, 43], [240, 249, 33],
+];
+
+const TURBO_STOPS = [
+  [48, 18, 59], [65, 69, 171], [70, 117, 237], [57, 162, 237],
+  [24, 199, 197], [63, 220, 140], [146, 231, 73], [216, 215, 44],
+  [247, 161, 38], [231, 90, 15], [122, 4, 3],
+];
+
+// low -> high already in "reversed" (red = high) orientation
+const RDYLBU_R_STOPS = [
+  [49, 54, 149], [69, 117, 180], [116, 173, 209], [171, 217, 233],
+  [224, 243, 248], [255, 255, 191], [254, 224, 144], [253, 174, 97],
+  [244, 109, 67], [215, 48, 39], [165, 0, 38],
+];
+
+const RDBU_R_STOPS = [
+  [5, 48, 97], [33, 102, 172], [67, 147, 195], [146, 197, 222],
+  [209, 229, 240], [253, 219, 199], [244, 165, 130], [214, 96, 77],
+  [178, 24, 43], [103, 0, 31],
+];
+
+const SPECTRAL_R_STOPS = [
+  [94, 79, 162], [50, 136, 189], [102, 194, 165], [171, 221, 164],
+  [230, 245, 152], [255, 255, 191], [254, 224, 139], [253, 174, 97],
+  [244, 109, 67], [213, 62, 79], [158, 1, 66],
+];
+
+const GRAY_STOPS = [
+  [20, 20, 20], [255, 255, 255],
+];
+
+const COLORMAPS = {
+  viridis: VIRIDIS_STOPS,
+  plasma: PLASMA_STOPS,
+  turbo: TURBO_STOPS,
+  RdYlBu_r: RDYLBU_R_STOPS,
+  RdBu_r: RDBU_R_STOPS,
+  Spectral_r: SPECTRAL_R_STOPS,
+  gray: GRAY_STOPS,
+};
+
+export const COLORMAP_OPTIONS = [
+  { value: "viridis", label: "Viridis (연속)" },
+  { value: "plasma", label: "Plasma (연속)" },
+  { value: "turbo", label: "Turbo / Rainbow (연속)" },
+  { value: "RdYlBu_r", label: "Red-Yellow-Blue (발산, 기본 이상값)" },
+  { value: "RdBu_r", label: "Red-Blue (발산)" },
+  { value: "Spectral_r", label: "Spectral (발산)" },
+  { value: "gray", label: "Grayscale" },
 ];
 
 function interpolateStops(stops, t) {
@@ -27,17 +77,13 @@ function interpolateStops(stops, t) {
   return `rgb(${r},${g},${b})`;
 }
 
-export function viridis(t) {
-  return interpolateStops(VIRIDIS_STOPS, t);
-}
-
-// RdYlBu_r (reversed: red=high, blue=low), matching backend's anomaly cmap.
-export function rdylbuReversed(t) {
-  return interpolateStops(RDYLBU_STOPS.slice().reverse(), t);
+export function getColorFn(cmapName) {
+  const stops = COLORMAPS[cmapName] || COLORMAPS.viridis;
+  return (t) => interpolateStops(stops, t);
 }
 
 export function makeColorScale(cmapName, vmin, vmax) {
-  const fn = cmapName === "anomaly" ? rdylbuReversed : viridis;
+  const fn = getColorFn(cmapName);
   const span = vmax - vmin || 1;
   return (value) => fn((value - vmin) / span);
 }

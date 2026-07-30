@@ -1,7 +1,9 @@
-import { rdylbuReversed, viridis } from "../colormap";
+import { getColorFn, COLORMAP_OPTIONS } from "../colormap";
 
-function Gradient({ cmapKind }) {
-  const fn = cmapKind === "anomaly" ? rdylbuReversed : viridis;
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+
+function Gradient({ cmapName }) {
+  const fn = getColorFn(cmapName);
   const stops = Array.from({ length: 20 }, (_, i) => fn(i / 19));
   return (
     <div
@@ -15,18 +17,67 @@ function Gradient({ cmapKind }) {
   );
 }
 
-export default function Legend({ label, unit, vmin, vmax, cmapKind, stats, hoverPoint }) {
+export default function Legend({
+  label,
+  unit,
+  vmin,
+  vmax,
+  cmapName,
+  onCmapChange,
+  manualRange,
+  onManualRangeChange,
+  stats,
+  hoverPoint,
+}) {
+  const updateManual = (key, value) => onManualRangeChange({ ...manualRange, [key]: value });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
           {label} {unit ? `(${unit})` : ""}
         </div>
-        <Gradient cmapKind={cmapKind} />
+        <Gradient cmapName={cmapName} />
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#6b7280", marginTop: 2 }}>
           <span>{vmin != null ? vmin.toFixed(1) : "-"}</span>
           <span>{vmax != null ? vmax.toFixed(1) : "-"}</span>
         </div>
+      </div>
+
+      <div style={{ fontSize: 12 }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
+          <span style={{ color: "#4b5563" }}>컬러맵</span>
+          <select style={inputStyle} value={cmapName} onChange={(e) => onCmapChange(e.target.value)}>
+            {COLORMAP_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+          <input type="checkbox" checked={manualRange.enabled} onChange={(e) => updateManual("enabled", e.target.checked)} />
+          <span style={{ color: "#4b5563" }}>표시 범위 수동 지정</span>
+        </label>
+        {manualRange.enabled && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              type="number"
+              style={inputStyle}
+              placeholder="최소"
+              value={manualRange.vmin ?? ""}
+              onChange={(e) => updateManual("vmin", e.target.value === "" ? null : parseFloat(e.target.value))}
+            />
+            <input
+              type="number"
+              style={inputStyle}
+              placeholder="최대"
+              value={manualRange.vmax ?? ""}
+              onChange={(e) => updateManual("vmax", e.target.value === "" ? null : parseFloat(e.target.value))}
+            />
+          </div>
+        )}
       </div>
 
       {stats && (

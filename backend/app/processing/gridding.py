@@ -22,14 +22,16 @@ def grid_points(
     y: np.ndarray,
     values: np.ndarray,
     cell_size_m: float,
-    method: str = "spline",
+    method: str = "nearest",
     max_distance_m: float | None = None,
 ) -> GridResult:
     """Block-mean reduce then interpolate scattered (x, y, values) onto a
     regular grid at cell_size_m spacing.
 
-    method: "spline" (verde bi-harmonic spline, smoothest - default),
-    "linear" or "cubic" (scipy.interpolate.griddata).
+    method: "nearest" (fast KD-tree nearest-value fill, blocky "raw cell"
+    look - default), "linear" or "cubic" (scipy.interpolate.griddata,
+    smoother but slower), or "spline" (verde bi-harmonic spline, smoothest
+    but solves a dense linear system - can be slow with many points).
 
     Cells farther than max_distance_m from any input point are masked to
     NaN so the grid doesn't extrapolate far beyond the flown lines. The
@@ -53,7 +55,9 @@ def grid_points(
     shape_coords = vd.grid_coordinates(region, spacing=cell_size_m)
     easting_2d, northing_2d = shape_coords
 
-    if method == "spline":
+    if method == "nearest":
+        grid_values = griddata((x_r, y_r), values_r, (easting_2d, northing_2d), method="nearest")
+    elif method == "spline":
         spline = vd.Spline()
         spline.fit((x_r, y_r), values_r)
         grid_values = spline.predict((easting_2d, northing_2d))
