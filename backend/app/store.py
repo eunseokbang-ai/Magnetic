@@ -35,6 +35,7 @@ from .processing.inversion import (
     horizontal_slice,
     invert,
     render_section_png,
+    upsample_susceptibility,
 )
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import suggest_mesh_params
@@ -89,6 +90,8 @@ class Project:
     inversion_result: InversionResult | None = None
     inversion_params: InversionParams | None = None
     inversion_field_intensity_nt: float | None = None
+    inversion_obs_grid: GridResult | None = None
+    inversion_value_field: str | None = None
 
     def load_drone(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
@@ -448,6 +451,8 @@ class Project:
 
         self.inversion_result = result
         self.inversion_params = params
+        self.inversion_obs_grid = obs_grid
+        self.inversion_value_field = params.value
 
         active_chi = result.susceptibility[result.susceptibility > 0]
         return {
@@ -542,20 +547,47 @@ class Project:
         mesh = result.mesh
         x0 = float(mesh.x_centers.mean())
         y0 = float(mesh.y_centers.mean())
-        Y, X, Z = np.meshgrid(mesh.y_centers - y0, mesh.x_centers - x0, mesh.z_centers, indexing="ij")
-        chi = result.susceptibility
+
+        # Interpolate onto a much finer grid before thresholding, purely
+        # so the isosurface renders as a smooth "blob" instead of a
+        # blocky voxel shape - the inversion itself is unaffected, this
+        # only changes how the already-solved model is displayed. See
+        # processing/inversion.upsample_susceptibility.
+        fine_x, fine_y, fine_z, fine_chi = upsample_susceptibility(mesh, result.susceptibility)
+
+        chi = fine_chi
         if threshold is not None:
             chi = np.where(chi >= threshold, chi, 0.0)
         if threshold_max is not None:
             chi = np.where(chi <= threshold_max, chi, 0.0)
+
+        Y, X, Z = np.meshgrid(fine_y - y0, fine_x - x0, fine_z, indexing="ij")
         active_chi = result.susceptibility[result.susceptibility > 0]
+
+        # Drape the actual observed anomaly/TMI map used as inversion
+        # input on the terrain-following top of the mesh, matching the
+        # common "2D magnetic map on a 3D inversion box" presentation -
+        # gives geographic context for where the recovered bodies sit.
+        top = None
+        if self.inversion_obs_grid is not None:
+            top = {
+                "x": (mesh.x_centers - x0).tolist(),
+                "y": (mesh.y_centers - y0).tolist(),
+                "z": mesh.ground_elevation.tolist(),
+                "color": np.where(
+                    np.isfinite(self.inversion_obs_grid.values), self.inversion_obs_grid.values, None
+                ).tolist(),
+                "value_field": self.inversion_value_field,
+            }
+
         return {
             "x": X.ravel().tolist(),
             "y": Y.ravel().tolist(),
             "z": Z.ravel().tolist(),
             "value": chi.ravel().tolist(),
-            "shape": list(mesh.active.shape),
+            "shape": list(fine_chi.shape),
             "stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
+            "top": top,
         }
 
 

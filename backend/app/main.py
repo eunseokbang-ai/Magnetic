@@ -4,6 +4,7 @@ import io
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
@@ -30,6 +31,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# The 3D inversion volume payload (flattened isosurface coordinate arrays)
+# can run into the tens of MB uncompressed; JSON full of repeated float
+# patterns compresses very well.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.exception_handler(ProjectError)

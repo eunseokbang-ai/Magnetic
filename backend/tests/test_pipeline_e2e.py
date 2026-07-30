@@ -243,6 +243,16 @@ def _check_inversion(client, project_id, pts):
     volume = r.json()
     ny, nx, nz = volume["shape"]
     assert len(volume["x"]) == ny * nx * nz == len(volume["value"])
+    # isosurface is upsampled well beyond the raw 8-layer mesh for a
+    # smooth render, and the observed-anomaly map is draped on the
+    # terrain-following top for geographic context.
+    assert ny * nx * nz > 8 * inv_summary["n_active_cells"] / inv_summary["n_layers"] * 4
+    assert volume["top"] is not None
+    top = volume["top"]
+    top_ny, top_nx = len(top["y"]), len(top["x"])
+    assert top_ny > 0 and top_nx > 0
+    assert len(top["z"]) == top_ny and len(top["z"][0]) == top_nx
+    assert len(top["color"]) == top_ny and len(top["color"][0]) == top_nx
 
     # min+max SI range filtering: values outside [threshold, threshold_max]
     # should be excluded from the returned slice/volume.

@@ -35,6 +35,7 @@ import numpy as np
 from choclo.prism import magnetic_field
 from numba import njit, prange
 from PIL import Image
+from scipy.ndimage import zoom as ndi_zoom
 
 MU0 = 4.0 * np.pi * 1e-7
 
@@ -271,6 +272,37 @@ def invert(
         n_obs=n_obs,
         iterations=n_iter,
     )
+
+
+def upsample_susceptibility(
+    mesh: InversionMesh,
+    chi: np.ndarray,
+    target_points: int = 120_000,
+    max_factor: float = 6.0,
+):
+    """Resample the (blocky, cell-sized) susceptibility array onto a much
+    finer regular grid via trilinear interpolation, purely for a smoother
+    3D isosurface render - the inversion itself still solves on the
+    original coarse mesh; this only affects how the result looks.
+
+    Order-1 (trilinear) interpolation is used deliberately over a cubic
+    spline: it can't overshoot past the local min/max, so it can't invent
+    isosurface lobes that aren't supported by the actual solved model.
+    Returns (x_centers, y_centers, z_centers, fine_chi) on the finer grid.
+    """
+    ny, nx, nz = chi.shape
+    total_cells = max(ny * nx * nz, 1)
+    factor = float(np.clip((target_points / total_cells) ** (1.0 / 3.0), 1.0, max_factor))
+
+    if factor <= 1.0:
+        return mesh.x_centers, mesh.y_centers, mesh.z_centers, chi
+
+    fine_chi = ndi_zoom(chi, zoom=factor, order=1, mode="nearest")
+    fine_ny, fine_nx, fine_nz = fine_chi.shape
+    x_centers = np.linspace(mesh.x_centers[0], mesh.x_centers[-1], fine_nx)
+    y_centers = np.linspace(mesh.y_centers[0], mesh.y_centers[-1], fine_ny)
+    z_centers = np.linspace(mesh.z_centers[0], mesh.z_centers[-1], fine_nz)
+    return x_centers, y_centers, z_centers, fine_chi
 
 
 def _apply_range(values: np.ndarray, threshold: float | None, threshold_max: float | None) -> np.ndarray:
