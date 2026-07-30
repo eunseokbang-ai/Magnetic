@@ -8,6 +8,7 @@ import LineEditor from "./components/LineEditor";
 import LayerManager from "./components/LayerManager";
 import InversionPanel from "./components/InversionPanel";
 import InversionVolumeView from "./components/InversionVolumeView";
+import InversionSectionView from "./components/InversionSectionView";
 
 const DEFAULT_INVERSION_PARAMS = {
   obs_cell_size_m: 30.0,
@@ -15,7 +16,7 @@ const DEFAULT_INVERSION_PARAMS = {
   n_layers: 8,
   assumed_agl_m: 50.0,
   regularization_strength: 1.0,
-  n_irls_iterations: 5,
+  n_irls_iterations: 6,
 };
 
 const DEFAULT_PARAMS = {
@@ -70,17 +71,23 @@ export default function App() {
 
   const [demStatus, setDemStatus] = useState(null);
   const [demUploading, setDemUploading] = useState(false);
+  const [autoParams, setAutoParams] = useState(true);
   const [inversionParams, setInversionParams] = useState(DEFAULT_INVERSION_PARAMS);
   const [inversionRunning, setInversionRunning] = useState(false);
   const [inversionSummary, setInversionSummary] = useState(null);
   const [inversionError, setInversionError] = useState(null);
   const [sliceLayerIndex, setSliceLayerIndex] = useState(0);
   const [sliceThreshold, setSliceThreshold] = useState("");
+  const [sliceThresholdMax, setSliceThresholdMax] = useState("");
+  const [sectionProfile, setSectionProfile] = useState("custom");
+  const [sectionPositionFrac, setSectionPositionFrac] = useState(0.5);
   const [sectionDrawMode, setSectionDrawMode] = useState(false);
   const [sectionThreshold, setSectionThreshold] = useState("");
+  const [sectionThresholdMax, setSectionThresholdMax] = useState("");
   const [sectionResult, setSectionResult] = useState(null);
   const [sectionLoading, setSectionLoading] = useState(false);
   const [volumeThreshold, setVolumeThreshold] = useState("");
+  const [volumeThresholdMax, setVolumeThresholdMax] = useState("");
   const [volumeData, setVolumeData] = useState(null);
 
   // Drone and base uploads can both fire ensureProject() before the
@@ -307,10 +314,14 @@ export default function App() {
     try {
       setInversionError(null);
       setInversionRunning(true);
-      const resp = await api.runInversion(projectId, inversionParams);
+      const runParams = autoParams
+        ? { ...inversionParams, obs_cell_size_m: null, depth_extent_m: null, n_layers: null }
+        : inversionParams;
+      const resp = await api.runInversion(projectId, runParams);
       setInversionSummary(resp);
       setSliceLayerIndex(0);
       setSectionResult(null);
+      setVolumeData(null);
     } catch (e) {
       setInversionError(e.message || String(e));
     } finally {
@@ -324,6 +335,7 @@ export default function App() {
       const resp = await api.getInversionSlice(projectId, {
         layer_index: sliceLayerIndex,
         threshold: sliceThreshold === "" ? null : sliceThreshold,
+        threshold_max: sliceThresholdMax === "" ? null : sliceThresholdMax,
       });
       setOverlay(resp);
       setActiveTransform("inversion_slice");
@@ -340,8 +352,28 @@ export default function App() {
       setInversionError(null);
       setSectionLoading(true);
       const resp = await api.getInversionSection(projectId, {
+        profile: "custom",
         path: latlngCoords,
         threshold: sectionThreshold === "" ? null : sectionThreshold,
+        threshold_max: sectionThresholdMax === "" ? null : sectionThresholdMax,
+      });
+      setSectionResult(resp);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setSectionLoading(false);
+    }
+  };
+
+  const handleRunFixedSection = async () => {
+    try {
+      setInversionError(null);
+      setSectionLoading(true);
+      const resp = await api.getInversionSection(projectId, {
+        profile: sectionProfile,
+        position_frac: sectionPositionFrac,
+        threshold: sectionThreshold === "" ? null : sectionThreshold,
+        threshold_max: sectionThresholdMax === "" ? null : sectionThresholdMax,
       });
       setSectionResult(resp);
     } catch (e) {
@@ -363,8 +395,9 @@ export default function App() {
     try {
       setInversionError(null);
       const threshold = volumeThreshold === "" ? null : volumeThreshold;
-      const resp = await api.getInversionVolume(projectId, threshold);
-      setVolumeData({ ...resp, threshold });
+      const thresholdMax = volumeThresholdMax === "" ? null : volumeThresholdMax;
+      const resp = await api.getInversionVolume(projectId, threshold, thresholdMax);
+      setVolumeData({ ...resp, threshold, thresholdMax });
     } catch (e) {
       setInversionError(e.message || String(e));
     }
@@ -449,6 +482,7 @@ export default function App() {
           onShapeDrawn={handleMapShapeDrawn}
         />
         {volumeData && <InversionVolumeView data={volumeData} onClose={() => setVolumeData(null)} />}
+        {!volumeData && sectionResult && <InversionSectionView data={sectionResult} onClose={() => setSectionResult(null)} />}
       </div>
 
       <div style={{ width: 280, borderLeft: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}>
@@ -490,6 +524,8 @@ export default function App() {
           onClearDem={handleClearDem}
           params={inversionParams}
           setParams={setInversionParams}
+          autoParams={autoParams}
+          setAutoParams={setAutoParams}
           onRun={handleRunInversion}
           running={inversionRunning}
           summary={inversionSummary}
@@ -498,16 +534,26 @@ export default function App() {
           setSliceLayerIndex={setSliceLayerIndex}
           sliceThreshold={sliceThreshold}
           setSliceThreshold={setSliceThreshold}
+          sliceThresholdMax={sliceThresholdMax}
+          setSliceThresholdMax={setSliceThresholdMax}
           onShowSlice={handleShowInversionSlice}
+          sectionProfile={sectionProfile}
+          setSectionProfile={setSectionProfile}
+          sectionPositionFrac={sectionPositionFrac}
+          setSectionPositionFrac={setSectionPositionFrac}
           sectionDrawMode={sectionDrawMode}
           onToggleSectionDrawMode={handleToggleSectionDrawMode}
+          onRunFixedSection={handleRunFixedSection}
           sectionThreshold={sectionThreshold}
           setSectionThreshold={setSectionThreshold}
-          sectionResult={sectionResult}
+          sectionThresholdMax={sectionThresholdMax}
+          setSectionThresholdMax={setSectionThresholdMax}
           sectionLoading={sectionLoading}
           onOpenVolume={handleOpenVolume}
           volumeThreshold={volumeThreshold}
           setVolumeThreshold={setVolumeThreshold}
+          volumeThresholdMax={volumeThresholdMax}
+          setVolumeThresholdMax={setVolumeThresholdMax}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>

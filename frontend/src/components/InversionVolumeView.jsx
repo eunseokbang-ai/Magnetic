@@ -29,7 +29,7 @@ export default function InversionVolumeView({ data, onClose }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>3차원 자화율 이상대 (SI, 임계값 이상만 표시)</div>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>3차원 자화율 이상대 (SI, 지정한 범위만 표시)</div>
         <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14 }}>
           ✕ 닫기
         </button>
@@ -44,7 +44,7 @@ export default function InversionVolumeView({ data, onClose }) {
               z: data.z,
               value: data.value,
               isomin: data.threshold ?? isomin,
-              isomax: data.stats?.max ?? undefined,
+              isomax: data.thresholdMax ?? data.stats?.max ?? undefined,
               opacity: 0.15,
               opacityscale: [
                 [0, 0],

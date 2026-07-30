@@ -244,6 +244,56 @@ def _check_inversion(client, project_id, pts):
     ny, nx, nz = volume["shape"]
     assert len(volume["x"]) == ny * nx * nz == len(volume["value"])
 
+    # min+max SI range filtering: values outside [threshold, threshold_max]
+    # should be excluded from the returned slice/volume.
+    r = client.post(
+        f"/api/projects/{project_id}/inversion/slice",
+        json={"layer_index": 2, "threshold": 0.02, "threshold_max": 0.1},
+    )
+    assert r.status_code == 200, r.text
+    ranged_stats = r.json()["stats"]
+    if ranged_stats["max"] is not None:
+        assert ranged_stats["min"] >= 0.02 - 1e-9 and ranged_stats["max"] <= 0.1 + 1e-9
+
+    r = client.get(f"/api/projects/{project_id}/inversion/volume", params={"threshold": 0.02, "threshold_max": 0.1})
+    assert r.status_code == 200, r.text
+
+    # fixed east-west / north-south section profiles (no manual drawing)
+    r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "ew", "position_frac": 0.5})
+    assert r.status_code == 200, r.text
+    ew = r.json()
+    assert ew["profile"] == "ew"
+    assert ew["image_data_url"].startswith("data:image/png;base64,")
+
+    r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "ns", "position_frac": 0.5})
+    assert r.status_code == 200, r.text
+    assert r.json()["profile"] == "ns"
+
+    # ew/ns without position_frac, and custom without a path, are rejected
+    r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "ew"})
+    assert r.status_code == 400, r.text
+    r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "custom"})
+    assert r.status_code == 400, r.text
+
+    # auto-parameter mode: omitting the mesh params should pick sensible
+    # values from line spacing / spectral depth and run successfully.
+    r = client.post(f"/api/projects/{project_id}/inversion", json={})
+    assert r.status_code == 200, r.text
+    auto_summary = r.json()
+    print("auto-param inversion summary:", {k: v for k, v in auto_summary.items() if k != "field"})
+    assert auto_summary["auto_params"] is True
+    assert auto_summary["obs_cell_size_m"] > 0
+    assert auto_summary["depth_extent_m"] > 0
+    assert auto_summary["n_layers"] >= 4
+
+    # re-run explicit params so the rest of this helper (DEM checks etc.)
+    # operates on the same fixed mesh as before.
+    r = client.post(
+        f"/api/projects/{project_id}/inversion",
+        json={"obs_cell_size_m": 40.0, "depth_extent_m": 150.0, "n_layers": 8},
+    )
+    assert r.status_code == 200, r.text
+
     # DEM upload: build a synthetic GeoTIFF covering the survey extent,
     # confirm it's actually used, then clear it back to GPS-AGL estimation.
     import numpy as np

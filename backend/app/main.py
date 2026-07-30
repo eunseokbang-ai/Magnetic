@@ -160,9 +160,9 @@ def inversion_section(project_id: str, req: InversionSectionRequest):
 
 
 @app.get("/api/projects/{project_id}/inversion/volume")
-def inversion_volume(project_id: str, threshold: float | None = None):
+def inversion_volume(project_id: str, threshold: float | None = None, threshold_max: float | None = None):
     project = store.get(project_id)
-    return project.get_inversion_volume(threshold)
+    return project.get_inversion_volume(threshold, threshold_max)
 
 
 @app.get("/api/health")

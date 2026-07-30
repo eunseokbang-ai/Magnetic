@@ -95,7 +95,10 @@ export function getInversionSection(projectId, req) {
   return request(`/projects/${projectId}/inversion/section`, { method: "POST", body: JSON.stringify(req) });
 }
 
-export function getInversionVolume(projectId, threshold) {
-  const q = threshold != null ? `?threshold=${threshold}` : "";
+export function getInversionVolume(projectId, threshold, thresholdMax) {
+  const params = new URLSearchParams();
+  if (threshold != null) params.set("threshold", threshold);
+  if (thresholdMax != null) params.set("threshold_max", thresholdMax);
+  const q = params.toString() ? `?${params.toString()}` : "";
   return request(`/projects/${projectId}/inversion/volume${q}`);
 }

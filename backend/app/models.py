@@ -67,25 +67,35 @@ class ManualExcludeRequest(BaseModel):
 
 class InversionParams(BaseModel):
     value: ValueField = "anomaly"
-    obs_cell_size_m: float = Field(20.0, gt=0)  # observation/mesh horizontal cell size
-    depth_extent_m: float = Field(100.0, gt=0)
-    n_layers: int = Field(8, ge=1, le=30)
+    # Any of these left as None (the default) is auto-estimated from the
+    # survey's own line spacing/extent and anomaly spectrum - see
+    # processing/inversion_auto.py.
+    obs_cell_size_m: Optional[float] = Field(None, gt=0)
+    depth_extent_m: Optional[float] = Field(None, gt=0)
+    n_layers: Optional[int] = Field(None, ge=1, le=50)
     assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
     regularization_strength: float = Field(1.0, gt=0)
-    n_irls_iterations: int = Field(5, ge=1, le=20)
+    n_irls_iterations: int = Field(6, ge=1, le=30)
 
 
 class InversionSliceRequest(BaseModel):
     layer_index: int = Field(0, ge=0)
     threshold: Optional[float] = None
+    threshold_max: Optional[float] = None
     cmap: Optional[str] = None
     vmin: Optional[float] = None
     vmax: Optional[float] = None
 
 
+SectionProfile = Literal["custom", "ew", "ns"]
+
+
 class InversionSectionRequest(BaseModel):
-    path: list[list[float]] = Field(..., min_length=2)  # [[lat, lon], ...]
+    profile: SectionProfile = "custom"
+    position_frac: Optional[float] = Field(None, ge=0, le=1)  # required for ew/ns
+    path: Optional[list[list[float]]] = Field(None, min_length=2)  # [[lat, lon], ...], required for custom
     threshold: Optional[float] = None
+    threshold_max: Optional[float] = None
     cmap: Optional[str] = None
     vmin: Optional[float] = None
     vmax: Optional[float] = None
@@ -94,3 +104,4 @@ class InversionSectionRequest(BaseModel):
 
 class InversionVolumeRequest(BaseModel):
     threshold: Optional[float] = None
+    threshold_max: Optional[float] = None

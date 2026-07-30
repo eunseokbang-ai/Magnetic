@@ -37,6 +37,7 @@ from .processing.inversion import (
     render_section_png,
 )
 from .processing.inversion import vertical_section as _inversion_vertical_section
+from .processing.inversion_auto import suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
 from .processing.lines import LineDetectionParams, detect_lines, estimate_line_spacing_m
 from .processing.render import grid_to_png_overlay
@@ -49,6 +50,15 @@ DEFAULT_CMAPS = {
     "tmi_grid": "viridis",
     "derivative": "RdYlBu_r",
 }
+
+# Size caps for the 3D inversion mesh/observation grid. The normal
+# equations are solved in "data space" (see processing/inversion.py),
+# whose cost scales with n_obs^2 * n_active - these limits were picked
+# from a benchmark of that solve (n_obs=3000, n_active=60000 with 6 IRLS
+# iterations takes ~90s), so a user asking for more detail still finishes
+# in roughly a minute or two rather than growing unbounded.
+N_OBS_CAP = 3000
+N_ACTIVE_CAP = 70000
 
 
 class ProjectError(ValueError):
@@ -356,20 +366,31 @@ class Project:
             raise ProjectError("역산을 위한 유효 포인트가 부족합니다.")
         col = "anomaly" if params.value == "anomaly" else "tmi"
 
-        max_distance = self._resolve_max_distance(params.obs_cell_size_m, None)
+        auto_used = params.obs_cell_size_m is None or params.depth_extent_m is None or params.n_layers is None
+        auto_suggestion = None
+        if auto_used:
+            auto_suggestion = suggest_mesh_params(
+                sub["x"].to_numpy(), sub["y"].to_numpy(), sub[col].to_numpy(),
+                self.line_spacing_m, N_OBS_CAP, N_ACTIVE_CAP,
+            )
+        obs_cell_size_m = params.obs_cell_size_m or auto_suggestion["obs_cell_size_m"]
+        depth_extent_m = params.depth_extent_m or auto_suggestion["depth_extent_m"]
+        n_layers = params.n_layers or auto_suggestion["n_layers"]
+
+        max_distance = self._resolve_max_distance(obs_cell_size_m, None)
         obs_grid = grid_points(
             sub["x"].to_numpy(), sub["y"].to_numpy(), sub[col].to_numpy(),
-            params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+            obs_cell_size_m, method="nearest", max_distance_m=max_distance,
         )
         alt_grid = grid_points(
             sub["x"].to_numpy(), sub["y"].to_numpy(), sub["altitude_ellipsoidal_m"].to_numpy(),
-            params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+            obs_cell_size_m, method="nearest", max_distance_m=max_distance,
         )
 
         ny, nx = obs_grid.values.shape
-        if nx * ny > 2500:
+        if nx * ny > N_OBS_CAP:
             raise ProjectError(
-                f"관측 격자가 너무 촘촘합니다 ({nx}x{ny}={nx*ny}점) - 격자 크기(obs_cell_size_m)를 늘려주세요."
+                f"관측 격자가 너무 촘촘합니다 ({nx}x{ny}={nx*ny}점, 최대 {N_OBS_CAP}점) - 격자 크기(obs_cell_size_m)를 늘려주세요."
             )
 
         if self.dem_bytes is not None:
@@ -381,22 +402,22 @@ class Project:
             point_ground = estimate_ground_elevation(sub["altitude_ellipsoidal_m"].to_numpy(), params.assumed_agl_m)
             ground_result = grid_points(
                 sub["x"].to_numpy(), sub["y"].to_numpy(), point_ground,
-                params.obs_cell_size_m, method="nearest", max_distance_m=max_distance,
+                obs_cell_size_m, method="nearest", max_distance_m=max_distance,
             )
             ground_elev = ground_result.values
 
         try:
             mesh = build_mesh(
                 obs_grid.easting, obs_grid.northing, ground_elev,
-                cell_size_m=params.obs_cell_size_m, depth_extent_m=params.depth_extent_m, n_layers=params.n_layers,
+                cell_size_m=obs_cell_size_m, depth_extent_m=depth_extent_m, n_layers=n_layers,
             )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
 
         n_mesh_cells = int(mesh.active.sum())
-        if n_mesh_cells > 30000:
+        if n_mesh_cells > N_ACTIVE_CAP:
             raise ProjectError(
-                f"역산 메쉬가 너무 큽니다 ({n_mesh_cells}셀) - 격자 크기를 늘리거나 레이어 수/심도를 줄여주세요."
+                f"역산 메쉬가 너무 큽니다 ({n_mesh_cells}셀, 최대 {N_ACTIVE_CAP}셀) - 격자 크기를 늘리거나 레이어 수/심도를 줄여주세요."
             )
 
         easting_2d, northing_2d = np.meshgrid(obs_grid.easting, obs_grid.northing)
@@ -434,7 +455,9 @@ class Project:
             "n_active_cells": result.n_active_cells,
             "rms_misfit_nt": result.rms_misfit_nt,
             "iterations": result.iterations,
-            "n_layers": params.n_layers,
+            "n_layers": n_layers,
+            "obs_cell_size_m": obs_cell_size_m,
+            "depth_extent_m": depth_extent_m,
             "cell_size_m": mesh.cell_size_m,
             "layer_thickness_m": mesh.layer_thickness_m,
             "elevation_range_m": [float(mesh.z_centers.min()), float(mesh.z_centers.max())],
@@ -445,6 +468,8 @@ class Project:
             },
             "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "used_dem": self.dem_bytes is not None,
+            "auto_params": auto_used,
+            "source_depth_estimate_m": auto_suggestion["source_depth_estimate_m"] if auto_suggestion else None,
         }
 
     def get_inversion_horizontal_slice(self, req: InversionSliceRequest) -> dict:
@@ -452,7 +477,7 @@ class Project:
             raise ProjectError("역산을 먼저 실행하세요.")
         mesh = self.inversion_result.mesh
         try:
-            slice_2d = horizontal_slice(self.inversion_result, req.layer_index, req.threshold)
+            slice_2d = horizontal_slice(self.inversion_result, req.layer_index, req.threshold, req.threshold_max)
             overlay = grid_to_png_overlay(
                 slice_2d, mesh.x_centers, mesh.y_centers, self.utm_epsg,
                 cmap_name=req.cmap or "geosoft_rainbow", symmetric=False, vmin=req.vmin, vmax=req.vmax,
@@ -469,15 +494,37 @@ class Project:
     def get_inversion_vertical_section(self, req: InversionSectionRequest) -> dict:
         if self.inversion_result is None:
             raise ProjectError("역산을 먼저 실행하세요.")
-        if self.utm_epsg is None:
-            raise ProjectError("좌표계 정보가 없습니다.")
-        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
-        lats = [pt[0] for pt in req.path]
-        lons = [pt[1] for pt in req.path]
-        vx, vy = transformer.transform(lons, lats)
-        path_x, path_y = _densify_path(np.asarray(vx), np.asarray(vy), req.sample_spacing_m)
+        mesh = self.inversion_result.mesh
+
+        if req.profile == "custom":
+            if not req.path or len(req.path) < 2:
+                raise ProjectError("자유선 단면을 위해서는 경로(path)가 필요합니다.")
+            if self.utm_epsg is None:
+                raise ProjectError("좌표계 정보가 없습니다.")
+            transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            lats = [pt[0] for pt in req.path]
+            lons = [pt[1] for pt in req.path]
+            vx, vy = transformer.transform(lons, lats)
+            path_x, path_y = _densify_path(np.asarray(vx), np.asarray(vy), req.sample_spacing_m)
+        else:
+            if req.position_frac is None:
+                raise ProjectError("동서/남북 단면을 위해서는 position_frac이 필요합니다.")
+            n_samples = max(2, int((mesh.x_centers.max() - mesh.x_centers.min() if req.profile == "ew" else mesh.y_centers.max() - mesh.y_centers.min()) / req.sample_spacing_m) + 1)
+            if req.profile == "ew":
+                # straight line at a fixed north-south position, spanning
+                # the mesh's full east-west extent - local UTM x/y is
+                # close enough to true east/west, north/south at this
+                # survey scale.
+                fixed_y = mesh.y_centers.min() + req.position_frac * (mesh.y_centers.max() - mesh.y_centers.min())
+                path_x = np.linspace(mesh.x_centers.min(), mesh.x_centers.max(), n_samples)
+                path_y = np.full(n_samples, fixed_y)
+            else:  # "ns"
+                fixed_x = mesh.x_centers.min() + req.position_frac * (mesh.x_centers.max() - mesh.x_centers.min())
+                path_y = np.linspace(mesh.y_centers.min(), mesh.y_centers.max(), n_samples)
+                path_x = np.full(n_samples, fixed_x)
+
         try:
-            section, distance = _inversion_vertical_section(self.inversion_result, path_x, path_y, req.threshold)
+            section, distance = _inversion_vertical_section(self.inversion_result, path_x, path_y, req.threshold, req.threshold_max)
             png = render_section_png(
                 section, distance, self.inversion_result.mesh.z_centers,
                 cmap_name=req.cmap or "geosoft_rainbow", vmin=req.vmin, vmax=req.vmax,
@@ -485,9 +532,10 @@ class Project:
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
         png["stats"] = _stats(pd.Series(section.ravel()))
+        png["profile"] = req.profile
         return png
 
-    def get_inversion_volume(self, threshold: float | None = None) -> dict:
+    def get_inversion_volume(self, threshold: float | None = None, threshold_max: float | None = None) -> dict:
         if self.inversion_result is None:
             raise ProjectError("역산을 먼저 실행하세요.")
         result = self.inversion_result
@@ -498,6 +546,8 @@ class Project:
         chi = result.susceptibility
         if threshold is not None:
             chi = np.where(chi >= threshold, chi, 0.0)
+        if threshold_max is not None:
+            chi = np.where(chi <= threshold_max, chi, 0.0)
         active_chi = result.susceptibility[result.susceptibility > 0]
         return {
             "x": X.ravel().tolist(),

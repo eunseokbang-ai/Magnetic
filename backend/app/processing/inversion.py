@@ -273,18 +273,34 @@ def invert(
     )
 
 
-def horizontal_slice(result: InversionResult, layer_index: int, threshold: float | None = None) -> np.ndarray:
+def _apply_range(values: np.ndarray, threshold: float | None, threshold_max: float | None) -> np.ndarray:
+    """Keep only cells within [threshold, threshold_max] (either bound
+    optional), NaN-ing the rest - lets a user isolate one SI band/"덩어리"
+    instead of always seeing everything above a single floor."""
+    out = values
+    if threshold is not None:
+        out = np.where(out >= threshold, out, np.nan)
+    if threshold_max is not None:
+        out = np.where(out <= threshold_max, out, np.nan)
+    return out
+
+
+def horizontal_slice(
+    result: InversionResult,
+    layer_index: int,
+    threshold: float | None = None,
+    threshold_max: float | None = None,
+) -> np.ndarray:
     """2D (ny, nx) susceptibility slice at the given depth layer (0 =
-    shallowest). Air/inactive cells, and cells below `threshold` if given,
-    are set to NaN so processing.render.grid_to_png_overlay renders them
-    transparent."""
+    shallowest). Air/inactive cells, and cells outside [threshold,
+    threshold_max] if given, are set to NaN so
+    processing.render.grid_to_png_overlay renders them transparent."""
     n_layers = result.mesh.active.shape[2]
     layer_index = int(np.clip(layer_index, 0, n_layers - 1))
     slice_2d = result.susceptibility[:, :, layer_index].copy()
     active_2d = result.mesh.active[:, :, layer_index]
     slice_2d[~active_2d] = np.nan
-    if threshold is not None:
-        slice_2d[slice_2d < threshold] = np.nan
+    slice_2d = _apply_range(slice_2d, threshold, threshold_max)
     return slice_2d
 
 
@@ -293,6 +309,7 @@ def vertical_section(
     path_x: np.ndarray,
     path_y: np.ndarray,
     threshold: float | None = None,
+    threshold_max: float | None = None,
 ):
     """Sample the susceptibility model at every depth layer along an
     arbitrary path (already densified to the desired along-path
@@ -313,8 +330,7 @@ def vertical_section(
     section = result.susceptibility[row_idx, col_idx, :].T  # (n_layers, n_samples)
     active = mesh.active[row_idx, col_idx, :].T
     section = np.where(active, section, np.nan)
-    if threshold is not None:
-        section = np.where(section >= threshold, section, np.nan)
+    section = _apply_range(section, threshold, threshold_max)
 
     return section, distance
 
