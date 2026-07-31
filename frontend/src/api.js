@@ -113,6 +113,24 @@ export function uploadOverlayImage(file) {
   return request(`/overlay-images`, { method: "POST", body: form });
 }
 
+// Project-scoped copy of an uploaded reference layer (e.g. geology map) so
+// the chat assistant's sample_point tool can read real pixel values at a
+// point - separate from uploadOverlayImage above, which only produces a
+// display image for the map and is not tied to a project.
+export function uploadReferenceLayer(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/reference-layers`, { method: "POST", body: form });
+}
+
+export function deleteReferenceLayer(projectId, name) {
+  return request(`/projects/${projectId}/reference-layers/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export function sendChatMessage(projectId, message, history) {
+  return request(`/projects/${projectId}/chat`, { method: "POST", body: JSON.stringify({ message, history }) });
+}
+
 export function uploadDem(projectId, file) {
   const form = new FormData();
   form.append("file", file);

@@ -49,7 +49,9 @@ from .processing.leveling import HeadingLevelingResult, apply_heading_correction
 from .processing.lines import LineDetectionParams, detect_lines, detect_tie_lines, estimate_line_spacing_m
 from .processing.contours import compute_contours
 from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
+from .processing.geology_sample import GeologySampleError, sample_geotiff_at_point
 from .processing.gps_lag import apply_gps_mag_lag
+from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
 from .processing.render import grid_to_geotiff_bytes, grid_to_geotiff_bytes_colored, grid_to_png_overlay
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
@@ -102,6 +104,7 @@ class Project:
     gps_lag_info: dict | None = None
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
+    reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
     dem_bytes: bytes | None = None
@@ -272,6 +275,11 @@ class Project:
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling),
         }
+
+    def run_chat(self, message: str, history: list[dict]) -> dict:
+        from .chat import run_chat_turn
+
+        return run_chat_turn(self, message, history)
 
     def generate_report(self) -> str:
         return generate_report_markdown(
@@ -519,6 +527,73 @@ class Project:
         self.dem_bytes = None
         self.dem_name = None
         return {"cleared": True}
+
+    def add_reference_layer(self, name: str, data: bytes) -> dict:
+        """Keep a project-scoped copy of an uploaded reference GeoTIFF (in
+        addition to the stateless preview endpoint the map layer manager
+        uses) so the chat assistant can sample real pixel values at a
+        point instead of only showing the layer as a picture."""
+        try:
+            preview = load_geotiff_overlay(io.BytesIO(data), name=name)
+        except OverlayImageError as exc:
+            raise ProjectError(str(exc)) from exc
+        self.reference_layers[name] = data
+        return preview
+
+    def remove_reference_layer(self, name: str) -> dict:
+        self.reference_layers.pop(name, None)
+        return {"removed": name}
+
+    def sample_point(self, lat: float, lon: float) -> dict:
+        """Look up everything this project currently knows about a single
+        lat/lon: the nearest processed survey point's field values, the
+        3D inversion susceptibility profile at that column (if an
+        inversion has been run), and each uploaded reference layer's
+        pixel value there - the grounding tool behind the chat assistant."""
+        result: dict = {"lat": lat, "lon": lon}
+
+        if self.processed is not None and self.utm_epsg is not None:
+            transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            x, y = transformer.transform(lon, lat)
+            active = self._active_mask()
+            df = self.processed.loc[active]
+            if len(df):
+                dist = np.hypot(df["x"].to_numpy() - x, df["y"].to_numpy() - y)
+                idx = int(np.argmin(dist))
+                row = df.iloc[idx]
+                result["nearest_survey_point"] = {
+                    "distance_m": float(dist[idx]),
+                    "anomaly_nt": float(row["anomaly"]),
+                    "tmi_nt": float(row["tmi"]),
+                }
+
+            if self.inversion_result is not None:
+                mesh = self.inversion_result.mesh
+                col = int(np.argmin(np.abs(mesh.x_centers - x)))
+                row_i = int(np.argmin(np.abs(mesh.y_centers - y)))
+                col_dist_m = float(np.hypot(mesh.x_centers[col] - x, mesh.y_centers[row_i] - y))
+                if col_dist_m <= 2.0 * mesh.cell_size_m:
+                    chi = self.inversion_result.susceptibility[row_i, col, :]
+                    result["inversion_susceptibility_profile"] = {
+                        "distance_from_mesh_column_m": col_dist_m,
+                        "layers": [
+                            {"elevation_m": float(mesh.z_centers[k]), "susceptibility_si": float(chi[k])}
+                            for k in range(len(mesh.z_centers))
+                        ],
+                    }
+                else:
+                    result["inversion_susceptibility_profile"] = {"note": "역산 메쉬 범위 밖의 좌표입니다."}
+
+        if self.reference_layers:
+            geology = {}
+            for layer_name, data in self.reference_layers.items():
+                try:
+                    geology[layer_name] = sample_geotiff_at_point(data, lat, lon)
+                except GeologySampleError as exc:
+                    geology[layer_name] = {"error": str(exc)}
+            result["reference_layers"] = geology
+
+        return result
 
     def save_project_bundle(self) -> bytes:
         """Zip up everything needed to resume this project later without

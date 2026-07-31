@@ -15,6 +15,7 @@ import InversionSectionView from "./components/InversionSectionView";
 const InversionVolumeView = lazy(() => import("./components/InversionVolumeView"));
 import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
+import ChatPanel from "./components/ChatPanel";
 
 const toggleButtonStyle = {
   width: 36,
@@ -143,6 +144,10 @@ export default function App() {
   const [eulerResult, setEulerResult] = useState(null);
   const [eulerError, setEulerError] = useState(null);
   const [showEulerSolutions, setShowEulerSolutions] = useState(true);
+
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState(null);
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -430,7 +435,14 @@ export default function App() {
     try {
       setOverlayError(null);
       setOverlayUploading(true);
-      const resp = await api.uploadOverlayImage(file);
+      const id = await ensureProject();
+      const [resp] = await Promise.all([
+        api.uploadOverlayImage(file),
+        // Best-effort: also keep a project-scoped copy so the chat
+        // assistant's sample_point tool can read real pixel values here.
+        // Must never block the map overlay display if it fails.
+        api.uploadReferenceLayer(id, file).catch(() => null),
+      ]);
       setOverlayLayers((prev) => [
         ...prev,
         { id: `${Date.now()}-${Math.random()}`, name: resp.name, image_data_url: resp.image_data_url, bounds: resp.bounds, opacity: 0.8, visible: true },
@@ -448,7 +460,15 @@ export default function App() {
   const handleSetOverlayOpacity = (id, opacity) =>
     setOverlayLayers((prev) => prev.map((l) => (l.id === id ? { ...l, opacity } : l)));
 
-  const handleRemoveOverlay = (id) => setOverlayLayers((prev) => prev.filter((l) => l.id !== id));
+  const handleRemoveOverlay = (id) => {
+    setOverlayLayers((prev) => {
+      const layer = prev.find((l) => l.id === id);
+      if (layer && projectId) {
+        api.deleteReferenceLayer(projectId, layer.name).catch(() => {});
+      }
+      return prev.filter((l) => l.id !== id);
+    });
+  };
 
   const handleMoveOverlay = (id, direction) => {
     setOverlayLayers((prev) => {
@@ -521,6 +541,22 @@ export default function App() {
       setEulerError(e.message || String(e));
     } finally {
       setEulerRunning(false);
+    }
+  };
+
+  const handleSendChatMessage = async (text) => {
+    try {
+      setChatError(null);
+      setChatSending(true);
+      const id = await ensureProject();
+      const history = chatMessages.map((m) => ({ role: m.role, content: m.content }));
+      setChatMessages((prev) => [...prev, { role: "user", content: text }]);
+      const resp = await api.sendChatMessage(id, text, history);
+      setChatMessages((prev) => [...prev, { role: "assistant", content: resp.reply, toolCalls: resp.tool_calls }]);
+    } catch (e) {
+      setChatError(e.message || String(e));
+    } finally {
+      setChatSending(false);
     }
   };
 
@@ -948,6 +984,9 @@ export default function App() {
           showSolutions={showEulerSolutions}
           setShowSolutions={setShowEulerSolutions}
         />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>15. AI 해석 도우미 (챗봇)</h2>
+        <ChatPanel ready={!!processSummary} messages={chatMessages} onSend={handleSendChatMessage} sending={chatSending} error={chatError} />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>
         <Legend

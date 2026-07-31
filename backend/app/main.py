@@ -8,7 +8,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
+from .chat import ChatError
 from .models import (
+    ChatRequest,
     EulerDeconvolutionRequest,
     GridRequest,
     InversionParams,
@@ -61,6 +63,13 @@ async def base_error_handler(request, exc: BaseLoadError):
 
 @app.exception_handler(OverlayImageError)
 async def overlay_image_error_handler(request, exc: OverlayImageError):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(ChatError)
+async def chat_error_handler(request, exc: ChatError):
     from fastapi.responses import JSONResponse
 
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -153,6 +162,20 @@ async def upload_overlay_image(file: UploadFile):
     content = await file.read()
     name = file.filename or "overlay"
     return load_geotiff_overlay(io.BytesIO(content), name=name)
+
+
+@app.post("/api/projects/{project_id}/reference-layers")
+async def upload_reference_layer(project_id: str, file: UploadFile):
+    project = store.get(project_id)
+    content = await file.read()
+    name = file.filename or "reference"
+    return project.add_reference_layer(name, content)
+
+
+@app.delete("/api/projects/{project_id}/reference-layers/{name}")
+def delete_reference_layer(project_id: str, name: str):
+    project = store.get(project_id)
+    return project.remove_reference_layer(name)
 
 
 @app.post("/api/projects/{project_id}/upload/dem")
@@ -250,6 +273,13 @@ def export_report(project_id: str):
         media_type="text/markdown",
         headers={"Content-Disposition": "attachment; filename=processing_report.md"},
     )
+
+
+@app.post("/api/projects/{project_id}/chat")
+def chat(project_id: str, req: ChatRequest):
+    project = store.get(project_id)
+    history = [m.model_dump() for m in req.history]
+    return project.run_chat(req.message, history)
 
 
 @app.get("/api/health")

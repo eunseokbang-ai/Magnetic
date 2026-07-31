@@ -163,6 +163,16 @@ class EulerDeconvolutionRequest(BaseModel):
     max_depth_uncertainty_pct: float = Field(30.0, gt=0, le=200)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[ChatMessage] = []
+
+
 class InversionVolumeRequest(BaseModel):
     threshold: Optional[float] = None
     threshold_max: Optional[float] = None
