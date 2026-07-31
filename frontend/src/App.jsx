@@ -56,6 +56,7 @@ export default function App() {
   const [gridMethod, setGridMethod] = useState("nearest");
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
   const [gridding, setGridding] = useState(false);
+  const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
   const [overlay, setOverlay] = useState(null);
@@ -63,6 +64,10 @@ export default function App() {
   const [cmapName, setCmapName] = useState("RdYlBu_r");
   const [manualRange, setManualRange] = useState({ enabled: false, vmin: null, vmax: null });
   const [gridOpacity, setGridOpacity] = useState(0.85);
+  const [hillshade, setHillshade] = useState(false);
+  const [hillshadeAzimuth, setHillshadeAzimuth] = useState(315);
+  const [hillshadeAltitude, setHillshadeAltitude] = useState(45);
+  const [hillshadeExaggeration, setHillshadeExaggeration] = useState(3);
   const [showPointsOverGrid, setShowPointsOverGrid] = useState(true);
   const [showLineLabels, setShowLineLabels] = useState(false);
   const [overlayLayers, setOverlayLayers] = useState([]);
@@ -135,6 +140,16 @@ export default function App() {
     setPoints(pts);
   }, []);
 
+  // manual-exclude responses carry just the (point_id -> excluded) delta,
+  // not the whole point list (lat/lon/value/line_id/timestamp never
+  // change from a manual edit) - patching it in place avoids re-fetching
+  // and re-parsing the full point set, which gets slow at 100k+ points.
+  const applyExclusionDelta = useCallback((exclusion) => {
+    if (!exclusion) return;
+    const excludedById = new Map(exclusion.point_id.map((id, i) => [id, exclusion.excluded[i]]));
+    setPoints((prev) => prev.map((p) => (excludedById.has(p.point_id) ? { ...p, excluded: excludedById.get(p.point_id) } : p)));
+  }, []);
+
   const handleProcess = async () => {
     try {
       setError(null);
@@ -170,7 +185,7 @@ export default function App() {
       setError(null);
       const summary = await api.manualExclude(projectId, { mode: "lines", action, line_ids: lineIds });
       setProcessSummary(summary);
-      await refreshPoints(projectId, valueField);
+      applyExclusionDelta(summary.exclusion);
       setOverlay(null);
     } catch (e) {
       handleError(e);
@@ -182,7 +197,7 @@ export default function App() {
       setError(null);
       const summary = await api.manualExclude(projectId, { mode: "polygon", action: drawAction, polygon: latlngCoords });
       setProcessSummary(summary);
-      await refreshPoints(projectId, valueField);
+      applyExclusionDelta(summary.exclusion);
       setOverlay(null);
     } catch (e) {
       handleError(e);
@@ -195,7 +210,7 @@ export default function App() {
       setError(null);
       const summary = await api.manualExclude(projectId, { mode: "reset" });
       setProcessSummary(summary);
-      await refreshPoints(projectId, valueField);
+      applyExclusionDelta(summary.exclusion);
       setOverlay(null);
     } catch (e) {
       handleError(e);
@@ -214,6 +229,10 @@ export default function App() {
         cmap: cmapName,
         vmin: manualRange.enabled ? manualRange.vmin : null,
         vmax: manualRange.enabled ? manualRange.vmax : null,
+        hillshade,
+        hillshade_azimuth_deg: hillshadeAzimuth,
+        hillshade_altitude_deg: hillshadeAltitude,
+        hillshade_exaggeration: hillshadeExaggeration,
       });
       setOverlay(resp);
       setActiveTransform("none");
@@ -242,6 +261,10 @@ export default function App() {
         cmap: cmapName,
         vmin: manualRange.enabled ? manualRange.vmin : null,
         vmax: manualRange.enabled ? manualRange.vmax : null,
+        hillshade,
+        hillshade_azimuth_deg: hillshadeAzimuth,
+        hillshade_altitude_deg: hillshadeAltitude,
+        hillshade_exaggeration: hillshadeExaggeration,
       });
       setOverlay(resp);
       setActiveTransform(name);
@@ -249,6 +272,23 @@ export default function App() {
       handleError(e);
     } finally {
       setTransformLoading(false);
+    }
+  };
+
+  const handleExportGeotiff = async () => {
+    try {
+      setError(null);
+      setExportingGeotiff(true);
+      const base = { value: valueField, cell_size_m: gridCellSize, method: gridMethod, max_distance_m: gridMaxDistance };
+      if (activeTransform === "none") {
+        await api.exportGridGeotiff(projectId, base, `${valueField}_${gridCellSize}m.tif`);
+      } else {
+        await api.exportTransformGeotiff(projectId, { ...base, transform: activeTransform }, `${activeTransform}_${gridCellSize}m.tif`);
+      }
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingGeotiff(false);
     }
   };
 
@@ -403,6 +443,41 @@ export default function App() {
     }
   };
 
+  const handleExportInversion = async () => {
+    try {
+      setInversionError(null);
+      await api.exportInversionResult(projectId, "inversion_result.npz");
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    }
+  };
+
+  const handleExportInversionCsv = async () => {
+    try {
+      setInversionError(null);
+      await api.exportInversionCsv(projectId, "inversion_result.csv");
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    }
+  };
+
+  const handleImportInversion = async (file) => {
+    try {
+      setInversionError(null);
+      setInversionRunning(true);
+      const id = await ensureProject();
+      const resp = await api.importInversionResult(id, file);
+      setInversionSummary(resp);
+      setSliceLayerIndex(0);
+      setSectionResult(null);
+      setVolumeData(null);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setInversionRunning(false);
+    }
+  };
+
   const autoColorRange = useMemo(() => {
     const stats = valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats;
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
@@ -454,6 +529,14 @@ export default function App() {
           setGridMaxDistance={setGridMaxDistance}
           gridOpacity={gridOpacity}
           setGridOpacity={setGridOpacity}
+          hillshade={hillshade}
+          setHillshade={setHillshade}
+          hillshadeAzimuth={hillshadeAzimuth}
+          setHillshadeAzimuth={setHillshadeAzimuth}
+          hillshadeAltitude={hillshadeAltitude}
+          setHillshadeAltitude={setHillshadeAltitude}
+          hillshadeExaggeration={hillshadeExaggeration}
+          setHillshadeExaggeration={setHillshadeExaggeration}
           onGrid={handleGrid}
           gridding={gridding}
           activeTransform={activeTransform}
@@ -461,6 +544,8 @@ export default function App() {
           transformLoading={transformLoading}
           valueField={valueField}
           setValueField={handleSetValueField}
+          onExportGeotiff={handleExportGeotiff}
+          exportingGeotiff={exportingGeotiff}
           error={error}
         />
       </div>
@@ -554,6 +639,9 @@ export default function App() {
           setVolumeThreshold={setVolumeThreshold}
           volumeThresholdMax={volumeThresholdMax}
           setVolumeThresholdMax={setVolumeThresholdMax}
+          onExportInversion={handleExportInversion}
+          onExportInversionCsv={handleExportInversionCsv}
+          onImportInversion={handleImportInversion}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>

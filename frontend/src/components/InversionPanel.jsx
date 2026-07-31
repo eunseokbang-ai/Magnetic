@@ -75,6 +75,9 @@ export default function InversionPanel({
   setVolumeThreshold,
   volumeThresholdMax,
   setVolumeThresholdMax,
+  onExportInversion,
+  onExportInversionCsv,
+  onImportInversion,
 }) {
   const [demFileName, setDemFileName] = useState("");
   const nLayers = summary?.n_layers ?? params.n_layers ?? 8;
@@ -84,6 +87,24 @@ export default function InversionPanel({
       <div style={{ fontSize: 12, color: "#374151" }}>
         given information(사전 지질정보) 없이 관측 자력이상만으로 지하 자화율(SI) 분포를 추정하는 실험적 3차원 역산입니다.
         측선 자료 처리를 먼저 완료해야 실행할 수 있습니다.
+      </div>
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>이전 역산 결과 불러오기</div>
+        <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>
+          내보낸 .npz 파일을 불러오면 처음부터 다시 역산을 돌리지 않아도 바로 단면/3D 뷰를 확인할 수 있습니다.
+        </div>
+        <input
+          type="file"
+          accept=".npz"
+          style={inputStyle}
+          onChange={async (e) => {
+            const f = e.target.files[0];
+            if (!f) return;
+            await onImportInversion(f);
+            e.target.value = "";
+          }}
+        />
       </div>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8 }}>
@@ -170,6 +191,20 @@ export default function InversionPanel({
               )}
             </div>
           )}
+          {summary.resolution_warning && (
+            <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px dashed #d1d5db", color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>
+              ⚠ {summary.resolution_warning}
+            </div>
+          )}
+          {summary.imported && <div style={{ marginTop: 4, color: "#059669" }}>불러온 결과입니다 (역산을 다시 돌리지 않았습니다).</div>}
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button style={{ ...btnStyleAlt, flex: 1 }} onClick={onExportInversion}>
+              결과 내보내기 (.npz)
+            </button>
+            <button style={{ ...btnStyleAlt, flex: 1 }} onClick={onExportInversionCsv}>
+              CSV로 내보내기
+            </button>
+          </div>
         </div>
       )}
 

@@ -37,7 +37,19 @@ TransformName = Literal["rtp", "rte", "1vd", "as"]
 GridMethod = Literal["nearest", "linear", "cubic", "spline"]
 
 
-class GridRequest(BaseModel):
+class HillshadeParams(BaseModel):
+    # Geosoft Oasis Montaj-style "color-shaded relief" - the grid values
+    # are treated as a pseudo-terrain and illuminated, so subtle
+    # gradients read as raised/shadowed texture instead of flat color
+    # bands. Common defaults for cartographic hillshading (NW light,
+    # 45 deg altitude) work well here too.
+    hillshade: bool = False
+    hillshade_azimuth_deg: float = Field(315.0, ge=0, le=360)
+    hillshade_altitude_deg: float = Field(45.0, ge=1, le=90)
+    hillshade_exaggeration: float = Field(3.0, gt=0, le=20)
+
+
+class GridRequest(HillshadeParams):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
     method: GridMethod = "nearest"
@@ -47,7 +59,7 @@ class GridRequest(BaseModel):
     vmax: Optional[float] = None
 
 
-class TransformRequest(BaseModel):
+class TransformRequest(HillshadeParams):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
@@ -78,7 +90,7 @@ class InversionParams(BaseModel):
     n_irls_iterations: int = Field(6, ge=1, le=30)
 
 
-class InversionSliceRequest(BaseModel):
+class InversionSliceRequest(HillshadeParams):
     layer_index: int = Field(0, ge=0)
     threshold: Optional[float] = None
     threshold_max: Optional[float] = None

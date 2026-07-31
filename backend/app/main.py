@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -125,6 +125,22 @@ def transform(project_id: str, req: TransformRequest):
     return project.get_transform_overlay(req)
 
 
+@app.post("/api/projects/{project_id}/grid/geotiff")
+def export_grid_geotiff(project_id: str, req: GridRequest):
+    project = store.get(project_id)
+    data = project.export_grid_geotiff(req)
+    return Response(content=data, media_type="image/tiff", headers={"Content-Disposition": "attachment; filename=grid.tif"})
+
+
+@app.post("/api/projects/{project_id}/transform/geotiff")
+def export_transform_geotiff(project_id: str, req: TransformRequest):
+    project = store.get(project_id)
+    data = project.export_transform_geotiff(req)
+    return Response(
+        content=data, media_type="image/tiff", headers={"Content-Disposition": f"attachment; filename={req.transform}.tif"}
+    )
+
+
 @app.post("/api/overlay-images")
 async def upload_overlay_image(file: UploadFile):
     content = await file.read()
@@ -158,6 +174,13 @@ def inversion_slice(project_id: str, req: InversionSliceRequest):
     return project.get_inversion_horizontal_slice(req)
 
 
+@app.post("/api/projects/{project_id}/inversion/slice/geotiff")
+def export_inversion_slice_geotiff(project_id: str, req: InversionSliceRequest):
+    project = store.get(project_id)
+    data = project.export_inversion_slice_geotiff(req)
+    return Response(content=data, media_type="image/tiff", headers={"Content-Disposition": "attachment; filename=inversion_slice.tif"})
+
+
 @app.post("/api/projects/{project_id}/inversion/section")
 def inversion_section(project_id: str, req: InversionSectionRequest):
     project = store.get(project_id)
@@ -168,6 +191,31 @@ def inversion_section(project_id: str, req: InversionSectionRequest):
 def inversion_volume(project_id: str, threshold: float | None = None, threshold_max: float | None = None):
     project = store.get(project_id)
     return project.get_inversion_volume(threshold, threshold_max)
+
+
+@app.get("/api/projects/{project_id}/inversion/export")
+def export_inversion(project_id: str):
+    project = store.get(project_id)
+    data = project.export_inversion_npz()
+    return Response(
+        content=data, media_type="application/octet-stream", headers={"Content-Disposition": "attachment; filename=inversion_result.npz"}
+    )
+
+
+@app.post("/api/projects/{project_id}/inversion/import")
+async def import_inversion(project_id: str, file: UploadFile):
+    project = store.get(project_id)
+    content = await file.read()
+    return project.import_inversion_npz(content)
+
+
+@app.get("/api/projects/{project_id}/inversion/export/csv")
+def export_inversion_csv(project_id: str):
+    project = store.get(project_id)
+    data = project.export_inversion_csv()
+    return Response(
+        content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=inversion_result.csv"}
+    )
 
 
 @app.get("/api/health")

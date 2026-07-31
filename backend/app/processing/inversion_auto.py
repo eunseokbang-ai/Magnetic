@@ -111,10 +111,21 @@ def suggest_mesh_params(
     except ValueError:
         depth_estimate = None
 
+    # The upper bound here is a fixed, physically-motivated ceiling for
+    # near-surface drone magnetic surveys (typical flight AGL is tens of
+    # meters; sources deeper than this produce anomalies too broad/weak
+    # for a local block survey to resolve well anyway) - it must NOT
+    # scale with the survey's horizontal footprint. An earlier version
+    # used `4 * max(width, height)` as the ceiling, which is physically
+    # meaningless (investigation depth has nothing to do with how wide
+    # the survey block is) and let large-area surveys balloon into a
+    # multi-kilometer "depth_extent_m", which then forced the cell size
+    # up (sometimes past the line spacing) just to keep the resulting
+    # mesh under the active-cell cap. Fixed to a flat 600 m ceiling.
     if depth_estimate is None:
         depth_extent_m = float(np.clip(3.0 * (line_spacing_m or 50.0), 60.0, 500.0))
     else:
-        depth_extent_m = float(np.clip(4.0 * depth_estimate, 60.0, 4.0 * max(width, height)))
+        depth_extent_m = float(np.clip(4.0 * depth_estimate, 60.0, 600.0))
 
     # cell size floor so nx*ny*n_layers stays within the active-cell cap,
     # given n_layers ~= depth_extent_m / cell_size_m (roughly cube-shaped

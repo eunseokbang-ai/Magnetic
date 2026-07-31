@@ -95,6 +95,14 @@ def main():
     print("after manual exclude, n_kept:", summary2["n_kept"], "n_manual_excluded:", summary2["n_manual_excluded"])
     assert summary2["n_kept"] < summary["n_kept"]
 
+    # manual-exclude responses carry a lightweight (point_id, excluded)
+    # delta so the frontend can patch its point cache in place instead of
+    # re-fetching the full point list (slow at 100k+ points) after every edit.
+    exclusion = summary2["exclusion"]
+    assert len(exclusion["point_id"]) == len(exclusion["excluded"]) == summary["n_points"]
+    n_excluded_from_delta = sum(1 for e in exclusion["excluded"] if e)
+    assert n_excluded_from_delta == summary["n_points"] - summary2["n_kept"]
+
     # manual polygon exclude (small box around the survey centroid)
     lats = [p["lat"] for p in pts]
     lons = [p["lon"] for p in pts]
@@ -194,6 +202,16 @@ def main():
         tr = r.json()
         print(f"{transform_name} stats:", tr["stats"])
         assert tr["image_data_url"].startswith("data:image/png;base64,")
+
+    # hillshade color-shaded relief option (Geosoft Oasis Montaj style)
+    r = client.post(
+        f"/api/projects/{project_id}/grid",
+        json={"value": "anomaly", "cell_size_m": 10.0, "hillshade": True, "hillshade_exaggeration": 5.0},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["image_data_url"].startswith("data:image/png;base64,")
+
+    _check_geotiff_export(client, project_id)
 
     # error path: unknown project id
     r = client.get("/api/projects/does-not-exist/summary")
@@ -334,7 +352,8 @@ def _check_inversion(client, project_id, pts):
         json={"obs_cell_size_m": 40.0, "depth_extent_m": 150.0, "n_layers": 6},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["used_dem"] is True
+    dem_inv_summary = r.json()
+    assert dem_inv_summary["used_dem"] is True
 
     r = client.delete(f"/api/projects/{project_id}/dem")
     assert r.status_code == 200, r.text
@@ -353,6 +372,69 @@ def _check_inversion(client, project_id, pts):
     fresh_id = r2.json()["project_id"]
     r = client.post(f"/api/projects/{fresh_id}/inversion/slice", json={"layer_index": 0})
     assert r.status_code == 400, r.text
+
+    # inversion result export/import: reload without rerunning the solve
+    r = client.get(f"/api/projects/{project_id}/inversion/export")
+    assert r.status_code == 200, r.text
+    export_bytes = r.content
+    assert r.headers["content-type"] == "application/octet-stream"
+
+    r2 = client.post("/api/projects")
+    fresh_id2 = r2.json()["project_id"]
+    r = client.post(
+        f"/api/projects/{fresh_id2}/inversion/import",
+        files={"file": ("inversion.npz", export_bytes, "application/octet-stream")},
+    )
+    assert r.status_code == 200, r.text
+    imported_summary = r.json()
+    assert imported_summary["n_active_cells"] == dem_inv_summary["n_active_cells"]
+    assert abs(imported_summary["rms_misfit_nt"] - dem_inv_summary["rms_misfit_nt"]) < 1e-6
+
+    # the imported result must actually be usable (slice/volume), not just accepted
+    r = client.post(f"/api/projects/{fresh_id2}/inversion/slice", json={"layer_index": 0})
+    assert r.status_code == 200, r.text
+
+    # importing a garbage file should fail cleanly, not 500
+    r = client.post(
+        f"/api/projects/{fresh_id2}/inversion/import",
+        files={"file": ("bad.npz", b"not a real npz file", "application/octet-stream")},
+    )
+    assert r.status_code == 400, r.text
+
+    # inversion horizontal slice as GeoTIFF (single-band, real SI values)
+    import rasterio
+    from rasterio.io import MemoryFile
+
+    r = client.post(f"/api/projects/{project_id}/inversion/slice/geotiff", json={"layer_index": 2})
+    assert r.status_code == 200, r.text
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.crs is not None
+        assert src.count == 1
+
+
+def _check_geotiff_export(client, project_id):
+    """Grid/derivative GeoTIFF export - single-band float32, real georeferenced
+    values (not just a colored PNG), openable in Oasis Montaj/QGIS/ArcGIS/etc."""
+    import numpy as np
+    import rasterio
+    from rasterio.io import MemoryFile
+
+    r = client.post(f"/api/projects/{project_id}/grid/geotiff", json={"value": "anomaly", "cell_size_m": 10.0})
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "image/tiff"
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.crs is not None
+        assert src.count == 1
+        data = src.read(1)
+        finite = data[np.isfinite(data)]
+        assert finite.size > 0
+        # should be real anomaly values (nT), not colormap indices/RGB bytes
+        assert finite.max() > 100
+
+    r = client.post(f"/api/projects/{project_id}/transform/geotiff", json={"transform": "rtp", "value": "anomaly", "cell_size_m": 10.0})
+    assert r.status_code == 200, r.text
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.count == 1
 
 
 def _check_overlay_image_upload(client):

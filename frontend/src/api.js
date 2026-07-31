@@ -102,3 +102,63 @@ export function getInversionVolume(projectId, threshold, thresholdMax) {
   const q = params.toString() ? `?${params.toString()}` : "";
   return request(`/projects/${projectId}/inversion/volume${q}`);
 }
+
+async function requestBlob(path, options = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+    } catch {
+      // ignore, keep statusText
+    }
+    throw new Error(detail);
+  }
+  return res.blob();
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function exportGridGeotiff(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/grid/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportTransformGeotiff(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/transform/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportInversionSliceGeotiff(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/inversion/slice/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportInversionResult(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/inversion/export`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportInversionCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/inversion/export/csv`);
+  downloadBlob(blob, filename);
+}
+
+export function importInversionResult(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/inversion/import`, { method: "POST", body: form });
+}

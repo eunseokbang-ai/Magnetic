@@ -42,6 +42,14 @@ export default function WorkflowSteps({
   setGridMaxDistance,
   gridOpacity,
   setGridOpacity,
+  hillshade,
+  setHillshade,
+  hillshadeAzimuth,
+  setHillshadeAzimuth,
+  hillshadeAltitude,
+  setHillshadeAltitude,
+  hillshadeExaggeration,
+  setHillshadeExaggeration,
   onGrid,
   gridding,
   activeTransform,
@@ -49,6 +57,8 @@ export default function WorkflowSteps({
   transformLoading,
   valueField,
   setValueField,
+  onExportGeotiff,
+  exportingGeotiff,
   error,
 }) {
   const [droneFileNames, setDroneFileNames] = useState([]);
@@ -257,6 +267,23 @@ export default function WorkflowSteps({
               onChange={(e) => setGridOpacity(parseFloat(e.target.value))}
             />
           </Field>
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={hillshade} onChange={(e) => setHillshade(e.target.checked)} />
+            <span style={{ color: "#4b5563" }}>힐쉐이드 효과 (음영기복 - 값 변화를 입체감 있게 강조, Geosoft 스타일)</span>
+          </label>
+          {hillshade && (
+            <>
+              <Field label={`광원 방위각: ${hillshadeAzimuth}°`}>
+                <input type="range" min="0" max="360" step="5" value={hillshadeAzimuth} onChange={(e) => setHillshadeAzimuth(parseFloat(e.target.value))} />
+              </Field>
+              <Field label={`광원 고도각: ${hillshadeAltitude}°`}>
+                <input type="range" min="5" max="90" step="5" value={hillshadeAltitude} onChange={(e) => setHillshadeAltitude(parseFloat(e.target.value))} />
+              </Field>
+              <Field label={`강조 정도: ${hillshadeExaggeration}`}>
+                <input type="range" min="0.5" max="20" step="0.5" value={hillshadeExaggeration} onChange={(e) => setHillshadeExaggeration(parseFloat(e.target.value))} />
+              </Field>
+            </>
+          )}
           <button style={buttonStyle} disabled={gridding || !processSummary} onClick={() => onGrid()}>
             {gridding ? "그리딩 중..." : "그리드 생성"}
           </button>
@@ -289,6 +316,16 @@ export default function WorkflowSteps({
             ))}
           </div>
           {transformLoading && <div style={{ color: "#6b7280" }}>계산 중...</div>}
+          <button
+            style={{ ...buttonStyle, background: "white", color: "#2563eb" }}
+            disabled={exportingGeotiff || !processSummary}
+            onClick={() => onExportGeotiff()}
+          >
+            {exportingGeotiff
+              ? "내보내는 중..."
+              : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 GeoTIFF로 저장`}
+          </button>
+          <div style={{ color: "#9ca3af" }}>실제 값(nT 등)이 그대로 저장되어 Oasis Montaj/QGIS/ArcGIS 등에서 다시 열 수 있습니다.</div>
         </div>
       </details>
 

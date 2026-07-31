@@ -29,6 +29,7 @@ from .processing.gridding import GridResult, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
 from .processing.inversion import (
     InversionError,
+    InversionMesh,
     InversionResult,
     build_mesh,
     build_sensitivity_matrix,
@@ -41,7 +42,7 @@ from .processing.inversion import vertical_section as _inversion_vertical_sectio
 from .processing.inversion_auto import suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
 from .processing.lines import LineDetectionParams, detect_lines, estimate_line_spacing_m
-from .processing.render import grid_to_png_overlay
+from .processing.render import grid_to_geotiff_bytes, grid_to_png_overlay
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import analytic_signal, reduction_to_equator, reduction_to_pole, vertical_derivative
 
@@ -56,10 +57,14 @@ DEFAULT_CMAPS = {
 # equations are solved in "data space" (see processing/inversion.py),
 # whose cost scales with n_obs^2 * n_active - these limits were picked
 # from a benchmark of that solve (n_obs=3000, n_active=60000 with 6 IRLS
-# iterations takes ~90s), so a user asking for more detail still finishes
-# in roughly a minute or two rather than growing unbounded.
-N_OBS_CAP = 3000
-N_ACTIVE_CAP = 70000
+# iterations takes ~90s; n_obs=3500, n_active=90000 extrapolates to
+# roughly 3 minutes), so a user asking for more detail still finishes in
+# a bounded time rather than growing unbounded. For a large-area survey
+# these caps - not just the (now fixed) depth_extent_m ceiling - can
+# still force the auto-suggested cell size above the line spacing; see
+# the resolution_warning field in run_inversion's response.
+N_OBS_CAP = 3500
+N_ACTIVE_CAP = 90000
 
 
 class ProjectError(ValueError):
@@ -237,6 +242,17 @@ class Project:
         )
         return out.to_dict(orient="records")
 
+    def get_exclusion_state(self) -> dict:
+        """Just the (point_id, excluded) pairs, not the full point record
+        (lat/lon/value/line_id/timestamp never change from a manual-edit
+        action) - vectorized, so it stays fast even at 100k+ points where
+        get_points()'s per-row to_dict(orient="records") does not (see
+        set_manual_exclude, which returns this instead of making the
+        frontend re-fetch the full point list after every edit)."""
+        df = self.processed
+        active = self._active_mask()
+        return {"point_id": df["point_id"].tolist(), "excluded": (~active).tolist()}
+
     def set_manual_exclude(self, req: ManualExcludeRequest) -> dict:
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
@@ -245,7 +261,7 @@ class Project:
         if req.mode == "reset":
             self.manual_overrides = {}
             self.grid_cache = {}
-            return self.process_summary()
+            return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
         if req.mode == "lines":
             if not req.line_ids:
@@ -265,7 +281,7 @@ class Project:
         for pid in target_ids:
             self.manual_overrides[int(pid)] = forced_value
         self.grid_cache = {}
-        return self.process_summary()
+        return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
         if max_distance_m is not None:
@@ -307,39 +323,55 @@ class Project:
             symmetric=(req.value == "anomaly"),
             vmin=req.vmin,
             vmax=req.vmax,
+            hillshade=req.hillshade,
+            hillshade_azimuth_deg=req.hillshade_azimuth_deg,
+            hillshade_altitude_deg=req.hillshade_altitude_deg,
+            hillshade_exaggeration=req.hillshade_exaggeration,
+            cell_size_m=grid.cell_size_m,
         )
         overlay["stats"] = _stats(pd.Series(grid.values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
         return overlay
 
-    def get_transform_overlay(self, req: TransformRequest) -> dict:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+    def _transform_values(self, grid: GridResult, transform: str) -> tuple[np.ndarray, bool]:
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
+        if transform == "rtp":
+            return reduction_to_pole(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg), True
+        if transform == "rte":
+            return reduction_to_equator(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg), True
+        if transform == "1vd":
+            return vertical_derivative(grid.values, grid.cell_size_m, order=1), True
+        if transform == "as":
+            return analytic_signal(grid.values, grid.cell_size_m), False
+        raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
-        if req.transform == "rtp":
-            values = reduction_to_pole(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg)
-            symmetric = True
-        elif req.transform == "rte":
-            values = reduction_to_equator(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg)
-            symmetric = True
-        elif req.transform == "1vd":
-            values = vertical_derivative(grid.values, grid.cell_size_m, order=1)
-            symmetric = True
-        elif req.transform == "as":
-            values = analytic_signal(grid.values, grid.cell_size_m)
-            symmetric = False
-        else:
-            raise ProjectError(f"알 수 없는 변환입니다: {req.transform}")
+    def get_transform_overlay(self, req: TransformRequest) -> dict:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        values, symmetric = self._transform_values(grid, req.transform)
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
         overlay = grid_to_png_overlay(
-            values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=symmetric, vmin=req.vmin, vmax=req.vmax
+            values, grid.easting, grid.northing, self.utm_epsg, cmap_name=cmap, symmetric=symmetric, vmin=req.vmin, vmax=req.vmax,
+            hillshade=req.hillshade,
+            hillshade_azimuth_deg=req.hillshade_azimuth_deg,
+            hillshade_altitude_deg=req.hillshade_altitude_deg,
+            hillshade_exaggeration=req.hillshade_exaggeration,
+            cell_size_m=grid.cell_size_m,
         )
         overlay["stats"] = _stats(pd.Series(values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["transform"] = req.transform
         return overlay
+
+    def export_grid_geotiff(self, req: GridRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        return grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
+
+    def export_transform_geotiff(self, req: TransformRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        values, _ = self._transform_values(grid, req.transform)
+        return grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg)
 
     def load_dem(self, data: bytes, name: str) -> dict:
         try:
@@ -475,6 +507,7 @@ class Project:
             "used_dem": self.dem_bytes is not None,
             "auto_params": auto_used,
             "source_depth_estimate_m": auto_suggestion["source_depth_estimate_m"] if auto_suggestion else None,
+            "resolution_warning": _resolution_warning(obs_cell_size_m, self.line_spacing_m, nx, ny),
         }
 
     def get_inversion_horizontal_slice(self, req: InversionSliceRequest) -> dict:
@@ -486,6 +519,11 @@ class Project:
             overlay = grid_to_png_overlay(
                 slice_2d, mesh.x_centers, mesh.y_centers, self.utm_epsg,
                 cmap_name=req.cmap or "geosoft_rainbow", symmetric=False, vmin=req.vmin, vmax=req.vmax,
+                hillshade=req.hillshade,
+                hillshade_azimuth_deg=req.hillshade_azimuth_deg,
+                hillshade_altitude_deg=req.hillshade_altitude_deg,
+                hillshade_exaggeration=req.hillshade_exaggeration,
+                cell_size_m=mesh.cell_size_m,
             )
         except (InversionError, ValueError) as exc:
             raise ProjectError(str(exc)) from exc
@@ -495,6 +533,16 @@ class Project:
         overlay["n_layers"] = int(mesh.active.shape[2])
         overlay["elevation_m"] = float(mesh.z_centers[layer_index])
         return overlay
+
+    def export_inversion_slice_geotiff(self, req: InversionSliceRequest) -> bytes:
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        mesh = self.inversion_result.mesh
+        try:
+            slice_2d = horizontal_slice(self.inversion_result, req.layer_index, req.threshold, req.threshold_max)
+        except InversionError as exc:
+            raise ProjectError(str(exc)) from exc
+        return grid_to_geotiff_bytes(slice_2d, mesh.x_centers, mesh.y_centers, self.utm_epsg)
 
     def get_inversion_vertical_section(self, req: InversionSectionRequest) -> dict:
         if self.inversion_result is None:
@@ -589,6 +637,163 @@ class Project:
             "stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "top": top,
         }
+
+    def export_inversion_npz(self) -> bytes:
+        """Serialize the mesh + solved model (and enough context to
+        re-render slices/sections/volume) into a self-contained .npz so a
+        later session can reload the result via import_inversion_npz
+        without rerunning the inversion solve."""
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        result = self.inversion_result
+        mesh = result.mesh
+
+        payload = dict(
+            x_centers=mesh.x_centers,
+            y_centers=mesh.y_centers,
+            z_centers=mesh.z_centers,
+            cell_size_m=np.array(mesh.cell_size_m),
+            layer_thickness_m=np.array(mesh.layer_thickness_m),
+            ground_elevation=mesh.ground_elevation,
+            active=mesh.active,
+            susceptibility=result.susceptibility,
+            predicted_nt=result.predicted_nt,
+            observed_nt=result.observed_nt,
+            rms_misfit_nt=np.array(result.rms_misfit_nt),
+            n_active_cells=np.array(result.n_active_cells),
+            n_obs=np.array(result.n_obs),
+            iterations=np.array(result.iterations),
+            utm_epsg=np.array(self.utm_epsg if self.utm_epsg is not None else -1),
+            inclination_deg=np.array(self.inclination_deg if self.inclination_deg is not None else np.nan),
+            declination_deg=np.array(self.declination_deg if self.declination_deg is not None else np.nan),
+            field_intensity_nt=np.array(self.inversion_field_intensity_nt if self.inversion_field_intensity_nt is not None else np.nan),
+            value_field=np.array(self.inversion_value_field or "anomaly"),
+        )
+        if self.inversion_obs_grid is not None:
+            g = self.inversion_obs_grid
+            payload.update(
+                obs_easting=g.easting,
+                obs_northing=g.northing,
+                obs_values=g.values,
+                obs_cell_size_m=np.array(g.cell_size_m),
+                obs_region=np.array(g.region, dtype=float),
+            )
+
+        buf = io.BytesIO()
+        np.savez_compressed(buf, **payload)
+        return buf.getvalue()
+
+    def import_inversion_npz(self, data: bytes) -> dict:
+        """Restore a previously exported inversion result (see
+        export_inversion_npz) so slice/section/volume endpoints work
+        immediately - no drone/base upload or processing needed first."""
+        try:
+            with np.load(io.BytesIO(data), allow_pickle=False) as npz:
+                mesh = InversionMesh(
+                    x_centers=npz["x_centers"],
+                    y_centers=npz["y_centers"],
+                    z_centers=npz["z_centers"],
+                    cell_size_m=float(npz["cell_size_m"]),
+                    layer_thickness_m=float(npz["layer_thickness_m"]),
+                    ground_elevation=npz["ground_elevation"],
+                    active=npz["active"],
+                )
+                result = InversionResult(
+                    mesh=mesh,
+                    susceptibility=npz["susceptibility"],
+                    predicted_nt=npz["predicted_nt"],
+                    observed_nt=npz["observed_nt"],
+                    rms_misfit_nt=float(npz["rms_misfit_nt"]),
+                    n_active_cells=int(npz["n_active_cells"]),
+                    n_obs=int(npz["n_obs"]),
+                    iterations=int(npz["iterations"]),
+                )
+                utm_epsg = int(npz["utm_epsg"])
+                inclination_deg = float(npz["inclination_deg"])
+                declination_deg = float(npz["declination_deg"])
+                field_intensity_nt = float(npz["field_intensity_nt"])
+                value_field = str(npz["value_field"])
+
+                obs_grid = None
+                if "obs_easting" in npz:
+                    obs_grid = GridResult(
+                        values=npz["obs_values"],
+                        easting=npz["obs_easting"],
+                        northing=npz["obs_northing"],
+                        cell_size_m=float(npz["obs_cell_size_m"]),
+                        region=tuple(npz["obs_region"].tolist()),
+                    )
+        except Exception as exc:  # noqa: BLE001 - deliberately broad: validating an untrusted uploaded file
+            raise ProjectError(f"역산 결과 파일을 불러올 수 없습니다 (손상되었거나 올바른 형식이 아닙니다): {exc}") from exc
+
+        self.inversion_result = result
+        self.utm_epsg = utm_epsg if utm_epsg >= 0 else None
+        self.inclination_deg = None if np.isnan(inclination_deg) else inclination_deg
+        self.declination_deg = None if np.isnan(declination_deg) else declination_deg
+        self.inversion_field_intensity_nt = None if np.isnan(field_intensity_nt) else field_intensity_nt
+        self.inversion_value_field = value_field
+        self.inversion_obs_grid = obs_grid
+
+        active_chi = result.susceptibility[result.susceptibility > 0]
+        return {
+            "n_obs": result.n_obs,
+            "n_active_cells": result.n_active_cells,
+            "rms_misfit_nt": result.rms_misfit_nt,
+            "iterations": result.iterations,
+            "n_layers": int(mesh.active.shape[2]),
+            "obs_cell_size_m": mesh.cell_size_m,
+            "depth_extent_m": mesh.layer_thickness_m * mesh.active.shape[2],
+            "cell_size_m": mesh.cell_size_m,
+            "layer_thickness_m": mesh.layer_thickness_m,
+            "elevation_range_m": [float(mesh.z_centers.min()), float(mesh.z_centers.max())],
+            "field": {
+                "inclination_deg": self.inclination_deg,
+                "declination_deg": self.declination_deg,
+                "field_intensity_nt": self.inversion_field_intensity_nt,
+            },
+            "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
+            "used_dem": None,
+            "auto_params": False,
+            "source_depth_estimate_m": None,
+            "resolution_warning": None,
+            "imported": True,
+        }
+
+    def export_inversion_csv(self) -> bytes:
+        """Active-cell (x, y, z, susceptibility) point cloud - a portable
+        format for other 3D tools (ParaView, Voxler, GIS point layers,
+        even a spreadsheet) that don't understand our mesh format."""
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        result = self.inversion_result
+        mesh = result.mesh
+        rows, cols, layers = np.nonzero(mesh.active)
+        out = pd.DataFrame(
+            {
+                "easting_m": mesh.x_centers[cols],
+                "northing_m": mesh.y_centers[rows],
+                "elevation_m": mesh.z_centers[layers],
+                "susceptibility_si": result.susceptibility[rows, cols, layers],
+            }
+        )
+        return out.to_csv(index=False).encode("utf-8")
+
+
+def _resolution_warning(obs_cell_size_m: float, line_spacing_m: float | None, nx: int, ny: int) -> str | None:
+    """A cell size coarser than the flight-line spacing means the mesh is
+    under-using the resolution the survey actually captured (this can
+    happen for large-area surveys, where the observation/mesh size caps
+    force the cell size up regardless of line spacing) - flag it rather
+    than silently returning a possibly-suboptimal mesh."""
+    if not line_spacing_m or obs_cell_size_m <= line_spacing_m * 1.15:
+        return None
+    return (
+        f"선택된 격자 크기({obs_cell_size_m:.0f}m)가 측선 간격({line_spacing_m:.0f}m)보다 큽니다 - "
+        f"조사 영역이 넓어 계산량 상한({nx}x{ny}점 관측 격자) 때문에 해상도가 낮아진 것으로, "
+        "측선 자료가 가진 만큼의 해상도를 다 살리지 못합니다. 더 세밀한 결과가 필요하면 "
+        "관심 영역만 잘라서(예: 측선 일부만 남기고 나머지를 수동 제외) 다시 처리하거나, "
+        "자동 설정을 끄고 격자 크기를 직접 줄여보세요(실행 시간이 늘어납니다)."
+    )
 
 
 def _densify_path(x: np.ndarray, y: np.ndarray, spacing_m: float) -> tuple[np.ndarray, np.ndarray]:
