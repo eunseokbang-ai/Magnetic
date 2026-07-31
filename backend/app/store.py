@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import io
+import json
 import threading
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -15,6 +17,7 @@ from pyproj import Transformer
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
 from .models import (
+    EulerDeconvolutionRequest,
     GridRequest,
     InversionParams,
     InversionSectionRequest,
@@ -23,6 +26,8 @@ from .models import (
     ProcessParams,
     TransformRequest,
 )
+from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
+from .processing.despike import despike
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter
 from .processing.gridding import GridResult, grid_points
@@ -41,8 +46,12 @@ from .processing.inversion import (
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
-from .processing.lines import LineDetectionParams, detect_lines, estimate_line_spacing_m
-from .processing.render import grid_to_geotiff_bytes, grid_to_png_overlay
+from .processing.lines import LineDetectionParams, detect_lines, detect_tie_lines, estimate_line_spacing_m
+from .processing.contours import compute_contours
+from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
+from .processing.gps_lag import apply_gps_mag_lag
+from .processing.report import generate_report_markdown
+from .processing.render import grid_to_geotiff_bytes, grid_to_geotiff_bytes_colored, grid_to_png_overlay
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import analytic_signal, reduction_to_equator, reduction_to_pole, vertical_derivative
 
@@ -88,6 +97,11 @@ class Project:
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
+    despike_info: dict | None = None
+    crossover_info: dict | None = None
+    gps_lag_info: dict | None = None
+    inversion_summary_cache: dict | None = None
+    euler_summary_cache: dict | None = None
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
     dem_bytes: bytes | None = None
@@ -135,6 +149,27 @@ class Project:
             raise ProjectError("베이스(일변화) 자료를 먼저 업로드하세요.")
 
         df = self.drone_raw.copy()
+
+        n_before_lag = len(df)
+        if params.gps_mag_lag_seconds != 0.0:
+            df = apply_gps_mag_lag(df, params.gps_mag_lag_seconds)
+        self.gps_lag_info = {
+            "lag_seconds": params.gps_mag_lag_seconds,
+            "n_points_dropped": n_before_lag - len(df),
+        }
+
+        dp = params.despike_params
+        if dp.enabled:
+            cleaned, spike_mask = despike(df["mag_raw"].to_numpy(), dp.window_size, dp.threshold_k)
+            df["mag_raw"] = cleaned
+            self.despike_info = {
+                "enabled": True,
+                "n_spikes_removed": int(spike_mask.sum()),
+                "pct_spikes_removed": float(spike_mask.mean() * 100.0),
+            }
+        else:
+            self.despike_info = {"enabled": False, "n_spikes_removed": 0, "pct_spikes_removed": 0.0}
+
         df["mag_filtered"] = lowpass_filter(
             df["mag_raw"].to_numpy(), df["timestamp"], cutoff_hz=params.filter_cutoff_hz
         )
@@ -187,6 +222,26 @@ class Project:
         else:
             self.heading_leveling = HeadingLevelingResult(False, "사용자가 헤딩 보정을 비활성화했습니다.", None, 0, 0)
 
+        cp = params.crossover_leveling
+        if cp.enabled:
+            tie_line_id = detect_tie_lines(df, self.dominant_azimuth_deg, line_params, tie_tolerance_deg=cp.tie_tolerance_deg)
+            crossover_result = compute_crossover_leveling(
+                df, tie_line_id, "anomaly", max_crossover_distance_m=cp.max_crossover_distance_m
+            )
+            df["anomaly"] = apply_crossover_leveling(df, "anomaly", crossover_result)
+            df["tmi"] = apply_crossover_leveling(df, "tmi", crossover_result)
+        else:
+            crossover_result = CrossoverLevelingResult(False, "사용자가 타이라인 보정을 비활성화했습니다 (기본값 - 타이라인 비행이 없을 수 있음).")
+        self.crossover_info = {
+            "applied": crossover_result.applied,
+            "reason": crossover_result.reason,
+            "n_tie_lines": crossover_result.n_tie_lines,
+            "n_crossovers": crossover_result.n_crossovers,
+            "n_survey_lines_corrected": crossover_result.n_survey_lines_corrected,
+            "rms_before_nt": crossover_result.rms_before_nt,
+            "rms_after_nt": crossover_result.rms_after_nt,
+        }
+
         self.processed = df
         self.manual_overrides = {}
         self.grid_cache = {}
@@ -209,11 +264,24 @@ class Project:
             "inclination_deg": self.inclination_deg,
             "declination_deg": self.declination_deg,
             "diurnal": self.diurnal_info,
+            "despike": self.despike_info,
+            "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),
+            "crossover_leveling": self.crossover_info,
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling),
         }
+
+    def generate_report(self) -> str:
+        return generate_report_markdown(
+            self.drone_summary() if self.drone_raw is not None else None,
+            self.base_summary() if self.base_raw is not None else None,
+            self.process_summary() if self.processed is not None else None,
+            self.last_params.model_dump() if self.last_params is not None else None,
+            self.inversion_summary_cache,
+            self.euler_summary_cache,
+        )
 
     def _active_mask(self) -> pd.Series:
         df = self.processed
@@ -328,9 +396,15 @@ class Project:
             hillshade_altitude_deg=req.hillshade_altitude_deg,
             hillshade_exaggeration=req.hillshade_exaggeration,
             cell_size_m=grid.cell_size_m,
+            stretch=req.stretch,
         )
         overlay["stats"] = _stats(pd.Series(grid.values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
+        if req.show_contours:
+            overlay["contours"] = compute_contours(
+                grid.values, grid.easting, grid.northing, self.utm_epsg,
+                interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
+            )
         return overlay
 
     def _transform_values(self, grid: GridResult, transform: str) -> tuple[np.ndarray, bool]:
@@ -358,20 +432,75 @@ class Project:
             hillshade_altitude_deg=req.hillshade_altitude_deg,
             hillshade_exaggeration=req.hillshade_exaggeration,
             cell_size_m=grid.cell_size_m,
+            stretch=req.stretch,
         )
         overlay["stats"] = _stats(pd.Series(values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["transform"] = req.transform
+        if req.show_contours:
+            overlay["contours"] = compute_contours(
+                values, grid.easting, grid.northing, self.utm_epsg,
+                interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
+            )
         return overlay
 
     def export_grid_geotiff(self, req: GridRequest) -> bytes:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        if req.colored:
+            cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
+            return grid_to_geotiff_bytes_colored(
+                grid.values, grid.easting, grid.northing, self.utm_epsg,
+                cmap_name=cmap, symmetric=(req.value == "anomaly"), vmin=req.vmin, vmax=req.vmax,
+                hillshade=req.hillshade, hillshade_azimuth_deg=req.hillshade_azimuth_deg,
+                hillshade_altitude_deg=req.hillshade_altitude_deg, hillshade_exaggeration=req.hillshade_exaggeration,
+                stretch=req.stretch,
+            )
         return grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_transform_geotiff(self, req: TransformRequest) -> bytes:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
-        values, _ = self._transform_values(grid, req.transform)
+        values, symmetric = self._transform_values(grid, req.transform)
+        if req.colored:
+            cmap = req.cmap or DEFAULT_CMAPS["derivative"]
+            return grid_to_geotiff_bytes_colored(
+                values, grid.easting, grid.northing, self.utm_epsg,
+                cmap_name=cmap, symmetric=symmetric, vmin=req.vmin, vmax=req.vmax,
+                hillshade=req.hillshade, hillshade_azimuth_deg=req.hillshade_azimuth_deg,
+                hillshade_altitude_deg=req.hillshade_altitude_deg, hillshade_exaggeration=req.hillshade_exaggeration,
+                stretch=req.stretch,
+            )
         return grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+
+    def run_euler_deconvolution(self, req: EulerDeconvolutionRequest) -> dict:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        solutions = _euler_deconvolution_solve(
+            grid.values,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.utm_epsg,
+            structural_index=req.structural_index,
+            window_size_m=req.window_size_m,
+            max_depth_uncertainty_pct=req.max_depth_uncertainty_pct,
+        )
+        depths = [s.depth_m for s in solutions]
+        summary = {
+            "n_solutions": len(solutions),
+            "structural_index": req.structural_index,
+            "depth_stats": _stats(pd.Series(depths)) if depths else None,
+            "solutions": [
+                {
+                    "lat": s.lat,
+                    "lon": s.lon,
+                    "depth_m": s.depth_m,
+                    "base_level_nt": s.base_level_nt,
+                    "uncertainty_m": s.uncertainty_m,
+                }
+                for s in solutions
+            ],
+        }
+        self.euler_summary_cache = summary
+        return summary
 
     def load_dem(self, data: bytes, name: str) -> dict:
         try:
@@ -390,6 +519,96 @@ class Project:
         self.dem_bytes = None
         self.dem_name = None
         return {"cleared": True}
+
+    def save_project_bundle(self) -> bytes:
+        """Zip up everything needed to resume this project later without
+        re-uploading raw files: the raw (already-parsed) drone/base
+        dataframes, the last-used processing params, manual overrides,
+        DEM, and inversion result if present. Re-loading replays
+        run_pipeline(last_params) on the raw data rather than trying to
+        serialize every derived column/scalar, which keeps this in sync
+        with the pipeline logic for free."""
+        if self.drone_raw is None:
+            raise ProjectError("저장할 자료가 없습니다 (드론 자료를 먼저 업로드하세요).")
+
+        meta = {
+            "last_params": self.last_params.model_dump() if self.last_params is not None else None,
+            "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
+            "dem_name": self.dem_name,
+            "has_base": self.base_raw is not None,
+        }
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("drone_raw.csv", self.drone_raw.to_csv(index=False))
+            if self.base_raw is not None:
+                zf.writestr("base_raw.csv", self.base_raw.to_csv(index=False))
+            zf.writestr("meta.json", json.dumps(meta))
+            if self.dem_bytes is not None:
+                zf.writestr("dem.tif", self.dem_bytes)
+            if self.inversion_result is not None:
+                zf.writestr("inversion.npz", self.export_inversion_npz())
+        return buf.getvalue()
+
+    def load_project_bundle(self, data: bytes) -> dict:
+        """Restore a project saved by save_project_bundle. Returns the
+        same shape as process_summary() (plus a couple of extra flags) so
+        the frontend can jump straight back to where the user left off."""
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                names = set(zf.namelist())
+                if "drone_raw.csv" not in names or "meta.json" not in names:
+                    raise ProjectError("올바른 프로젝트 저장 파일이 아닙니다.")
+
+                drone_df = pd.read_csv(io.BytesIO(zf.read("drone_raw.csv")))
+                drone_df["timestamp"] = pd.to_datetime(drone_df["timestamp"])
+                self.drone_raw = drone_df
+
+                if "base_raw.csv" in names:
+                    base_df = pd.read_csv(io.BytesIO(zf.read("base_raw.csv")))
+                    base_df["timestamp"] = pd.to_datetime(base_df["timestamp"])
+                    self.base_raw = base_df
+                else:
+                    self.base_raw = None
+
+                meta = json.loads(zf.read("meta.json").decode("utf-8"))
+
+                if "dem.tif" in names:
+                    self.dem_bytes = zf.read("dem.tif")
+                    self.dem_name = meta.get("dem_name")
+                else:
+                    self.dem_bytes = None
+                    self.dem_name = None
+
+                processed = False
+                if meta.get("last_params") is not None and self.base_raw is not None:
+                    params = ProcessParams(**meta["last_params"])
+                    self.run_pipeline(params)
+                    overrides = meta.get("manual_overrides") or {}
+                    if overrides:
+                        self.manual_overrides = {int(k): v for k, v in overrides.items()}
+                        self.grid_cache = {}
+                    processed = True
+
+                inversion_summary = None
+                if "inversion.npz" in names and processed:
+                    inversion_summary = self.import_inversion_npz(zf.read("inversion.npz"))
+        except zipfile.BadZipFile as exc:
+            raise ProjectError(f"프로젝트 파일을 열 수 없습니다 (손상되었거나 zip 형식이 아닙니다): {exc}") from exc
+        except KeyError as exc:
+            raise ProjectError(f"프로젝트 파일 내용이 올바르지 않습니다: {exc}") from exc
+
+        result = {
+            "drone_summary": self.drone_summary(),
+            "base_summary": self.base_summary(),
+            "processed": processed,
+            "inversion_restored": inversion_summary is not None,
+            "inversion_summary": inversion_summary,
+            "params": self.last_params.model_dump() if self.last_params is not None else None,
+        }
+        if processed:
+            result["process_summary"] = self.process_summary()
+        return result
 
     def run_inversion(self, params: InversionParams) -> dict:
         if self.processed is None:
@@ -487,7 +706,7 @@ class Project:
         self.inversion_value_field = params.value
 
         active_chi = result.susceptibility[result.susceptibility > 0]
-        return {
+        summary = {
             "n_obs": result.n_obs,
             "n_active_cells": result.n_active_cells,
             "rms_misfit_nt": result.rms_misfit_nt,
@@ -509,6 +728,8 @@ class Project:
             "source_depth_estimate_m": auto_suggestion["source_depth_estimate_m"] if auto_suggestion else None,
             "resolution_warning": _resolution_warning(obs_cell_size_m, self.line_spacing_m, nx, ny),
         }
+        self.inversion_summary_cache = summary
+        return summary
 
     def get_inversion_horizontal_slice(self, req: InversionSliceRequest) -> dict:
         if self.inversion_result is None:

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import { minMax } from "./arrayUtils";
 import MapView from "./components/MapView";
@@ -7,8 +7,26 @@ import WorkflowSteps from "./components/WorkflowSteps";
 import LineEditor from "./components/LineEditor";
 import LayerManager from "./components/LayerManager";
 import InversionPanel from "./components/InversionPanel";
-import InversionVolumeView from "./components/InversionVolumeView";
 import InversionSectionView from "./components/InversionSectionView";
+
+// plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
+// needs it, and most sessions never open it, so it's split into its own
+// chunk and fetched on demand instead of bloating the initial bundle.
+const InversionVolumeView = lazy(() => import("./components/InversionVolumeView"));
+import EulerPanel from "./components/EulerPanel";
+import WorkflowProgress from "./components/WorkflowProgress";
+
+const toggleButtonStyle = {
+  width: 36,
+  height: 36,
+  borderRadius: 8,
+  border: "1px solid #d1d5db",
+  background: "white",
+  color: "#111827",
+  fontSize: 16,
+  cursor: "pointer",
+  boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
+};
 
 const DEFAULT_INVERSION_PARAMS = {
   obs_cell_size_m: 30.0,
@@ -21,6 +39,12 @@ const DEFAULT_INVERSION_PARAMS = {
 
 const DEFAULT_PARAMS = {
   filter_cutoff_hz: 1.0,
+  gps_mag_lag_seconds: 0.0,
+  despike_params: {
+    enabled: true,
+    window_size: 11,
+    threshold_k: 4.0,
+  },
   line_params: {
     heading_lag_seconds: 1.0,
     heading_tolerance_deg: 20.0,
@@ -37,6 +61,11 @@ const DEFAULT_PARAMS = {
     enabled: true,
     quiet_percentile: 40.0,
     max_match_distance_m: null,
+  },
+  crossover_leveling: {
+    enabled: false,
+    tie_tolerance_deg: 20.0,
+    max_crossover_distance_m: 15.0,
   },
 };
 
@@ -57,6 +86,9 @@ export default function App() {
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
   const [gridding, setGridding] = useState(false);
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
+  const [savingProject, setSavingProject] = useState(false);
+  const [loadingProject, setLoadingProject] = useState(false);
+  const [exportingReport, setExportingReport] = useState(false);
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
   const [overlay, setOverlay] = useState(null);
@@ -68,6 +100,15 @@ export default function App() {
   const [hillshadeAzimuth, setHillshadeAzimuth] = useState(315);
   const [hillshadeAltitude, setHillshadeAltitude] = useState(45);
   const [hillshadeExaggeration, setHillshadeExaggeration] = useState(3);
+  const [stretch, setStretch] = useState("linear");
+  const [exportGeotiffColored, setExportGeotiffColored] = useState(false);
+  const [droneUploadProgress, setDroneUploadProgress] = useState(null);
+  const [baseUploadProgress, setBaseUploadProgress] = useState(null);
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
+  const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
+  const [showContours, setShowContours] = useState(false);
+  const [contourInterval, setContourInterval] = useState(null);
+  const [contourNLevels, setContourNLevels] = useState(10);
   const [showPointsOverGrid, setShowPointsOverGrid] = useState(true);
   const [showLineLabels, setShowLineLabels] = useState(false);
   const [overlayLayers, setOverlayLayers] = useState([]);
@@ -95,6 +136,14 @@ export default function App() {
   const [volumeThresholdMax, setVolumeThresholdMax] = useState("");
   const [volumeData, setVolumeData] = useState(null);
 
+  const [eulerStructuralIndex, setEulerStructuralIndex] = useState(1.0);
+  const [eulerWindowSize, setEulerWindowSize] = useState(100.0);
+  const [eulerMaxUncertaintyPct, setEulerMaxUncertaintyPct] = useState(30.0);
+  const [eulerRunning, setEulerRunning] = useState(false);
+  const [eulerResult, setEulerResult] = useState(null);
+  const [eulerError, setEulerError] = useState(null);
+  const [showEulerSolutions, setShowEulerSolutions] = useState(true);
+
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
   // would otherwise create two separate backend projects. Sharing the
@@ -116,22 +165,28 @@ export default function App() {
   const handleUploadDrone = async (files) => {
     try {
       setError(null);
+      setDroneUploadProgress(0);
       const id = await ensureProject();
-      const summary = await api.uploadDrone(id, files);
+      const summary = await api.uploadDrone(id, files, setDroneUploadProgress);
       setDroneSummary(summary);
     } catch (e) {
       handleError(e);
+    } finally {
+      setDroneUploadProgress(null);
     }
   };
 
   const handleUploadBase = async (files) => {
     try {
       setError(null);
+      setBaseUploadProgress(0);
       const id = await ensureProject();
-      const summary = await api.uploadBase(id, files);
+      const summary = await api.uploadBase(id, files, setBaseUploadProgress);
       setBaseSummary(summary);
     } catch (e) {
       handleError(e);
+    } finally {
+      setBaseUploadProgress(null);
     }
   };
 
@@ -149,6 +204,58 @@ export default function App() {
     const excludedById = new Map(exclusion.point_id.map((id, i) => [id, exclusion.excluded[i]]));
     setPoints((prev) => prev.map((p) => (excludedById.has(p.point_id) ? { ...p, excluded: excludedById.get(p.point_id) } : p)));
   }, []);
+
+  const handleSaveProject = async () => {
+    try {
+      setError(null);
+      setSavingProject(true);
+      await api.saveProject(projectId, "magnetic_project.zip");
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSavingProject(false);
+    }
+  };
+
+  const handleExportReport = async () => {
+    try {
+      setError(null);
+      setExportingReport(true);
+      await api.exportReport(projectId, "processing_report.md");
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingReport(false);
+    }
+  };
+
+  const handleLoadProject = async (file) => {
+    try {
+      setError(null);
+      setLoadingProject(true);
+      const id = await ensureProject();
+      const resp = await api.loadProject(id, file);
+      setDroneSummary(resp.drone_summary);
+      setBaseSummary(resp.base_summary);
+      setOverlay(null);
+      setActiveTransform("none");
+      setSectionResult(null);
+      setVolumeData(null);
+      if (resp.params) setProcessParams(resp.params);
+      if (resp.processed) {
+        setProcessSummary(resp.process_summary);
+        await refreshPoints(id, valueField);
+      } else {
+        setProcessSummary(null);
+        setPoints([]);
+      }
+      setInversionSummary(resp.inversion_summary || null);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setLoadingProject(false);
+    }
+  };
 
   const handleProcess = async () => {
     try {
@@ -233,6 +340,10 @@ export default function App() {
         hillshade_azimuth_deg: hillshadeAzimuth,
         hillshade_altitude_deg: hillshadeAltitude,
         hillshade_exaggeration: hillshadeExaggeration,
+        show_contours: showContours,
+        contour_interval_nt: contourInterval,
+        contour_n_levels: contourNLevels,
+        stretch,
       });
       setOverlay(resp);
       setActiveTransform("none");
@@ -265,6 +376,10 @@ export default function App() {
         hillshade_azimuth_deg: hillshadeAzimuth,
         hillshade_altitude_deg: hillshadeAltitude,
         hillshade_exaggeration: hillshadeExaggeration,
+        show_contours: showContours,
+        contour_interval_nt: contourInterval,
+        contour_n_levels: contourNLevels,
+        stretch,
       });
       setOverlay(resp);
       setActiveTransform(name);
@@ -279,11 +394,30 @@ export default function App() {
     try {
       setError(null);
       setExportingGeotiff(true);
-      const base = { value: valueField, cell_size_m: gridCellSize, method: gridMethod, max_distance_m: gridMaxDistance };
+      const base = {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        colored: exportGeotiffColored,
+        cmap: cmapName,
+        vmin: manualRange.enabled ? manualRange.vmin : null,
+        vmax: manualRange.enabled ? manualRange.vmax : null,
+        hillshade,
+        hillshade_azimuth_deg: hillshadeAzimuth,
+        hillshade_altitude_deg: hillshadeAltitude,
+        hillshade_exaggeration: hillshadeExaggeration,
+        stretch,
+      };
+      const suffix = exportGeotiffColored ? "_colored" : "";
       if (activeTransform === "none") {
-        await api.exportGridGeotiff(projectId, base, `${valueField}_${gridCellSize}m.tif`);
+        await api.exportGridGeotiff(projectId, base, `${valueField}_${gridCellSize}m${suffix}.tif`);
       } else {
-        await api.exportTransformGeotiff(projectId, { ...base, transform: activeTransform }, `${activeTransform}_${gridCellSize}m.tif`);
+        await api.exportTransformGeotiff(
+          projectId,
+          { ...base, transform: activeTransform },
+          `${activeTransform}_${gridCellSize}m${suffix}.tif`
+        );
       }
     } catch (e) {
       handleError(e);
@@ -366,6 +500,27 @@ export default function App() {
       setInversionError(e.message || String(e));
     } finally {
       setInversionRunning(false);
+    }
+  };
+
+  const handleRunEuler = async () => {
+    try {
+      setEulerError(null);
+      setEulerRunning(true);
+      const resp = await api.runEulerDeconvolution(projectId, {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        structural_index: eulerStructuralIndex,
+        window_size_m: eulerWindowSize,
+        max_depth_uncertainty_pct: eulerMaxUncertaintyPct,
+      });
+      setEulerResult(resp);
+    } catch (e) {
+      setEulerError(e.message || String(e));
+    } finally {
+      setEulerRunning(false);
     }
   };
 
@@ -509,13 +664,101 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", height: "100%", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ width: 320, borderRight: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}>
+      <div
+        className={`app-sidebar-backdrop${leftSidebarOpen || rightSidebarOpen ? " visible" : ""}`}
+        onClick={() => {
+          setLeftSidebarOpen(false);
+          setRightSidebarOpen(false);
+        }}
+      />
+      <div
+        className={`app-sidebar-left${leftSidebarOpen ? " open" : ""}`}
+        style={{ width: 320, borderRight: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
+      >
         <h1 style={{ fontSize: 16, margin: "4px 0 12px 0" }}>드론 자력탐사 자료 처리</h1>
+        <WorkflowProgress
+          droneSummary={droneSummary}
+          baseSummary={baseSummary}
+          processSummary={processSummary}
+          overlay={overlay}
+          inversionSummary={inversionSummary}
+          eulerResult={eulerResult}
+        />
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          <button
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: "1px solid #2563eb",
+              background: "white",
+              color: "#2563eb",
+              cursor: droneSummary && !savingProject ? "pointer" : "default",
+              opacity: droneSummary && !savingProject ? 1 : 0.5,
+            }}
+            disabled={!droneSummary || savingProject}
+            onClick={handleSaveProject}
+            title="업로드한 자료, 처리 파라미터, 수동 편집, DEM, 역산 결과를 모두 담아 저장합니다"
+          >
+            {savingProject ? "저장 중..." : "💾 프로젝트 저장"}
+          </button>
+          <label
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: "1px solid #2563eb",
+              background: "white",
+              color: "#2563eb",
+              cursor: "pointer",
+              textAlign: "center",
+              opacity: loadingProject ? 0.5 : 1,
+            }}
+            title="이전에 저장한 프로젝트(.zip)를 불러와 이어서 작업합니다"
+          >
+            {loadingProject ? "불러오는 중..." : "📂 프로젝트 불러오기"}
+            <input
+              type="file"
+              accept=".zip"
+              style={{ display: "none" }}
+              disabled={loadingProject}
+              onChange={async (e) => {
+                const f = e.target.files[0];
+                if (!f) return;
+                await handleLoadProject(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+        <button
+          style={{
+            width: "100%",
+            marginBottom: 12,
+            padding: "6px 8px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #2563eb",
+            background: "white",
+            color: "#2563eb",
+            cursor: processSummary && !exportingReport ? "pointer" : "default",
+            opacity: processSummary && !exportingReport ? 1 : 0.5,
+          }}
+          disabled={!processSummary || exportingReport}
+          onClick={handleExportReport}
+          title="지금까지 적용된 보정, 측선/통계 요약, 역산·오일러 결과를 정리한 Markdown 보고서를 다운로드합니다"
+        >
+          {exportingReport ? "생성 중..." : "📄 처리 보고서 다운로드 (.md)"}
+        </button>
         <WorkflowSteps
           onUploadDrone={handleUploadDrone}
           droneSummary={droneSummary}
+          droneUploadProgress={droneUploadProgress}
           onUploadBase={handleUploadBase}
           baseSummary={baseSummary}
+          baseUploadProgress={baseUploadProgress}
           processParams={processParams}
           setProcessParams={setProcessParams}
           onProcess={handleProcess}
@@ -537,6 +780,14 @@ export default function App() {
           setHillshadeAltitude={setHillshadeAltitude}
           hillshadeExaggeration={hillshadeExaggeration}
           setHillshadeExaggeration={setHillshadeExaggeration}
+          stretch={stretch}
+          setStretch={setStretch}
+          showContours={showContours}
+          setShowContours={setShowContours}
+          contourInterval={contourInterval}
+          setContourInterval={setContourInterval}
+          contourNLevels={contourNLevels}
+          setContourNLevels={setContourNLevels}
           onGrid={handleGrid}
           gridding={gridding}
           activeTransform={activeTransform}
@@ -546,11 +797,23 @@ export default function App() {
           setValueField={handleSetValueField}
           onExportGeotiff={handleExportGeotiff}
           exportingGeotiff={exportingGeotiff}
+          exportGeotiffColored={exportGeotiffColored}
+          setExportGeotiffColored={setExportGeotiffColored}
           error={error}
         />
       </div>
 
-      <div style={{ flex: 1, position: "relative" }}>
+      <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
+        <div style={{ position: "absolute", top: 60, left: 8, zIndex: 1200, display: "flex", gap: 6 }}>
+          <button className="app-sidebar-toggle" onClick={() => setLeftSidebarOpen((v) => !v)} style={toggleButtonStyle} title="자료 처리 패널 열기/닫기">
+            ☰
+          </button>
+        </div>
+        <div style={{ position: "absolute", top: 60, right: 8, zIndex: 1200, display: "flex", gap: 6 }}>
+          <button className="app-sidebar-toggle" onClick={() => setRightSidebarOpen((v) => !v)} style={toggleButtonStyle} title="지도 도구 패널 열기/닫기">
+            🛠
+          </button>
+        </div>
         <MapView
           points={points}
           colorRange={colorRange}
@@ -565,12 +828,37 @@ export default function App() {
           drawMode={drawMode || sectionDrawMode}
           drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
           onShapeDrawn={handleMapShapeDrawn}
+          eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
         />
-        {volumeData && <InversionVolumeView data={volumeData} onClose={() => setVolumeData(null)} />}
+        {volumeData && (
+          <Suspense
+            fallback={
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: "rgba(255,255,255,0.9)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 14,
+                  color: "#374151",
+                }}
+              >
+                3D 뷰어 불러오는 중...
+              </div>
+            }
+          >
+            <InversionVolumeView data={volumeData} onClose={() => setVolumeData(null)} />
+          </Suspense>
+        )}
         {!volumeData && sectionResult && <InversionSectionView data={sectionResult} onClose={() => setSectionResult(null)} />}
       </div>
 
-      <div style={{ width: 280, borderLeft: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}>
+      <div
+        className={`app-sidebar-right${rightSidebarOpen ? " open" : ""}`}
+        style={{ width: 280, borderLeft: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
+      >
         <h2 style={{ fontSize: 13, margin: "4px 0 10px 0" }}>7. 수동 측선 편집</h2>
         <LineEditor
           lines={processSummary?.lines}
@@ -642,6 +930,23 @@ export default function App() {
           onExportInversion={handleExportInversion}
           onExportInversionCsv={handleExportInversionCsv}
           onImportInversion={handleImportInversion}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14. 오일러 디컨볼루션 (빠른 심도 추정)</h2>
+        <EulerPanel
+          ready={!!processSummary}
+          structuralIndex={eulerStructuralIndex}
+          setStructuralIndex={setEulerStructuralIndex}
+          windowSize={eulerWindowSize}
+          setWindowSize={setEulerWindowSize}
+          maxUncertaintyPct={eulerMaxUncertaintyPct}
+          setMaxUncertaintyPct={setEulerMaxUncertaintyPct}
+          onRun={handleRunEuler}
+          running={eulerRunning}
+          result={eulerResult}
+          error={eulerError}
+          showSolutions={showEulerSolutions}
+          setShowSolutions={setShowEulerSolutions}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>

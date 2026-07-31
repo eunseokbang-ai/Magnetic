@@ -17,3 +17,52 @@ body,
 body {
   overflow: hidden;
 }
+
+/* Responsive layout: below 900px the left/right panels become
+   off-canvas slide-over drawers instead of a fixed 3-column layout, so
+   the map keeps usable width on tablets/small laptop windows. Desktop
+   (>900px) is unaffected - this rule block only takes effect inside the
+   media query. */
+.app-sidebar-toggle {
+  display: none;
+}
+.app-sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .app-sidebar-left,
+  .app-sidebar-right {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    z-index: 1000;
+    box-shadow: 0 0 16px rgba(0, 0, 0, 0.3);
+    transition: transform 0.2s ease;
+    max-width: 85vw;
+  }
+  .app-sidebar-left {
+    left: 0;
+    transform: translateX(-100%);
+  }
+  .app-sidebar-left.open {
+    transform: translateX(0);
+  }
+  .app-sidebar-right {
+    right: 0;
+    transform: translateX(100%);
+  }
+  .app-sidebar-right.open {
+    transform: translateX(0);
+  }
+  .app-sidebar-toggle {
+    display: flex !important;
+  }
+  .app-sidebar-backdrop.visible {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 999;
+  }
+}

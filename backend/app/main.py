@@ -9,6 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
 from .models import (
+    EulerDeconvolutionRequest,
     GridRequest,
     InversionParams,
     InversionSectionRequest,
@@ -141,6 +142,12 @@ def export_transform_geotiff(project_id: str, req: TransformRequest):
     )
 
 
+@app.post("/api/projects/{project_id}/euler-deconvolution")
+def euler_deconvolution(project_id: str, req: EulerDeconvolutionRequest):
+    project = store.get(project_id)
+    return project.run_euler_deconvolution(req)
+
+
 @app.post("/api/overlay-images")
 async def upload_overlay_image(file: UploadFile):
     content = await file.read()
@@ -215,6 +222,33 @@ def export_inversion_csv(project_id: str):
     data = project.export_inversion_csv()
     return Response(
         content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=inversion_result.csv"}
+    )
+
+
+@app.get("/api/projects/{project_id}/save")
+def save_project(project_id: str):
+    project = store.get(project_id)
+    data = project.save_project_bundle()
+    return Response(
+        content=data, media_type="application/zip", headers={"Content-Disposition": "attachment; filename=magnetic_project.zip"}
+    )
+
+
+@app.post("/api/projects/{project_id}/load")
+async def load_project(project_id: str, file: UploadFile):
+    project = store.get(project_id)
+    content = await file.read()
+    return project.load_project_bundle(content)
+
+
+@app.get("/api/projects/{project_id}/report")
+def export_report(project_id: str):
+    project = store.get(project_id)
+    md = project.generate_report()
+    return Response(
+        content=md.encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": "attachment; filename=processing_report.md"},
     )
 
 

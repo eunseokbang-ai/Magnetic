@@ -27,20 +27,56 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+// fetch() has no upload-progress event, so file uploads that want a
+// progress bar go through XMLHttpRequest instead - the rest of the app
+// still uses the plain fetch-based request() above.
+function uploadWithProgress(path, form, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}${path}`);
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);
+      };
+    }
+    xhr.onload = () => {
+      let data;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        data = null;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else {
+        let detail = xhr.statusText;
+        if (data) {
+          if (typeof data.detail === "string") detail = data.detail;
+          else if (Array.isArray(data.detail)) detail = data.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+          else if (data.detail) detail = JSON.stringify(data.detail);
+        }
+        reject(new Error(detail));
+      }
+    };
+    xhr.onerror = () => reject(new Error("네트워크 오류로 업로드에 실패했습니다."));
+    xhr.send(form);
+  });
+}
+
 export function createProject() {
   return request("/projects", { method: "POST" });
 }
 
-export function uploadDrone(projectId, files) {
+export function uploadDrone(projectId, files, onProgress) {
   const form = new FormData();
   for (const f of files) form.append("files", f);
-  return request(`/projects/${projectId}/upload/drone`, { method: "POST", body: form });
+  return uploadWithProgress(`/projects/${projectId}/upload/drone`, form, onProgress);
 }
 
-export function uploadBase(projectId, files) {
+export function uploadBase(projectId, files, onProgress) {
   const form = new FormData();
   for (const f of files) form.append("files", f);
-  return request(`/projects/${projectId}/upload/base`, { method: "POST", body: form });
+  return uploadWithProgress(`/projects/${projectId}/upload/base`, form, onProgress);
 }
 
 export function processProject(projectId, params) {
@@ -65,6 +101,10 @@ export function getGrid(projectId, req) {
 
 export function getTransform(projectId, req) {
   return request(`/projects/${projectId}/transform`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runEulerDeconvolution(projectId, req) {
+  return request(`/projects/${projectId}/euler-deconvolution`, { method: "POST", body: JSON.stringify(req) });
 }
 
 export function uploadOverlayImage(file) {
@@ -161,4 +201,20 @@ export function importInversionResult(projectId, file) {
   const form = new FormData();
   form.append("file", file);
   return request(`/projects/${projectId}/inversion/import`, { method: "POST", body: form });
+}
+
+export async function saveProject(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/save`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportReport(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/report`);
+  downloadBlob(blob, filename);
+}
+
+export function loadProject(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/load`, { method: "POST", body: form });
 }

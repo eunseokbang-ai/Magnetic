@@ -8,44 +8,76 @@ from io import BytesIO
 import matplotlib
 import numpy as np
 import rasterio
-from matplotlib.colors import LightSource
+from matplotlib.colors import LightSource, Normalize
 from PIL import Image
 from pyproj import Transformer
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
 
 
-def grid_to_png_overlay(
+class _EqualizeNorm(Normalize):
+    """Histogram-equalized "norm": maps each value to its empirical CDF
+    rank (0-1) among the finite grid cells instead of a linear fraction of
+    [vmin, vmax]. Spreads the color range evenly across however the data is
+    actually distributed, so a handful of extreme outlier anomalies no
+    longer wash out the color contrast over the rest of a long-tailed
+    survey - a standard alternative stretch in geophysical/remote-sensing
+    display software (Geosoft, ArcGIS "histogram equalize" stretch).
+    Duck-types matplotlib's Normalize (vmin/vmax + __call__) so it can be
+    passed anywhere a plain Normalize is used, hillshade included."""
+
+    def __init__(self, sorted_finite_values: np.ndarray):
+        super().__init__(vmin=float(sorted_finite_values[0]), vmax=float(sorted_finite_values[-1]), clip=False)
+        self._sorted = sorted_finite_values
+        self._ranks = np.linspace(0.0, 1.0, len(sorted_finite_values))
+
+    def __call__(self, value, clip=None):
+        arr = np.ma.asarray(value, dtype=float)
+        filled = arr.filled(self._sorted[0]) if np.ma.is_masked(arr) else np.asarray(arr)
+        result = np.interp(filled, self._sorted, self._ranks)
+        mask = np.ma.getmaskarray(arr) if np.ma.is_masked(arr) else False
+        return np.ma.array(result, mask=mask)
+
+
+def _render_rgba(
     grid_values: np.ndarray,
-    easting: np.ndarray,
-    northing: np.ndarray,
-    utm_epsg: int,
-    cmap_name: str = "viridis",
-    symmetric: bool = False,
-    vmin: float | None = None,
-    vmax: float | None = None,
-    hillshade: bool = False,
-    hillshade_azimuth_deg: float = 315.0,
-    hillshade_altitude_deg: float = 45.0,
-    hillshade_exaggeration: float = 3.0,
-    cell_size_m: float = 1.0,
-) -> dict:
+    cmap_name: str,
+    symmetric: bool,
+    vmin: float | None,
+    vmax: float | None,
+    hillshade: bool,
+    hillshade_azimuth_deg: float,
+    hillshade_altitude_deg: float,
+    hillshade_exaggeration: float,
+    cell_size_m: float,
+    stretch: str,
+) -> tuple[np.ndarray, float, float]:
+    """Shared color-mapping logic behind both the PNG map overlay and the
+    colored GeoTIFF export, so hillshade/stretch behave identically in
+    each output. Returns (rgba uint8 array in original row order, vmin,
+    vmax)."""
     finite = grid_values[np.isfinite(grid_values)]
     if finite.size == 0:
         raise ValueError("표시할 유효한 그리드 값이 없습니다.")
 
-    explicit_range = vmin is not None and vmax is not None
-    if vmin is None:
-        vmin = float(np.nanpercentile(finite, 2))
-    if vmax is None:
-        vmax = float(np.nanpercentile(finite, 98))
-    if symmetric and not explicit_range:
-        m = max(abs(vmin), abs(vmax))
-        vmin, vmax = -m, m
-    if vmin == vmax:
-        vmin, vmax = vmin - 1.0, vmax + 1.0
+    if stretch == "equalize":
+        # rank-based, so outlier clipping/symmetric-range logic (meant for
+        # a linear stretch) doesn't apply - every finite cell contributes.
+        norm = _EqualizeNorm(np.sort(finite))
+        vmin, vmax = float(finite.min()), float(finite.max())
+    else:
+        explicit_range = vmin is not None and vmax is not None
+        if vmin is None:
+            vmin = float(np.nanpercentile(finite, 2))
+        if vmax is None:
+            vmax = float(np.nanpercentile(finite, 98))
+        if symmetric and not explicit_range:
+            m = max(abs(vmin), abs(vmax))
+            vmin, vmax = -m, m
+        if vmin == vmax:
+            vmin, vmax = vmin - 1.0, vmax + 1.0
+        norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
 
-    norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
     cmap = matplotlib.colormaps[cmap_name]
 
     if hillshade:
@@ -72,6 +104,29 @@ def grid_to_png_overlay(
     else:
         rgba = (cmap(norm(grid_values)) * 255).astype(np.uint8)
     rgba[..., 3] = np.where(np.isfinite(grid_values), 255, 0).astype(np.uint8)
+    return rgba, vmin, vmax
+
+
+def grid_to_png_overlay(
+    grid_values: np.ndarray,
+    easting: np.ndarray,
+    northing: np.ndarray,
+    utm_epsg: int,
+    cmap_name: str = "viridis",
+    symmetric: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    hillshade: bool = False,
+    hillshade_azimuth_deg: float = 315.0,
+    hillshade_altitude_deg: float = 45.0,
+    hillshade_exaggeration: float = 3.0,
+    cell_size_m: float = 1.0,
+    stretch: str = "linear",
+) -> dict:
+    rgba, vmin, vmax = _render_rgba(
+        grid_values, cmap_name, symmetric, vmin, vmax, hillshade,
+        hillshade_azimuth_deg, hillshade_altitude_deg, hillshade_exaggeration, cell_size_m, stretch,
+    )
 
     # array row 0 = southmost northing; image row 0 must be the top (north).
     img_array = np.flipud(rgba)
@@ -93,6 +148,7 @@ def grid_to_png_overlay(
         "vmin": vmin,
         "vmax": vmax,
         "cmap": cmap_name,
+        "stretch": stretch,
     }
 
 
@@ -120,4 +176,50 @@ def grid_to_geotiff_bytes(grid_values: np.ndarray, easting: np.ndarray, northing
             compress="deflate",
         ) as dst:
             dst.write(data, 1)
+        return bytes(memfile.read())
+
+
+def grid_to_geotiff_bytes_colored(
+    grid_values: np.ndarray,
+    easting: np.ndarray,
+    northing: np.ndarray,
+    utm_epsg: int,
+    cmap_name: str = "viridis",
+    symmetric: bool = False,
+    vmin: float | None = None,
+    vmax: float | None = None,
+    hillshade: bool = False,
+    hillshade_azimuth_deg: float = 315.0,
+    hillshade_altitude_deg: float = 45.0,
+    hillshade_exaggeration: float = 3.0,
+    stretch: str = "linear",
+) -> bytes:
+    """4-band (RGBA) uint8 GeoTIFF baking in the same colormap/hillshade/
+    stretch rendering shown on screen - unlike grid_to_geotiff_bytes above
+    (raw float values, for reopening and re-analyzing), this is meant to
+    be viewed as-is: dropped straight into Google Earth, a slide deck's
+    GIS viewer, or any tool that just wants a georeferenced picture."""
+    cell_size = float(easting[1] - easting[0])
+    rgba, _, _ = _render_rgba(
+        grid_values, cmap_name, symmetric, vmin, vmax, hillshade,
+        hillshade_azimuth_deg, hillshade_altitude_deg, hillshade_exaggeration, cell_size, stretch,
+    )
+    # array row 0 = southmost northing; GeoTIFF row 0 must be the top (north).
+    data = np.flipud(rgba).transpose(2, 0, 1)  # rasterio wants (band, row, col)
+    transform = from_origin(easting[0] - cell_size / 2, northing[-1] + cell_size / 2, cell_size, cell_size)
+    crs = CRS.from_epsg(utm_epsg)
+
+    with rasterio.io.MemoryFile() as memfile:
+        with memfile.open(
+            driver="GTiff",
+            height=data.shape[1],
+            width=data.shape[2],
+            count=4,
+            dtype="uint8",
+            crs=crs,
+            transform=transform,
+            photometric="RGB",
+            compress="deflate",
+        ) as dst:
+            dst.write(data)
         return bytes(memfile.read())

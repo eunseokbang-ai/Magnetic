@@ -75,6 +75,52 @@ def main():
     assert summary["heading_correction"]["offset_nt"] is not None
     assert all(l["heading_group"] in ("A", "B") for l in summary["lines"])
     assert all(l["heading_shift_nt"] is not None for l in summary["lines"])
+    assert summary["despike"]["enabled"] is True
+    assert 0 <= summary["despike"]["n_spikes_removed"] < summary["n_points"]
+    assert summary["despike"]["pct_spikes_removed"] < 20.0  # sanity: not flagging most of the survey as spikes
+
+    r = client.post(
+        f"/api/projects/{project_id}/process",
+        json={
+            "filter_cutoff_hz": 1.0,
+            "despike_params": {"enabled": False},
+            "line_params": {},
+            "diurnal_params": {"time_offset_seconds": 0.0, "reference": "mean"},
+            "heading_correction": {"enabled": True, "quiet_percentile": 40.0},
+        },
+    )
+    assert r.status_code == 200, r.text
+    summary_no_despike = r.json()
+    assert summary_no_despike["despike"] == {"enabled": False, "n_spikes_removed": 0, "pct_spikes_removed": 0.0}
+
+    r = client.post(
+        f"/api/projects/{project_id}/process",
+        json={
+            "filter_cutoff_hz": 1.0,
+            "gps_mag_lag_seconds": 0.5,
+            "line_params": {},
+            "diurnal_params": {"time_offset_seconds": 0.0, "reference": "mean"},
+            "heading_correction": {"enabled": True, "quiet_percentile": 40.0},
+        },
+    )
+    assert r.status_code == 200, r.text
+    lag_summary = r.json()
+    print("gps_mag_lag summary:", lag_summary["gps_mag_lag"])
+    assert lag_summary["gps_mag_lag"]["lag_seconds"] == 0.5
+    assert lag_summary["gps_mag_lag"]["n_points_dropped"] > 0
+    assert lag_summary["n_points"] < summary["n_points"]  # trimmed rows at the shifted-out end of the track
+
+    # re-run with despiking back on so the rest of the pipeline (grids, inversion) uses the cleaned default
+    r = client.post(
+        f"/api/projects/{project_id}/process",
+        json={
+            "filter_cutoff_hz": 1.0,
+            "line_params": {},
+            "diurnal_params": {"time_offset_seconds": 0.0, "reference": "mean"},
+            "heading_correction": {"enabled": True, "quiet_percentile": 40.0},
+        },
+    )
+    assert r.status_code == 200, r.text
 
     r = client.get(f"/api/projects/{project_id}/points", params={"value": "anomaly"})
     assert r.status_code == 200, r.text
@@ -176,6 +222,28 @@ def main():
         assert r.status_code == 200, r.text
         assert r.json()["cmap"] == cmap_name
 
+    r = client.post(
+        f"/api/projects/{project_id}/grid",
+        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "show_contours": True, "contour_n_levels": 8},
+    )
+    assert r.status_code == 200, r.text
+    contours = r.json()["contours"]
+    print("n contour levels:", len(contours["levels"]), "n contour lines:", len(contours["features"]))
+    assert len(contours["levels"]) > 0
+    assert len(contours["features"]) > 0
+    for feat in contours["features"][:3]:
+        assert len(feat["path"]) >= 2
+        lat, lon = feat["path"][0]
+        assert 40 < lat < 55 and 100 < lon < 115  # sanity: within sample survey's rough lat/lon range
+
+    r = client.post(
+        f"/api/projects/{project_id}/grid",
+        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "show_contours": True, "contour_interval_nt": 200.0},
+    )
+    assert r.status_code == 200, r.text
+    interval_contours = r.json()["contours"]
+    assert all(abs((interval_contours["levels"][i + 1] - interval_contours["levels"][i]) - 200.0) < 1e-6 for i in range(len(interval_contours["levels"]) - 1))
+
     # line summaries should carry a centroid for map number labels
     assert all(l["centroid_lat"] is not None and l["centroid_lon"] is not None for l in summary["lines"])
 
@@ -211,7 +279,29 @@ def main():
     assert r.status_code == 200, r.text
     assert r.json()["image_data_url"].startswith("data:image/png;base64,")
 
+    # histogram-equalized stretch option
+    r = client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0, "stretch": "equalize"})
+    assert r.status_code == 200, r.text
+    eq_resp = r.json()
+    assert eq_resp["stretch"] == "equalize"
+    assert eq_resp["image_data_url"].startswith("data:image/png;base64,")
+    r = client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0, "stretch": "linear"})
+    assert r.status_code == 200, r.text
+    assert r.json()["stretch"] == "linear"
+
     _check_geotiff_export(client, project_id)
+
+    r = client.post(
+        f"/api/projects/{project_id}/euler-deconvolution",
+        json={"value": "anomaly", "cell_size_m": 10.0, "structural_index": 1.0, "window_size_m": 100.0},
+    )
+    assert r.status_code == 200, r.text
+    euler = r.json()
+    print("euler deconvolution:", {k: v for k, v in euler.items() if k != "solutions"}, "n solutions:", len(euler["solutions"]))
+    assert euler["n_solutions"] == len(euler["solutions"])
+    for sol in euler["solutions"][:3]:
+        assert 40 < sol["lat"] < 55 and 100 < sol["lon"] < 115
+        assert sol["depth_m"] > 0
 
     # error path: unknown project id
     r = client.get("/api/projects/does-not-exist/summary")
@@ -220,7 +310,56 @@ def main():
     _check_overlay_image_upload(client)
     _check_inversion(client, project_id, pts)
 
+    r = client.get(f"/api/projects/{project_id}/report")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/markdown")
+    report_md = r.content.decode("utf-8")
+    print("report length:", len(report_md))
+    for expected in ["드론 자력탐사 자료 처리 보고서", "측선 판별 결과", "자력값 통계", "3차원 역산 결과", "오일러 디컨볼루션 결과"]:
+        assert expected in report_md, f"report missing section: {expected}"
+    _check_project_save_load(client, project_id, summary)
+
     print("\nALL CHECKS PASSED")
+
+
+def _check_project_save_load(client, project_id, summary):
+    """Full project save/load: resume a project (raw data, params, manual
+    edits, DEM, inversion) without re-uploading or re-running anything."""
+    r = client.post(
+        f"/api/projects/{project_id}/manual-exclude",
+        json={"mode": "lines", "action": "exclude", "line_ids": [summary["lines"][0]["line_id"]]},
+    )
+    assert r.status_code == 200, r.text
+    excluded_summary = r.json()
+
+    r = client.get(f"/api/projects/{project_id}/save")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    bundle = r.content
+
+    r = client.post("/api/projects")
+    fresh_id = r.json()["project_id"]
+    r = client.post(f"/api/projects/{fresh_id}/load", files={"file": ("project.zip", bundle, "application/zip")})
+    assert r.status_code == 200, r.text
+    restored = r.json()
+    assert restored["processed"] is True
+    assert restored["inversion_restored"] is True
+    assert restored["process_summary"]["n_kept"] == excluded_summary["n_kept"]
+    assert restored["process_summary"]["n_manual_excluded"] == excluded_summary["n_manual_excluded"]
+
+    # restored inversion must be immediately usable, not just accepted
+    r = client.post(f"/api/projects/{fresh_id}/inversion/slice", json={"layer_index": 0})
+    assert r.status_code == 200, r.text
+
+    # a project with nothing uploaded yet has nothing to save
+    r = client.post("/api/projects")
+    empty_id = r.json()["project_id"]
+    r = client.get(f"/api/projects/{empty_id}/save")
+    assert r.status_code == 400, r.text
+
+    # a corrupt/non-zip upload should fail cleanly, not 500
+    r = client.post(f"/api/projects/{empty_id}/load", files={"file": ("bad.zip", b"not a zip file", "application/zip")})
+    assert r.status_code == 400, r.text
 
 
 def _check_inversion(client, project_id, pts):
@@ -435,6 +574,32 @@ def _check_geotiff_export(client, project_id):
     assert r.status_code == 200, r.text
     with MemoryFile(r.content) as memfile, memfile.open() as src:
         assert src.count == 1
+
+    # colored (RGBA) GeoTIFF variant - bakes in the on-screen colormap/hillshade, for viewing as-is elsewhere
+    r = client.post(f"/api/projects/{project_id}/grid/geotiff", json={"value": "anomaly", "cell_size_m": 10.0, "colored": True})
+    assert r.status_code == 200, r.text
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.crs is not None
+        assert src.count == 4
+        assert src.dtypes[0] == "uint8"
+        rgb = src.read([1, 2, 3])
+        assert rgb.max() > 0  # not all-black/empty
+
+    r = client.post(
+        f"/api/projects/{project_id}/grid/geotiff",
+        json={"value": "anomaly", "cell_size_m": 10.0, "colored": True, "hillshade": True},
+    )
+    assert r.status_code == 200, r.text
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.count == 4
+
+    r = client.post(
+        f"/api/projects/{project_id}/transform/geotiff",
+        json={"transform": "rtp", "value": "anomaly", "cell_size_m": 10.0, "colored": True},
+    )
+    assert r.status_code == 200, r.text
+    with MemoryFile(r.content) as memfile, memfile.open() as src:
+        assert src.count == 4
 
 
 def _check_overlay_image_upload(client):

@@ -98,39 +98,89 @@ def detect_lines(
         np.where(~on_azimuth, "off_azimuth_turn", None),
     )
 
-    # Group contiguous runs of on_azimuth samples (splitting on state change
-    # or a time gap) so each run becomes a candidate line.
-    on_azimuth_s = pd.Series(on_azimuth, index=out.index)
+    line_id, reasons = _group_into_lines(out, x, y, t, on_azimuth, params, start_id=0)
+    out["line_id"] = line_id
+    # only on_azimuth samples pass through the grouping loop above, so only
+    # their exclusion_reason should be touched (short_line/turn_buffer/kept);
+    # everything else keeps its original takeoff/off-azimuth tag.
+    out.loc[on_azimuth, "exclusion_reason"] = reasons[on_azimuth]
+
+    out.attrs["utm_epsg"] = epsg
+    out.attrs["dominant_azimuth_deg"] = dominant_azimuth
+    return out
+
+
+def _group_into_lines(
+    out: pd.DataFrame,
+    x: np.ndarray,
+    y: np.ndarray,
+    t: pd.Series,
+    mask: np.ndarray,
+    params: LineDetectionParams,
+    start_id: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Group contiguous runs of `mask` samples (splitting on state change or
+    a time gap) into candidate lines, applying the min-length and
+    turn-buffer trims. Returns (line_id array, exclusion_reason array) sized
+    like `out`, with line_id == -1 outside the mask or trimmed away."""
+    line_id_out = np.full(len(out), -1, dtype=int)
+    reason_out = np.full(len(out), None, dtype=object)
+
+    mask_s = pd.Series(mask, index=out.index)
     big_gap = t.diff().dt.total_seconds().fillna(0) > params.max_gap_seconds
-    state_change = on_azimuth_s.ne(on_azimuth_s.shift()).fillna(True)
+    state_change = mask_s.ne(mask_s.shift()).fillna(True)
     group_id = (state_change | big_gap).cumsum()
 
-    line_id = 0
+    line_id = start_id
     for gid, idx in out.groupby(group_id).groups.items():
         idx = np.asarray(idx)
-        if not on_azimuth[idx[0]]:
+        if not mask[idx[0]]:
             continue
         seg_x, seg_y = x[idx], y[idx]
         seg_len = np.hypot(np.diff(seg_x), np.diff(seg_y)).sum()
         if seg_len < params.min_line_length_m:
-            out.loc[idx, "exclusion_reason"] = "short_line"
+            reason_out[idx] = "short_line"
             continue
 
         cum = np.r_[0.0, np.cumsum(np.hypot(np.diff(seg_x), np.diff(seg_y)))]
         keep = (cum >= params.turn_buffer_m) & (cum <= seg_len - params.turn_buffer_m)
         if keep.sum() == 0:
-            out.loc[idx, "exclusion_reason"] = "short_line"
+            reason_out[idx] = "short_line"
             continue
 
-        out.loc[idx[~keep], "exclusion_reason"] = "turn_buffer"
+        reason_out[idx[~keep]] = "turn_buffer"
         kept_idx = idx[keep]
-        out.loc[kept_idx, "line_id"] = line_id
-        out.loc[kept_idx, "exclusion_reason"] = None
+        line_id_out[kept_idx] = line_id
+        reason_out[kept_idx] = None
         line_id += 1
 
-    out.attrs["utm_epsg"] = epsg
-    out.attrs["dominant_azimuth_deg"] = dominant_azimuth
-    return out
+    return line_id_out, reason_out
+
+
+def detect_tie_lines(
+    out: pd.DataFrame,
+    dominant_azimuth_deg: float,
+    params: LineDetectionParams | None = None,
+    tie_tolerance_deg: float = 20.0,
+) -> pd.Series:
+    """Given the dataframe already produced by detect_lines (with x, y,
+    heading_deg, speed_mps, line_id columns), find contiguous runs flown
+    roughly perpendicular to the dominant survey azimuth among the points
+    detect_lines excluded as "off_azimuth_turn" - these are tie lines, not
+    turns, when a real perpendicular calibration line was flown. Returns a
+    tie_line_id Series (-1 where not part of a tie line)."""
+    params = params or LineDetectionParams()
+    x, y = out["x"].to_numpy(), out["y"].to_numpy()
+    t = out["timestamp"]
+    heading = out["heading_deg"].to_numpy()
+    speed = out["speed_mps"].to_numpy()
+
+    perp_azimuth = (dominant_azimuth_deg + 90.0) % 180.0
+    valid = ~np.isnan(heading) & (speed >= params.min_speed_mps)
+    candidate = valid & (out["line_id"].to_numpy() < 0) & (_circular_diff_180(heading, perp_azimuth) <= tie_tolerance_deg)
+
+    tie_line_id, _reason = _group_into_lines(out, x, y, t, candidate, params, start_id=0)
+    return pd.Series(tie_line_id, index=out.index, name="tie_line_id")
 
 
 def _perp_vector(dominant_azimuth_deg: float) -> np.ndarray:

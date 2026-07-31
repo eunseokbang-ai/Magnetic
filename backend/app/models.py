@@ -25,11 +25,33 @@ class HeadingCorrectionParams(BaseModel):
     max_match_distance_m: Optional[float] = None
 
 
+class DespikeParams(BaseModel):
+    enabled: bool = True
+    window_size: int = Field(11, ge=3, le=101)  # samples
+    threshold_k: float = Field(4.0, gt=0)  # robust-std multiples before a sample counts as a spike
+
+
+class CrossoverLevelingParams(BaseModel):
+    # Off by default - tie lines aren't always flown, and this only does
+    # anything useful when perpendicular calibration lines are present in
+    # the raw flight (see processing/lines.py:detect_tie_lines).
+    enabled: bool = False
+    tie_tolerance_deg: float = Field(20.0, ge=1, le=90)
+    max_crossover_distance_m: float = Field(15.0, gt=0)
+
+
 class ProcessParams(BaseModel):
     filter_cutoff_hz: float = Field(1.0, gt=0)
+    # A known constant delay (seconds) between the magnetometer and GPS
+    # position streams - some loggers' internal filtering/telemetry path
+    # lags the GPS fix by a fraction of a second, which shows up as a
+    # small along-track position error. 0.0 = no correction (default).
+    gps_mag_lag_seconds: float = 0.0
+    despike_params: DespikeParams = DespikeParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
+    crossover_leveling: CrossoverLevelingParams = CrossoverLevelingParams()
 
 
 ValueField = Literal["tmi", "anomaly"]
@@ -49,7 +71,18 @@ class HillshadeParams(BaseModel):
     hillshade_exaggeration: float = Field(3.0, gt=0, le=20)
 
 
-class GridRequest(HillshadeParams):
+StretchName = Literal["linear", "equalize"]
+
+
+class ContourParams(BaseModel):
+    show_contours: bool = False
+    # if None, contour_n_levels evenly-spaced levels are picked from the
+    # grid's own min/max range instead of a fixed nT interval.
+    contour_interval_nt: Optional[float] = Field(None, gt=0)
+    contour_n_levels: int = Field(10, ge=2, le=50)
+
+
+class GridRequest(HillshadeParams, ContourParams):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
     method: GridMethod = "nearest"
@@ -57,9 +90,11 @@ class GridRequest(HillshadeParams):
     cmap: Optional[str] = None
     vmin: Optional[float] = None
     vmax: Optional[float] = None
+    stretch: StretchName = "linear"
+    colored: bool = False  # GeoTIFF export only: bake in the on-screen colormap as an RGBA GeoTIFF instead of raw float values
 
 
-class TransformRequest(HillshadeParams):
+class TransformRequest(HillshadeParams, ContourParams):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
@@ -68,6 +103,8 @@ class TransformRequest(HillshadeParams):
     cmap: Optional[str] = None
     vmin: Optional[float] = None
     vmax: Optional[float] = None
+    stretch: StretchName = "linear"
+    colored: bool = False  # GeoTIFF export only: bake in the on-screen colormap as an RGBA GeoTIFF instead of raw float values
 
 
 class ManualExcludeRequest(BaseModel):
@@ -112,6 +149,18 @@ class InversionSectionRequest(BaseModel):
     vmin: Optional[float] = None
     vmax: Optional[float] = None
     sample_spacing_m: float = Field(10.0, gt=0)
+
+
+class EulerDeconvolutionRequest(BaseModel):
+    value: ValueField = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    # 0 = contact/fault edge, 1 = thin dyke/sill/sheet edge, 2 = pipe/vertical
+    # cylinder, 3 = sphere/point dipole - the four textbook structural indices.
+    structural_index: float = Field(1.0, ge=0, le=3)
+    window_size_m: float = Field(100.0, gt=0)
+    max_depth_uncertainty_pct: float = Field(30.0, gt=0, le=200)
 
 
 class InversionVolumeRequest(BaseModel):

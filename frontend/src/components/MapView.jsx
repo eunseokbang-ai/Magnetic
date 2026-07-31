@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { MapContainer, TileLayer, LayersControl, ImageOverlay, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, LayersControl, ImageOverlay, ScaleControl, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -149,6 +149,107 @@ function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn }) {
   return null;
 }
 
+// Contour paths come pre-computed from the backend (see processing/contours.py)
+// as plain lat/lon polylines; drawn directly with the Leaflet canvas renderer
+// rather than one more matplotlib raster so they stay crisp at any zoom and
+// can be toggled without waiting for a full grid re-render.
+function ContourLayer({ contours }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const features = contours?.features || [];
+    if (features.length === 0) return;
+    const levels = contours.levels || [];
+    const majorEvery = Math.max(1, Math.floor(levels.length / 5) || 1);
+    const levelIndex = new Map(levels.map((lv, i) => [lv, i]));
+    for (const feat of features) {
+      const idx = levelIndex.get(feat.level) ?? 0;
+      const isMajor = idx % majorEvery === 0;
+      const line = L.polyline(feat.path, {
+        color: isMajor ? "#374151" : "#9ca3af",
+        weight: isMajor ? 1.6 : 0.8,
+        opacity: 0.85,
+      });
+      line.bindTooltip(`${feat.level.toFixed(1)} nT`, { sticky: true });
+      group.addLayer(line);
+    }
+  }, [contours]);
+
+  return null;
+}
+
+// Leaflet maps here never rotate (no bearing/heading control), so a north
+// arrow is purely a static "up = north" indicator, not a computed rotation.
+function NorthArrow() {
+  const map = useMap();
+  useEffect(() => {
+    const control = L.control({ position: "bottomleft" });
+    control.onAdd = () => {
+      const div = L.DomUtil.create("div");
+      div.style.background = "rgba(255,255,255,0.9)";
+      div.style.padding = "3px 8px";
+      div.style.borderRadius = "4px";
+      div.style.boxShadow = "0 1px 4px rgba(0,0,0,0.3)";
+      div.style.textAlign = "center";
+      div.style.color = "#111827";
+      div.style.userSelect = "none";
+      div.innerHTML = '<div style="font-size:15px;line-height:1;">▲</div><div style="font-size:10px;font-weight:600;">N</div>';
+      return div;
+    };
+    control.addTo(map);
+    return () => control.remove();
+  }, [map]);
+  return null;
+}
+
+// Euler deconvolution solutions are sparse (tens to a few hundred points),
+// so plain circleMarkers (not the canvas point layer) are fine here.
+function EulerLayer({ solutions }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const points = solutions || [];
+    if (points.length === 0) return;
+    const depths = points.map((s) => s.depth_m);
+    const dmin = Math.min(...depths);
+    const dmax = Math.max(...depths);
+    const colorScale = makeColorScale("viridis", dmin, dmax);
+    for (const s of points) {
+      const marker = L.circleMarker([s.lat, s.lon], {
+        radius: 5,
+        color: "#111827",
+        weight: 1,
+        fillColor: colorScale(s.depth_m),
+        fillOpacity: 0.85,
+      });
+      marker.bindTooltip(`깊이: ${s.depth_m.toFixed(1)} m<br/>불확실도: ±${s.uncertainty_m.toFixed(1)} m`, { sticky: true });
+      group.addLayer(marker);
+    }
+  }, [solutions]);
+
+  return null;
+}
+
 export default function MapView({
   points,
   colorRange,
@@ -163,6 +264,7 @@ export default function MapView({
   drawMode,
   drawShapeType,
   onShapeDrawn,
+  eulerSolutions,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -197,6 +299,7 @@ export default function MapView({
         ))}
 
       {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
+      {overlay?.contours && <ContourLayer contours={overlay.contours} />}
 
       <PointLayer
         points={pointsVisible ? points : []}
@@ -208,7 +311,11 @@ export default function MapView({
 
       <LineLabels lines={lines} visible={showLineLabels} />
 
+      {eulerSolutions && <EulerLayer solutions={eulerSolutions} />}
+
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
+      <ScaleControl position="bottomright" imperial={false} />
+      <NorthArrow />
     </MapContainer>
   );
 }
