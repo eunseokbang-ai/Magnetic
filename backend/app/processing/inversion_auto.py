@@ -82,6 +82,21 @@ def estimate_source_depth_m(grid_values: np.ndarray, cell_size_m: float) -> floa
     return float(depth)
 
 
+def _grid_shape(width: float, height: float, cell_size_m: float) -> tuple[int, int]:
+    """Number of grid nodes verde's grid_coordinates (grid-line
+    registration) actually produces for a given span/spacing - each axis
+    is round(span/spacing) + 1, matching processing/gridding.py's use of
+    verde underneath. Needed here because the "+1 per axis" endpoint
+    inclusion means a plain area/cell_size^2 estimate systematically
+    *undercounts* the real node count - most severely for small, close-
+    to-square grids (few tens of cells per axis), where +1 per axis is a
+    several-percent effect - so a naive analytic cell size can land
+    just over a hard node-count cap after the real grid is built."""
+    nx = int(round(width / cell_size_m)) + 1
+    ny = int(round(height / cell_size_m)) + 1
+    return nx, ny
+
+
 def suggest_mesh_params(
     x: np.ndarray,
     y: np.ndarray,
@@ -99,7 +114,11 @@ def suggest_mesh_params(
     area = max(width * height, 1.0)
 
     half_line_spacing = (line_spacing_m or 20.0) / 2.0
-    cell_for_obs_cap = float(np.sqrt(area / n_obs_cap))
+    # Margin under the cap so the analytic area/cell^2 estimate below
+    # still respects n_obs_cap once the "+1 per axis" rounding effect
+    # from the real discrete grid is accounted for (see _grid_shape).
+    obs_cap_margin = 0.85
+    cell_for_obs_cap = float(np.sqrt(area / (n_obs_cap * obs_cap_margin)))
     obs_cell_size_m = max(half_line_spacing, cell_for_obs_cap)
 
     # Grid at that spacing to run the spectral depth estimate on
@@ -133,6 +152,18 @@ def suggest_mesh_params(
     cap_margin = 0.75  # safety margin under the hard cap enforced in store.py
     cell_for_active_cap = (area * depth_extent_m / (n_active_cap * cap_margin)) ** (1.0 / 3.0)
     obs_cell_size_m = max(obs_cell_size_m, cell_for_active_cap)
+
+    # Belt-and-suspenders: verify against the actual discrete grid shape
+    # (not just the analytic area/cell^2 approximation above) and nudge
+    # the cell size up if it would still land over the cap - guarantees
+    # store.run_inversion's own nx*ny <= n_obs_cap check never fails on a
+    # freshly auto-suggested cell size, regardless of the survey's aspect
+    # ratio or how the "+1 per axis" rounding happens to fall.
+    for _ in range(8):
+        nx, ny = _grid_shape(width, height, obs_cell_size_m)
+        if nx * ny <= n_obs_cap:
+            break
+        obs_cell_size_m *= 1.05
 
     n_layers = int(np.clip(round(depth_extent_m / obs_cell_size_m), 4, 50))
 

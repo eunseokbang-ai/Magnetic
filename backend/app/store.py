@@ -151,6 +151,7 @@ class Project:
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
+    transform_cache: dict = field(default_factory=dict)
     dem_bytes: bytes | None = None
     dem_name: str | None = None
     inversion_result: InversionResult | None = None
@@ -322,6 +323,7 @@ class Project:
         self.processed = df
         self.manual_overrides = {}
         self.grid_cache = {}
+        self.transform_cache = {}
         self.last_params = params
         return self.process_summary()
 
@@ -443,6 +445,7 @@ class Project:
         if req.mode == "reset":
             self.manual_overrides = {}
             self.grid_cache = {}
+            self.transform_cache = {}
             return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
         if req.mode == "lines":
@@ -467,6 +470,7 @@ class Project:
         for pid in target_ids:
             self.manual_overrides[int(pid)] = forced_value
         self.grid_cache = {}
+        self.transform_cache = {}
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
@@ -526,6 +530,26 @@ class Project:
         return overlay
 
     def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
+        resolved_max_distance = self._resolve_max_distance(req.cell_size_m, req.max_distance_m)
+        cache_key = (
+            req.value,
+            req.cell_size_m,
+            req.method,
+            resolved_max_distance,
+            req.transform,
+            req.continuation_height_m,
+            req.trend_order,
+            req.microlevel_strength,
+            req.microlevel_angle_tolerance_deg,
+            req.microlevel_wavelength_factor,
+        )
+        if cache_key in self.transform_cache:
+            return self.transform_cache[cache_key]
+        result = self._compute_transform_values(grid, req)
+        self.transform_cache[cache_key] = result
+        return result
+
+    def _compute_transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
         transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
@@ -955,6 +979,7 @@ class Project:
                     if overrides:
                         self.manual_overrides = {int(k): v for k, v in overrides.items()}
                         self.grid_cache = {}
+                        self.transform_cache = {}
                     processed = True
 
                 inversion_summary = None

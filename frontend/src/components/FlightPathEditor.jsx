@@ -55,7 +55,7 @@ const modeButtonStyle = (active) => ({
   cursor: "pointer",
 });
 
-export default function FlightPathEditor({ points, onApply, onClose }) {
+export default function FlightPathEditor({ points, loading, onApply, onClose }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 800, height: 560 });
@@ -277,6 +277,24 @@ export default function FlightPathEditor({ points, onApply, onClose }) {
               setSelectionRectPx(null);
             }}
           />
+          {validPoints.length === 0 && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#9ca3af",
+                fontSize: 13,
+                background: "#111827",
+                borderRadius: 6,
+                pointerEvents: "none",
+              }}
+            >
+              {loading ? "포인트를 불러오는 중입니다..." : "표시할 포인트가 없습니다 (자료 처리를 먼저 실행하세요)."}
+            </div>
+          )}
         </div>
       </div>
     </div>

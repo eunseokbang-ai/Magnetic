@@ -110,6 +110,7 @@ export default function App() {
   const [processSummary, setProcessSummary] = useState(null);
   const [processing, setProcessing] = useState(false);
   const [points, setPoints] = useState([]);
+  const [pointsLoading, setPointsLoading] = useState(false);
   const [valueField, setValueField] = useState("anomaly");
   const [hoverPoint, setHoverPoint] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
@@ -249,8 +250,13 @@ export default function App() {
   };
 
   const refreshPoints = useCallback(async (id, value) => {
-    const pts = await api.getPoints(id, value);
-    setPoints(pts);
+    setPointsLoading(true);
+    try {
+      const pts = await api.getPoints(id, value);
+      setPoints(pts);
+    } finally {
+      setPointsLoading(false);
+    }
   }, []);
 
   // manual-exclude responses carry just the (point_id -> excluded) delta,
@@ -1144,6 +1150,7 @@ export default function App() {
         {flightPathEditorOpen && (
           <FlightPathEditor
             points={points}
+            loading={pointsLoading}
             lines={processSummary?.lines}
             onApply={handleManualExcludePointIds}
             onClose={() => setFlightPathEditorOpen(false)}

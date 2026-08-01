@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 
+import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -37,9 +38,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 # The 3D inversion volume payload (flattened isosurface coordinate arrays)
-# can run into the tens of MB uncompressed; JSON full of repeated float
-# patterns compresses very well.
-app.add_middleware(GZipMiddleware, minimum_size=1000)
+# and the raw point list (tens of MB at 100k+ points) compress very well,
+# but Starlette's default compresslevel=9 spends ~4x longer than
+# compresslevel=6 for a ~0.5% size gain on this kind of repeated-float
+# JSON - at ~20MB payloads that is 1-2s of pure CPU time added to every
+# request, independent of how fast the actual endpoint logic is.
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 
 @app.exception_handler(ProjectError)
@@ -75,6 +79,37 @@ async def chat_error_handler(request, exc: ChatError):
     from fastapi.responses import JSONResponse
 
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request, exc: ValueError):
+    # Catch-all for plain ValueError raised deep in processing/* (grid size
+    # caps, parameter validation, etc.) that isn't already one of the more
+    # specific *Error types above - without this, FastAPI has no handler
+    # for a bare ValueError and it surfaces as an opaque 500, hiding the
+    # actual (often quite actionable) Korean message the exception carries.
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+def _fast_json_response(data) -> Response:
+    """FastAPI's default return-value path runs every payload through
+    jsonable_encoder (a slow, fully recursive type-dispatch pass) before
+    handing it to json.dumps - for a 90k-row point list that's ~1.2s of
+    pure Python overhead that has nothing to do with how fast the actual
+    endpoint logic is. orjson serializes the already-JSON-native records
+    directly (and, as a bonus, turns NaN/Infinity into `null` instead of
+    the non-standard `NaN` literal json.dumps would emit, which browsers'
+    JSON.parse cannot read). Falls back to the normal FastAPI path for
+    the rare payload orjson can't handle."""
+    try:
+        return Response(content=orjson.dumps(data), media_type="application/json")
+    except TypeError:
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(content=jsonable_encoder(data))
 
 
 @app.post("/api/projects")
@@ -116,7 +151,7 @@ def summary(project_id: str):
 @app.get("/api/projects/{project_id}/points")
 def points(project_id: str, value: str = "anomaly"):
     project = store.get(project_id)
-    return project.get_points(value)
+    return _fast_json_response(project.get_points(value))
 
 
 @app.get("/api/projects/{project_id}/line-profile")
@@ -286,7 +321,7 @@ def inversion_section(project_id: str, req: InversionSectionRequest):
 @app.get("/api/projects/{project_id}/inversion/volume")
 def inversion_volume(project_id: str, threshold: float | None = None, threshold_max: float | None = None):
     project = store.get(project_id)
-    return project.get_inversion_volume(threshold, threshold_max)
+    return _fast_json_response(project.get_inversion_volume(threshold, threshold_max))
 
 
 @app.get("/api/projects/{project_id}/inversion/export")
