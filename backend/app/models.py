@@ -163,6 +163,23 @@ class EulerDeconvolutionRequest(BaseModel):
     max_depth_uncertainty_pct: float = Field(30.0, gt=0, le=200)
 
 
+class TargetDetectionRequest(BaseModel):
+    # Much finer default than the 10m used for regional geology grids -
+    # near-surface compact targets (mines, ordnance, vehicles) need a
+    # detection grid fine enough to resolve a footprint of a few meters.
+    cell_size_m: float = Field(1.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    # If omitted, auto = threshold_k * robust std of the anomaly grid.
+    amplitude_threshold_nt: Optional[float] = Field(None, gt=0)
+    threshold_k: float = Field(4.0, gt=0)
+    min_footprint_m: float = Field(0.5, gt=0)
+    max_footprint_m: float = Field(15.0, gt=0)
+    fit_window_m: float = Field(8.0, gt=0)
+    max_depth_m: float = Field(5.0, gt=0)
+    min_fit_quality: float = Field(0.3, ge=0, le=1)
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str

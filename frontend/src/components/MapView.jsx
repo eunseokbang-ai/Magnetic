@@ -250,6 +250,46 @@ function EulerLayer({ solutions }) {
   return null;
 }
 
+function TargetDetectionLayer({ targets }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const list = targets || [];
+    if (list.length === 0) return;
+    list.forEach((t, i) => {
+      // radius scales with log(moment) so a huge vehicle-scale target
+      // doesn't visually swallow small candidates on the same map
+      const radius = 6 + 3 * Math.log10(Math.max(t.moment_am2, 0.01) + 1);
+      const marker = L.circleMarker([t.lat, t.lon], {
+        radius,
+        color: "#111827",
+        weight: 2,
+        dashArray: "3,2",
+        fillColor: "#dc2626",
+        fillOpacity: 0.55 * t.fit_quality + 0.15,
+      });
+      marker.bindTooltip(
+        `표적 후보 #${i + 1}<br/>심도: ${t.depth_m.toFixed(2)} m<br/>쌍극자모멘트: ${t.moment_am2.toFixed(2)} A·m²` +
+          `<br/>크기등급: ${t.size_class}<br/>첨두이상: ${t.peak_anomaly_nt.toFixed(1)} nT<br/>적합도: ${t.fit_quality.toFixed(2)}`,
+        { sticky: true }
+      );
+      group.addLayer(marker);
+    });
+  }, [targets]);
+
+  return null;
+}
+
 export default function MapView({
   points,
   colorRange,
@@ -265,6 +305,7 @@ export default function MapView({
   drawShapeType,
   onShapeDrawn,
   eulerSolutions,
+  detectedTargets,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -312,6 +353,7 @@ export default function MapView({
       <LineLabels lines={lines} visible={showLineLabels} />
 
       {eulerSolutions && <EulerLayer solutions={eulerSolutions} />}
+      {detectedTargets && <TargetDetectionLayer targets={detectedTargets} />}
 
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
       <ScaleControl position="bottomright" imperial={false} />

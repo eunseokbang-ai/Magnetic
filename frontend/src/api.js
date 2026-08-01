@@ -107,6 +107,10 @@ export function runEulerDeconvolution(projectId, req) {
   return request(`/projects/${projectId}/euler-deconvolution`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function runTargetDetection(projectId, req) {
+  return request(`/projects/${projectId}/target-detection`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);

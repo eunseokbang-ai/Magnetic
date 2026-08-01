@@ -24,10 +24,12 @@ from .models import (
     InversionSliceRequest,
     ManualExcludeRequest,
     ProcessParams,
+    TargetDetectionRequest,
     TransformRequest,
 )
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
 from .processing.despike import despike
+from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter
 from .processing.gridding import GridResult, grid_points
@@ -77,6 +79,15 @@ DEFAULT_CMAPS = {
 N_OBS_CAP = 3500
 N_ACTIVE_CAP = 90000
 
+# Target detection grids at a fine (often ~1m) cell size to resolve compact
+# near-surface objects; on a large-area survey that same fine cell size
+# multiplied by the full flight extent can balloon into a many-million-cell
+# grid (benchmarked at ~1.5M cells / ~4-9s total on the sample survey at
+# 1m/98m line spacing), so this bounds it - a user surveying a large area
+# should raise cell_size_m (or narrow the area) rather than the request
+# hanging or exhausting memory.
+TARGET_DETECTION_GRID_CELL_CAP = 4_000_000
+
 
 class ProjectError(ValueError):
     pass
@@ -104,6 +115,7 @@ class Project:
     gps_lag_info: dict | None = None
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
+    target_summary_cache: dict | None = None
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
@@ -289,6 +301,7 @@ class Project:
             self.last_params.model_dump() if self.last_params is not None else None,
             self.inversion_summary_cache,
             self.euler_summary_cache,
+            self.target_summary_cache,
         )
 
     def _active_mask(self) -> pd.Series:
@@ -508,6 +521,87 @@ class Project:
             ],
         }
         self.euler_summary_cache = summary
+        return summary
+
+    def run_target_detection(self, req: TargetDetectionRequest) -> dict:
+        """Near-surface compact-target detection (mines, buried ordnance,
+        hidden vehicles): grids the magnetic anomaly at a fine cell size,
+        picks out localized (non-regional) local-maximum anomalies, and
+        fits each one to a single induced-magnetic-dipole model - see
+        processing/dipole_fit.py for the physics and the caveats around
+        what a dipole-moment size class can and cannot tell you."""
+        if self.processed is None or self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+
+        active = self._active_mask()
+        df = self.processed.loc[active]
+        x_span = float(df["x"].max() - df["x"].min())
+        y_span = float(df["y"].max() - df["y"].min())
+        est_cells = (x_span / req.cell_size_m + 1) * (y_span / req.cell_size_m + 1)
+        if est_cells > TARGET_DETECTION_GRID_CELL_CAP:
+            raise ProjectError(
+                f"탐지 격자가 너무 촘촘합니다 (예상 셀 수 약 {int(est_cells):,}개, 상한 {TARGET_DETECTION_GRID_CELL_CAP:,}개). "
+                "탐지 격자 크기(m)를 늘리거나, 폴리곤으로 관심 영역만 남기고 나머지 측선을 제외한 뒤 다시 시도하세요."
+            )
+
+        grid = self._grid_for("anomaly", req.cell_size_m, req.method, req.max_distance_m)
+
+        if req.amplitude_threshold_nt is not None:
+            threshold_nt = req.amplitude_threshold_nt
+        else:
+            finite = grid.values[np.isfinite(grid.values)]
+            robust_std = float(1.4826 * np.median(np.abs(finite - np.median(finite)))) if finite.size else 0.0
+            threshold_nt = max(req.threshold_k * robust_std, 1e-6)
+
+        targets = detect_targets(
+            df["x"].to_numpy(),
+            df["y"].to_numpy(),
+            df["anomaly"].to_numpy(),
+            grid.values,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.inclination_deg,
+            self.declination_deg,
+            threshold_nt=threshold_nt,
+            min_footprint_m=req.min_footprint_m,
+            max_footprint_m=req.max_footprint_m,
+            fit_window_m=req.fit_window_m,
+            max_depth_m=req.max_depth_m,
+            min_fit_quality=req.min_fit_quality,
+        )
+
+        transformer = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
+        target_dicts = []
+        if targets:
+            lons, lats = transformer.transform([t.x for t in targets], [t.y for t in targets])
+        else:
+            lons, lats = [], []
+        for t, lat, lon in zip(targets, lats, lons):
+            target_dicts.append(
+                {
+                    "lat": float(lat),
+                    "lon": float(lon),
+                    "depth_m": t.depth_m,
+                    "moment_am2": t.moment_am2,
+                    "size_class": classify_moment(t.moment_am2),
+                    "peak_anomaly_nt": t.peak_anomaly_nt,
+                    "footprint_m": t.footprint_m,
+                    "fit_quality": t.fit_quality,
+                    "background_nt": t.background_nt,
+                }
+            )
+        # sort strongest/most-confident first, since these lists are most
+        # useful read top-down as a triage order rather than in scan order.
+        target_dicts.sort(key=lambda d: -d["fit_quality"])
+
+        summary = {
+            "n_targets": len(target_dicts),
+            "amplitude_threshold_nt": threshold_nt,
+            "cell_size_m": grid.cell_size_m,
+            "targets": target_dicts,
+        }
+        self.target_summary_cache = summary
         return summary
 
     def load_dem(self, data: bytes, name: str) -> dict:

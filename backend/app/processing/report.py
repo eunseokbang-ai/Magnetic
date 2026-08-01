@@ -24,6 +24,7 @@ def generate_report_markdown(
     last_params: dict | None,
     inversion_summary: dict | None,
     euler_summary: dict | None,
+    target_summary: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# 드론 자력탐사 자료 처리 보고서")
@@ -151,6 +152,30 @@ def generate_report_markdown(
         ds = euler_summary.get("depth_stats")
         if ds:
             lines.append(f"- 추정 심도 범위: {_fmt(ds.get('min'))} ~ {_fmt(ds.get('max'))} m (평균 {_fmt(ds.get('mean'))} m)")
+        lines.append("")
+
+    if target_summary:
+        lines.append("## 9. 근지표 표적탐지 결과 (쌍극자 피팅)")
+        lines.append("")
+        lines.append(
+            "⚠ 쌍극자 모멘트는 상대적인 철질량 크기 등급일 뿐이며, 자력탐사만으로 표적의 종류(지뢰/포탄/전차 등)를 "
+            "특정할 수 없습니다. 최소금속 물체는 신호가 거의 없어 탐지되지 않을 수 있습니다. 실제 위치 확인·처리는 "
+            "반드시 전문 인력이 현장에서 검증해야 합니다."
+        )
+        lines.append("")
+        lines.append(f"- 탐지된 표적 후보 수: {target_summary.get('n_targets')}")
+        lines.append(f"- 진폭 임계값: {_fmt(target_summary.get('amplitude_threshold_nt'))} nT, 탐지 격자 크기: {_fmt(target_summary.get('cell_size_m'))} m")
+        targets = target_summary.get("targets") or []
+        if targets:
+            lines.append("")
+            lines.append("| 위도 | 경도 | 심도(m) | 쌍극자모멘트(A·m²) | 크기등급 | 첨두이상(nT) | 적합도 |")
+            lines.append("|---|---|---|---|---|---|---|")
+            for t in targets:
+                lines.append(
+                    f"| {_fmt(t.get('lat'), 5)} | {_fmt(t.get('lon'), 5)} | {_fmt(t.get('depth_m'))} | "
+                    f"{_fmt(t.get('moment_am2'))} | {t.get('size_class')} | {_fmt(t.get('peak_anomaly_nt'))} | "
+                    f"{_fmt(t.get('fit_quality'))} |"
+                )
         lines.append("")
 
     return "\n".join(lines) + "\n"

@@ -18,6 +18,7 @@ from .models import (
     InversionSliceRequest,
     ManualExcludeRequest,
     ProcessParams,
+    TargetDetectionRequest,
     TransformRequest,
 )
 from .processing.colormaps import register_custom_colormaps
@@ -155,6 +156,12 @@ def export_transform_geotiff(project_id: str, req: TransformRequest):
 def euler_deconvolution(project_id: str, req: EulerDeconvolutionRequest):
     project = store.get(project_id)
     return project.run_euler_deconvolution(req)
+
+
+@app.post("/api/projects/{project_id}/target-detection")
+def target_detection(project_id: str, req: TargetDetectionRequest):
+    project = store.get(project_id)
+    return project.run_target_detection(req)
 
 
 @app.post("/api/overlay-images")

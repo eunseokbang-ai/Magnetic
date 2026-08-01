@@ -16,6 +16,7 @@ const InversionVolumeView = lazy(() => import("./components/InversionVolumeView"
 import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
+import TargetDetectionPanel from "./components/TargetDetectionPanel";
 
 const toggleButtonStyle = {
   width: 36,
@@ -36,6 +37,17 @@ const DEFAULT_INVERSION_PARAMS = {
   assumed_agl_m: 50.0,
   regularization_strength: 1.0,
   n_irls_iterations: 6,
+};
+
+const DEFAULT_TARGET_DETECTION_PARAMS = {
+  cell_size_m: 1.0,
+  amplitude_threshold_nt: null,
+  threshold_k: 4.0,
+  min_footprint_m: 0.5,
+  max_footprint_m: 15.0,
+  fit_window_m: 8.0,
+  max_depth_m: 5.0,
+  min_fit_quality: 0.3,
 };
 
 const DEFAULT_PARAMS = {
@@ -148,6 +160,18 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState(null);
+
+  // "용도" preset: mineral-exploration workflows want broad, coarse grids
+  // and the 3D inversion/Euler panels front and center; near-surface
+  // target detection (mines/UXO/hidden vehicles) wants a much finer grid
+  // and the dipole-fit target panel front and center instead - switching
+  // resets the grid cell size to that mode's usual scale.
+  const [purposeMode, setPurposeMode] = useState("mineral"); // "mineral" | "target"
+  const [targetDetectionParams, setTargetDetectionParams] = useState(DEFAULT_TARGET_DETECTION_PARAMS);
+  const [targetDetectionRunning, setTargetDetectionRunning] = useState(false);
+  const [targetDetectionResult, setTargetDetectionResult] = useState(null);
+  const [targetDetectionError, setTargetDetectionError] = useState(null);
+  const [showDetectedTargets, setShowDetectedTargets] = useState(true);
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -544,6 +568,24 @@ export default function App() {
     }
   };
 
+  const handleSetPurposeMode = (mode) => {
+    setPurposeMode(mode);
+    setGridCellSize(mode === "target" ? 1.0 : 10.0);
+  };
+
+  const handleRunTargetDetection = async () => {
+    try {
+      setTargetDetectionError(null);
+      setTargetDetectionRunning(true);
+      const resp = await api.runTargetDetection(projectId, targetDetectionParams);
+      setTargetDetectionResult(resp);
+    } catch (e) {
+      setTargetDetectionError(e.message || String(e));
+    } finally {
+      setTargetDetectionRunning(false);
+    }
+  };
+
   const handleSendChatMessage = async (text) => {
     try {
       setChatError(null);
@@ -712,6 +754,40 @@ export default function App() {
         style={{ width: 320, borderRight: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
       >
         <h1 style={{ fontSize: 16, margin: "4px 0 12px 0" }}>드론 자력탐사 자료 처리</h1>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          <button
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: purposeMode === "mineral" ? "1px solid #2563eb" : "1px solid #d1d5db",
+              background: purposeMode === "mineral" ? "#2563eb" : "white",
+              color: purposeMode === "mineral" ? "white" : "#374151",
+              cursor: "pointer",
+            }}
+            onClick={() => handleSetPurposeMode("mineral")}
+            title="넓은 지역의 완만한 지질체 - 3차원 역산/오일러 디컨볼루션 중심, 격자 크기 기본 10m"
+          >
+            🪨 광물자원탐사
+          </button>
+          <button
+            style={{
+              flex: 1,
+              padding: "6px 8px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: purposeMode === "target" ? "1px solid #b91c1c" : "1px solid #d1d5db",
+              background: purposeMode === "target" ? "#b91c1c" : "white",
+              color: purposeMode === "target" ? "white" : "#374151",
+              cursor: "pointer",
+            }}
+            onClick={() => handleSetPurposeMode("target")}
+            title="작고 국지적인 근지표 표적(지뢰/불발탄/은닉차량) - 쌍극자 피팅 표적탐지 중심, 격자 크기 기본 1m"
+          >
+            🎯 근지표 표적탐지
+          </button>
+        </div>
         <WorkflowProgress
           droneSummary={droneSummary}
           baseSummary={baseSummary}
@@ -865,6 +941,7 @@ export default function App() {
           drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
           onShapeDrawn={handleMapShapeDrawn}
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
+          detectedTargets={showDetectedTargets ? targetDetectionResult?.targets : null}
         />
         {volumeData && (
           <Suspense
@@ -924,66 +1001,90 @@ export default function App() {
           error={overlayError}
         />
 
-        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>13. 3차원 역산 (실험적)</h2>
-        <InversionPanel
-          ready={!!processSummary}
-          demStatus={demStatus}
-          demUploading={demUploading}
-          onUploadDem={handleUploadDem}
-          onClearDem={handleClearDem}
-          params={inversionParams}
-          setParams={setInversionParams}
-          autoParams={autoParams}
-          setAutoParams={setAutoParams}
-          onRun={handleRunInversion}
-          running={inversionRunning}
-          summary={inversionSummary}
-          error={inversionError}
-          sliceLayerIndex={sliceLayerIndex}
-          setSliceLayerIndex={setSliceLayerIndex}
-          sliceThreshold={sliceThreshold}
-          setSliceThreshold={setSliceThreshold}
-          sliceThresholdMax={sliceThresholdMax}
-          setSliceThresholdMax={setSliceThresholdMax}
-          onShowSlice={handleShowInversionSlice}
-          sectionProfile={sectionProfile}
-          setSectionProfile={setSectionProfile}
-          sectionPositionFrac={sectionPositionFrac}
-          setSectionPositionFrac={setSectionPositionFrac}
-          sectionDrawMode={sectionDrawMode}
-          onToggleSectionDrawMode={handleToggleSectionDrawMode}
-          onRunFixedSection={handleRunFixedSection}
-          sectionThreshold={sectionThreshold}
-          setSectionThreshold={setSectionThreshold}
-          sectionThresholdMax={sectionThresholdMax}
-          setSectionThresholdMax={setSectionThresholdMax}
-          sectionLoading={sectionLoading}
-          onOpenVolume={handleOpenVolume}
-          volumeThreshold={volumeThreshold}
-          setVolumeThreshold={setVolumeThreshold}
-          volumeThresholdMax={volumeThresholdMax}
-          setVolumeThresholdMax={setVolumeThresholdMax}
-          onExportInversion={handleExportInversion}
-          onExportInversionCsv={handleExportInversionCsv}
-          onImportInversion={handleImportInversion}
-        />
+        <details open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>
+          <summary style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
+            13~14. 광물자원탐사용 고급 분석 (3차원 역산 · 오일러 디컨볼루션){purposeMode === "target" && " — 근지표 표적탐지에는 보통 불필요"}
+          </summary>
+          <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>13. 3차원 역산 (실험적)</h2>
+          <InversionPanel
+            ready={!!processSummary}
+            demStatus={demStatus}
+            demUploading={demUploading}
+            onUploadDem={handleUploadDem}
+            onClearDem={handleClearDem}
+            params={inversionParams}
+            setParams={setInversionParams}
+            autoParams={autoParams}
+            setAutoParams={setAutoParams}
+            onRun={handleRunInversion}
+            running={inversionRunning}
+            summary={inversionSummary}
+            error={inversionError}
+            sliceLayerIndex={sliceLayerIndex}
+            setSliceLayerIndex={setSliceLayerIndex}
+            sliceThreshold={sliceThreshold}
+            setSliceThreshold={setSliceThreshold}
+            sliceThresholdMax={sliceThresholdMax}
+            setSliceThresholdMax={setSliceThresholdMax}
+            onShowSlice={handleShowInversionSlice}
+            sectionProfile={sectionProfile}
+            setSectionProfile={setSectionProfile}
+            sectionPositionFrac={sectionPositionFrac}
+            setSectionPositionFrac={setSectionPositionFrac}
+            sectionDrawMode={sectionDrawMode}
+            onToggleSectionDrawMode={handleToggleSectionDrawMode}
+            onRunFixedSection={handleRunFixedSection}
+            sectionThreshold={sectionThreshold}
+            setSectionThreshold={setSectionThreshold}
+            sectionThresholdMax={sectionThresholdMax}
+            setSectionThresholdMax={setSectionThresholdMax}
+            sectionLoading={sectionLoading}
+            onOpenVolume={handleOpenVolume}
+            volumeThreshold={volumeThreshold}
+            setVolumeThreshold={setVolumeThreshold}
+            volumeThresholdMax={volumeThresholdMax}
+            setVolumeThresholdMax={setVolumeThresholdMax}
+            onExportInversion={handleExportInversion}
+            onExportInversionCsv={handleExportInversionCsv}
+            onImportInversion={handleImportInversion}
+          />
 
-        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14. 오일러 디컨볼루션 (빠른 심도 추정)</h2>
-        <EulerPanel
-          ready={!!processSummary}
-          structuralIndex={eulerStructuralIndex}
-          setStructuralIndex={setEulerStructuralIndex}
-          windowSize={eulerWindowSize}
-          setWindowSize={setEulerWindowSize}
-          maxUncertaintyPct={eulerMaxUncertaintyPct}
-          setMaxUncertaintyPct={setEulerMaxUncertaintyPct}
-          onRun={handleRunEuler}
-          running={eulerRunning}
-          result={eulerResult}
-          error={eulerError}
-          showSolutions={showEulerSolutions}
-          setShowSolutions={setShowEulerSolutions}
-        />
+          <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14. 오일러 디컨볼루션 (빠른 심도 추정)</h2>
+          <EulerPanel
+            ready={!!processSummary}
+            structuralIndex={eulerStructuralIndex}
+            setStructuralIndex={setEulerStructuralIndex}
+            windowSize={eulerWindowSize}
+            setWindowSize={setEulerWindowSize}
+            maxUncertaintyPct={eulerMaxUncertaintyPct}
+            setMaxUncertaintyPct={setEulerMaxUncertaintyPct}
+            onRun={handleRunEuler}
+            running={eulerRunning}
+            result={eulerResult}
+            error={eulerError}
+            showSolutions={showEulerSolutions}
+            setShowSolutions={setShowEulerSolutions}
+          />
+        </details>
+
+        <details open={purposeMode === "target"} style={{ marginBottom: 4 }}>
+          <summary style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
+            🎯 근지표 표적탐지 (지뢰·불발탄·은닉 차량 등){purposeMode === "mineral" && " — 광물자원탐사에는 보통 불필요"}
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            <TargetDetectionPanel
+              ready={!!processSummary}
+              params={targetDetectionParams}
+              setParams={setTargetDetectionParams}
+              onRun={handleRunTargetDetection}
+              running={targetDetectionRunning}
+              result={targetDetectionResult}
+              error={targetDetectionError}
+              showTargets={showDetectedTargets}
+              setShowTargets={setShowDetectedTargets}
+            />
+          </div>
+        </details>
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>15. AI 해석 도우미 (챗봇)</h2>
         <ChatPanel ready={!!processSummary} messages={chatMessages} onSend={handleSendChatMessage} sending={chatSending} error={chatError} />
