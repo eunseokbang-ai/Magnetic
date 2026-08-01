@@ -5,6 +5,7 @@ import MapView from "./components/MapView";
 import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import LineEditor from "./components/LineEditor";
+import FlightPathEditor from "./components/FlightPathEditor";
 import LayerManager from "./components/LayerManager";
 import InversionPanel from "./components/InversionPanel";
 import InversionSectionView from "./components/InversionSectionView";
@@ -66,10 +67,14 @@ const DEFAULT_PARAMS = {
   filter_polyorder: 3,
   gps_mag_lag_seconds: 0.0,
   utm_epsg_override: null,
+  korea_projection: null,
   despike_params: {
     enabled: true,
     window_size: 11,
     threshold_k: 4.0,
+    adaptive: true,
+    adaptive_gradient_threshold: 5.0,
+    adaptive_expand_samples: 4,
   },
   line_params: {
     heading_lag_seconds: 1.0,
@@ -78,6 +83,7 @@ const DEFAULT_PARAMS = {
     min_line_length_m: 150.0,
     turn_buffer_m: 15.0,
     max_gap_seconds: 1.0,
+    direction_method: "heading_histogram",
   },
   diurnal_params: {
     time_offset_seconds: 0.0,
@@ -92,6 +98,7 @@ const DEFAULT_PARAMS = {
     enabled: false,
     tie_tolerance_deg: 20.0,
     max_crossover_distance_m: 15.0,
+    iterative: true,
   },
 };
 
@@ -142,7 +149,11 @@ export default function App() {
   const [overlayError, setOverlayError] = useState(null);
   const [transformExtraParams, setTransformExtraParams] = useState(DEFAULT_TRANSFORM_EXTRA_PARAMS);
   const [exportingXyz, setExportingXyz] = useState(false);
+  const [exportingGrd, setExportingGrd] = useState(false);
   const [exportingPointsCsv, setExportingPointsCsv] = useState(false);
+  const [lastDrawnPolygon, setLastDrawnPolygon] = useState(null);
+  const [exportingBln, setExportingBln] = useState(false);
+  const [flightPathEditorOpen, setFlightPathEditorOpen] = useState(false);
   const [lineProfileData, setLineProfileData] = useState(null);
   const [lineProfileLoadingId, setLineProfileLoadingId] = useState(null);
 
@@ -348,6 +359,7 @@ export default function App() {
   };
 
   const handleShapeDrawn = async (latlngCoords) => {
+    setLastDrawnPolygon(latlngCoords);
     try {
       setError(null);
       const summary = await api.manualExclude(projectId, { mode: "polygon", action: drawAction, polygon: latlngCoords });
@@ -495,6 +507,57 @@ export default function App() {
       handleError(e);
     } finally {
       setExportingXyz(false);
+    }
+  };
+
+  const handleExportGrd = async () => {
+    try {
+      setError(null);
+      setExportingGrd(true);
+      const base = {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        ...transformExtraParams,
+      };
+      if (activeTransform === "none") {
+        await api.exportGridGrd(projectId, base, `${valueField}_${gridCellSize}m.grd`);
+      } else {
+        await api.exportTransformGrd(projectId, { ...base, transform: activeTransform }, `${activeTransform}_${gridCellSize}m.grd`);
+      }
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingGrd(false);
+    }
+  };
+
+  const handleExportBln = async () => {
+    if (!lastDrawnPolygon || lastDrawnPolygon.length < 3) {
+      setError("먼저 지도에서 영역을 그려야 BLN으로 저장할 수 있습니다 (측선 편집의 '지도에서 영역 그리기' 기능 사용).");
+      return;
+    }
+    try {
+      setError(null);
+      setExportingBln(true);
+      await api.exportPolygonBln(projectId, lastDrawnPolygon, "area.bln");
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingBln(false);
+    }
+  };
+
+  const handleManualExcludePointIds = async (pointIds, action) => {
+    try {
+      setError(null);
+      const summary = await api.manualExclude(projectId, { mode: "point_ids", action, point_ids: pointIds });
+      setProcessSummary(summary);
+      applyExclusionDelta(summary.exclusion);
+      setOverlay(null);
+    } catch (e) {
+      handleError(e);
     }
   };
 
@@ -981,6 +1044,8 @@ export default function App() {
           setExportGeotiffColored={setExportGeotiffColored}
           onExportXyz={handleExportXyz}
           exportingXyz={exportingXyz}
+          onExportGrd={handleExportGrd}
+          exportingGrd={exportingGrd}
           onExportPointsCsv={handleExportPointsCsv}
           exportingPointsCsv={exportingPointsCsv}
           transformExtraParams={transformExtraParams}
@@ -1070,7 +1135,20 @@ export default function App() {
           onToggleShowLineLabels={setShowLineLabels}
           onShowLineProfile={handleShowLineProfile}
           lineProfileLoadingId={lineProfileLoadingId}
+          onOpenFlightPathEditor={() => setFlightPathEditorOpen(true)}
+          onExportBln={handleExportBln}
+          exportingBln={exportingBln}
+          canExportBln={!!lastDrawnPolygon}
         />
+
+        {flightPathEditorOpen && (
+          <FlightPathEditor
+            points={points}
+            lines={processSummary?.lines}
+            onApply={handleManualExcludePointIds}
+            onClose={() => setFlightPathEditorOpen(false)}
+          />
+        )}
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>12. 참조 레이어 (지질도 등 GeoTIFF)</h2>
         <LayerManager

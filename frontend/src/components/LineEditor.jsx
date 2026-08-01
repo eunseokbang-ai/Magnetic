@@ -16,6 +16,10 @@ export default function LineEditor({
   onToggleShowLineLabels,
   onShowLineProfile,
   lineProfileLoadingId,
+  onOpenFlightPathEditor,
+  onExportBln,
+  exportingBln,
+  canExportBln,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -159,6 +163,34 @@ export default function LineEditor({
       >
         수동 편집 모두 되돌리기 (완전 자동으로)
       </button>
+
+      {onOpenFlightPathEditor && (
+        <>
+          <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "4px 0" }} />
+          <div style={{ fontSize: 12, color: "#374151" }}>
+            비행 경로를 투영 좌표(미터) 평면에서 확대해 보며 자르기/복원할 수 있는 전용 편집기입니다 (DroneMagAdv 방식).
+          </div>
+          <button
+            onClick={onOpenFlightPathEditor}
+            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #2563eb", background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}
+          >
+            비행 경로 편집기 열기
+          </button>
+        </>
+      )}
+
+      {onExportBln && (
+        <>
+          <button
+            onClick={onExportBln}
+            disabled={exportingBln || !canExportBln}
+            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "white", color: "#374151", cursor: "pointer" }}
+          >
+            {exportingBln ? "저장 중..." : "마지막으로 그린 영역을 BLN(Surfer Blanking)으로 저장"}
+          </button>
+          {!canExportBln && <div style={{ fontSize: 11, color: "#9ca3af" }}>먼저 위 "지도에서 영역 그리기"로 폴리곤/사각형을 그리세요.</div>}
+        </>
+      )}
     </div>
   );
 }

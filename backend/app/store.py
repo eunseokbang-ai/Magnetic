@@ -48,19 +48,42 @@ from .processing.inversion import (
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
-from .processing.lines import LineDetectionParams, detect_lines, detect_tie_lines, estimate_line_spacing_m, project_to_local_xy
+from .processing.lines import (
+    LineDetectionParams,
+    detect_lines,
+    detect_tie_lines,
+    estimate_line_spacing_m,
+    project_to_local_xy,
+    resolve_korea_projection_epsg,
+)
 from .processing.contours import compute_contours
 from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
 from .processing.geology_sample import GeologySampleError, sample_geotiff_at_point
 from .processing.gps_lag import apply_gps_mag_lag
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
-from .processing.render import grid_to_geotiff_bytes, grid_to_geotiff_bytes_colored, grid_to_png_overlay, grid_to_xyz_bytes
+from .processing.render import (
+    grid_to_geotiff_bytes,
+    grid_to_geotiff_bytes_colored,
+    grid_to_png_overlay,
+    grid_to_surfer_grd_bytes,
+    grid_to_xyz_bytes,
+    polygon_to_bln_bytes,
+)
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import (
     analytic_signal,
+    derivative_easting,
+    derivative_northing,
     reduction_to_equator,
     reduction_to_pole,
+    second_derivative_ee,
+    second_derivative_en,
+    second_derivative_ez,
+    second_derivative_nn,
+    second_derivative_nz,
+    theta_map,
+    tilt_angle,
     total_horizontal_derivative,
     upward_continuation,
     vertical_derivative,
@@ -156,6 +179,7 @@ class Project:
             "mag_range": [float(d["mag_raw"].min()), float(d["mag_raw"].max())],
             "n_duplicate_timestamps_removed": d.attrs.get("n_duplicate_timestamps_removed", 0),
             "n_invalid_coords_removed": d.attrs.get("n_invalid_coords_removed", 0),
+            "source_formats": d.attrs.get("source_formats", []),
             "median_speed_mps": _median_speed_mps(d),
         }
 
@@ -188,7 +212,14 @@ class Project:
 
         dp = params.despike_params
         if dp.enabled:
-            cleaned, spike_mask = despike(df["mag_raw"].to_numpy(), dp.window_size, dp.threshold_k)
+            cleaned, spike_mask = despike(
+                df["mag_raw"].to_numpy(),
+                dp.window_size,
+                dp.threshold_k,
+                adaptive=dp.adaptive,
+                adaptive_gradient_threshold=dp.adaptive_gradient_threshold,
+                adaptive_expand_samples=dp.adaptive_expand_samples,
+            )
             df["mag_raw"] = cleaned
             self.despike_info = {
                 "enabled": True,
@@ -211,8 +242,12 @@ class Project:
                 df["mag_raw"].to_numpy(), df["timestamp"], cutoff_hz=params.filter_cutoff_hz
             )
 
+        utm_epsg_override = params.utm_epsg_override
+        if utm_epsg_override is None and params.korea_projection:
+            utm_epsg_override = resolve_korea_projection_epsg(params.korea_projection, float(df["lon"].mean()))
+
         line_params = LineDetectionParams(**params.line_params.model_dump())
-        df = detect_lines(df, line_params, utm_epsg_override=params.utm_epsg_override)
+        df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
@@ -259,11 +294,16 @@ class Project:
         else:
             self.heading_leveling = HeadingLevelingResult(False, "사용자가 헤딩 보정을 비활성화했습니다.", None, 0, 0)
 
+        # Tie-line membership is computed unconditionally (cheap) so it can
+        # always be shown to the user (e.g. in the flight-path editor),
+        # independent of whether the crossover-leveling correction itself
+        # is enabled.
         cp = params.crossover_leveling
+        tie_line_id = detect_tie_lines(df, self.dominant_azimuth_deg, line_params, tie_tolerance_deg=cp.tie_tolerance_deg)
+        df["tie_line_id"] = tie_line_id
         if cp.enabled:
-            tie_line_id = detect_tie_lines(df, self.dominant_azimuth_deg, line_params, tie_tolerance_deg=cp.tie_tolerance_deg)
             crossover_result = compute_crossover_leveling(
-                df, tie_line_id, "anomaly", max_crossover_distance_m=cp.max_crossover_distance_m
+                df, tie_line_id, "anomaly", max_crossover_distance_m=cp.max_crossover_distance_m, iterative=cp.iterative
             )
             df["anomaly"] = apply_crossover_leveling(df, "anomaly", crossover_result)
             df["tmi"] = apply_crossover_leveling(df, "tmi", crossover_result)
@@ -346,8 +386,11 @@ class Project:
                 "point_id": df["point_id"],
                 "lat": df["lat"],
                 "lon": df["lon"],
+                "x": df["x"],
+                "y": df["y"],
                 "value": df[col],
                 "line_id": df["line_id"],
+                "tie_line_id": df["tie_line_id"],
                 "excluded": ~active,
                 "timestamp": df["timestamp"].astype(str),
             }
@@ -406,6 +449,10 @@ class Project:
             if not req.line_ids:
                 raise ProjectError("line_ids가 필요합니다.")
             target_ids = set(df.loc[df["line_id"].isin(req.line_ids), "point_id"])
+        elif req.mode == "point_ids":
+            if not req.point_ids:
+                raise ProjectError("point_ids가 필요합니다.")
+            target_ids = set(req.point_ids)
         else:
             if not req.polygon or len(req.polygon) < 3:
                 raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
@@ -488,10 +535,30 @@ class Project:
             return reduction_to_equator(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg), True
         if transform == "1vd":
             return vertical_derivative(grid.values, grid.cell_size_m, order=1), True
+        if transform == "2vd":
+            return vertical_derivative(grid.values, grid.cell_size_m, order=2), True
         if transform == "as":
             return analytic_signal(grid.values, grid.cell_size_m), False
         if transform == "thdr":
             return total_horizontal_derivative(grid.values, grid.cell_size_m), False
+        if transform == "tilt":
+            return tilt_angle(grid.values, grid.cell_size_m), True
+        if transform == "theta":
+            return theta_map(grid.values, grid.cell_size_m), False
+        if transform == "dx":
+            return derivative_easting(grid.values, grid.cell_size_m), True
+        if transform == "dy":
+            return derivative_northing(grid.values, grid.cell_size_m), True
+        if transform == "dxx":
+            return second_derivative_ee(grid.values, grid.cell_size_m), True
+        if transform == "dyy":
+            return second_derivative_nn(grid.values, grid.cell_size_m), True
+        if transform == "dxy":
+            return second_derivative_en(grid.values, grid.cell_size_m), True
+        if transform == "dxz":
+            return second_derivative_ez(grid.values, grid.cell_size_m), True
+        if transform == "dyz":
+            return second_derivative_nz(grid.values, grid.cell_size_m), True
         if transform == "upward_continuation":
             height_m = req.continuation_height_m or (2.0 * grid.cell_size_m)
             return upward_continuation(grid.values, grid.cell_size_m, height_m), True
@@ -574,6 +641,28 @@ class Project:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
         values, _symmetric = self._transform_values(grid, req)
         return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+
+    def export_grid_surfer_grd(self, req: GridRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        return grid_to_surfer_grd_bytes(grid.values, grid.easting, grid.northing)
+
+    def export_transform_surfer_grd(self, req: TransformRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        values, _symmetric = self._transform_values(grid, req)
+        return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
+
+    def export_polygon_bln(self, polygon_latlon: list[list[float]]) -> bytes:
+        """Project a [[lat, lon], ...] polygon (e.g. from the map's
+        include/exclude draw tool) into this project's local UTM meters
+        and write it out as a Surfer Blanking File."""
+        if self.utm_epsg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요 (좌표계를 알 수 없습니다).")
+        if not polygon_latlon or len(polygon_latlon) < 3:
+            raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
+        lat = np.array([pt[0] for pt in polygon_latlon], dtype=float)
+        lon = np.array([pt[1] for pt in polygon_latlon], dtype=float)
+        x, y, _epsg = project_to_local_xy(lat, lon, epsg_override=self.utm_epsg)
+        return polygon_to_bln_bytes(x, y)
 
     def export_points_csv(self) -> bytes:
         """Every processed point (active and manually/auto-excluded alike,

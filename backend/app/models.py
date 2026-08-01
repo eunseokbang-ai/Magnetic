@@ -12,6 +12,8 @@ class LineParams(BaseModel):
     min_line_length_m: float = Field(150.0, ge=0)
     turn_buffer_m: float = Field(15.0, ge=0)
     max_gap_seconds: float = Field(1.0, ge=0.1)
+    # "heading_histogram" (default) or "pca" - see processing/lines.py.
+    direction_method: Literal["heading_histogram", "pca"] = "heading_histogram"
 
 
 class DiurnalParams(BaseModel):
@@ -29,6 +31,12 @@ class DespikeParams(BaseModel):
     enabled: bool = True
     window_size: int = Field(11, ge=3, le=101)  # samples
     threshold_k: float = Field(4.0, gt=0)  # robust-std multiples before a sample counts as a spike
+    # Adaptive Hampel: widen the local median/MAD window on steep
+    # along-track gradients so a genuine ramp isn't mistaken for a run of
+    # spikes. See processing/despike.py:despike for details.
+    adaptive: bool = True
+    adaptive_gradient_threshold: float = Field(5.0, gt=0)  # nT/sample
+    adaptive_expand_samples: int = Field(4, ge=0, le=50)
 
 
 class CrossoverLevelingParams(BaseModel):
@@ -38,6 +46,10 @@ class CrossoverLevelingParams(BaseModel):
     enabled: bool = False
     tie_tolerance_deg: float = Field(20.0, ge=1, le=90)
     max_crossover_distance_m: float = Field(15.0, gt=0)
+    # Iterative network adjustment (survey <-> tie shifts refined together)
+    # instead of treating the tie-line network as a perfect fixed
+    # reference - see processing/crossover_leveling.py.
+    iterative: bool = True
 
 
 FilterMethod = Literal["butterworth", "savgol", "moving_average"]
@@ -58,8 +70,13 @@ class ProcessParams(BaseModel):
     # default), the UTM zone is auto-detected from the data's centroid -
     # set this to override it, e.g. to match a national grid or to keep
     # results consistent with a survey area that straddles a UTM zone
-    # boundary.
+    # boundary. Takes precedence over korea_projection when both are set.
     utm_epsg_override: Optional[int] = None
+    # Convenience alternative to utm_epsg_override for Korean surveys:
+    # "korea_utm" = EPSG:5179 (KGD2002 Unified CS), "korea2010" =
+    # EPSG:5185-5188 (KGD2002 Belt 2010, picked by longitude band), "utm" =
+    # Korea-domestic UTM 51N/52N. None (default) = generic auto UTM.
+    korea_projection: Optional[Literal["korea_utm", "korea2010", "utm"]] = None
     despike_params: DespikeParams = DespikeParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
@@ -68,8 +85,12 @@ class ProcessParams(BaseModel):
 
 
 ValueField = Literal["tmi", "anomaly"]
-TransformName = Literal["rtp", "rte", "1vd", "as", "thdr", "upward_continuation", "detrend", "microlevel"]
-GridMethod = Literal["nearest", "linear", "cubic", "spline"]
+TransformName = Literal[
+    "rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta",
+    "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
+    "upward_continuation", "detrend", "microlevel",
+]
+GridMethod = Literal["nearest", "linear", "cubic", "spline", "minimum_curvature"]
 
 
 class HillshadeParams(BaseModel):
@@ -128,11 +149,16 @@ class TransformRequest(HillshadeParams, ContourParams):
     microlevel_wavelength_factor: float = Field(1.5, gt=1)
 
 
+class PolygonExportRequest(BaseModel):
+    polygon: list[list[float]] = Field(..., min_length=3)  # [[lat, lon], ...]
+
+
 class ManualExcludeRequest(BaseModel):
-    mode: Literal["lines", "polygon", "reset"]
+    mode: Literal["lines", "polygon", "point_ids", "reset"]
     action: Optional[Literal["exclude", "include"]] = None
     line_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
+    point_ids: Optional[list[int]] = None
 
 
 class InversionParams(BaseModel):

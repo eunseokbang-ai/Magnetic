@@ -17,6 +17,7 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     ManualExcludeRequest,
+    PolygonExportRequest,
     ProcessParams,
     TargetDetectionRequest,
     TransformRequest,
@@ -171,6 +172,35 @@ def export_transform_xyz(project_id: str, req: TransformRequest):
     data = project.export_transform_xyz(req)
     return Response(
         content=data, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={req.transform}.xyz"}
+    )
+
+
+@app.post("/api/projects/{project_id}/grid/grd")
+def export_grid_grd(project_id: str, req: GridRequest):
+    project = store.get(project_id)
+    data = project.export_grid_surfer_grd(req)
+    return Response(
+        content=data, media_type="application/octet-stream", headers={"Content-Disposition": "attachment; filename=grid.grd"}
+    )
+
+
+@app.post("/api/projects/{project_id}/transform/grd")
+def export_transform_grd(project_id: str, req: TransformRequest):
+    project = store.get(project_id)
+    data = project.export_transform_surfer_grd(req)
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={req.transform}.grd"},
+    )
+
+
+@app.post("/api/projects/{project_id}/export/bln")
+def export_polygon_bln(project_id: str, req: PolygonExportRequest):
+    project = store.get(project_id)
+    data = project.export_polygon_bln(req.polygon)
+    return Response(
+        content=data, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=area.bln"}
     )
 
 

@@ -3,6 +3,7 @@ lat/lon bounding box Leaflet needs for an ImageOverlay."""
 from __future__ import annotations
 
 import base64
+import struct
 from io import BytesIO
 
 import matplotlib
@@ -13,6 +14,10 @@ from PIL import Image
 from pyproj import Transformer
 from rasterio.crs import CRS
 from rasterio.transform import from_origin
+
+# Surfer 6 Binary Grid (DSBB) NoData sentinel - Golden Software's own
+# documented value (close to float32's max), not an arbitrary choice.
+_SURFER_NODATA = 1.70141e38
 
 
 class _EqualizeNorm(Normalize):
@@ -239,3 +244,60 @@ def grid_to_geotiff_bytes_colored(
         ) as dst:
             dst.write(data)
         return bytes(memfile.read())
+
+
+def grid_to_surfer_grd_bytes(grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray) -> bytes:
+    """Surfer 6 Binary Grid (DSBB) export - the de facto grid interchange
+    format for Golden Software Surfer, still widely used alongside/instead
+    of GeoTIFF in domestic geophysical survey workflows. Layout: a 56-byte
+    header ("DSBB" magic, int16 nx/ny, then float64 xmin/xmax/ymin/ymax/
+    zmin/zmax), followed by nx*ny float32 values written row-major from
+    south to north (each row west to east) - the format's documented
+    origin convention, which already matches this app's internal grid
+    array orientation (row 0 = southmost northing), so unlike the
+    north-up PNG/GeoTIFF exports no vertical flip is needed here.
+    """
+    ny, nx = grid_values.shape
+    if nx > 32767 or ny > 32767:
+        raise ValueError("Surfer GRD 형식은 nx, ny가 각각 32767을 넘을 수 없습니다 (셀 크기를 키워보세요).")
+    finite = grid_values[np.isfinite(grid_values)]
+    if finite.size == 0:
+        raise ValueError("내보낼 유효한 그리드 값이 없습니다.")
+    zmin, zmax = float(finite.min()), float(finite.max())
+
+    data = np.where(np.isfinite(grid_values), grid_values, _SURFER_NODATA).astype("<f4")
+    header = struct.pack(
+        "<4shhdddddd",
+        b"DSBB",
+        nx,
+        ny,
+        float(easting[0]),
+        float(easting[-1]),
+        float(northing[0]),
+        float(northing[-1]),
+        zmin,
+        zmax,
+    )
+    return header + data.tobytes()
+
+
+def polygon_to_bln_bytes(x: np.ndarray, y: np.ndarray) -> bytes:
+    """Surfer Blanking File (.bln): a closed polygon boundary in local
+    projected coordinates (meters), the standard way to restrict a
+    Surfer grid display/mask to the actually-flown survey area (or any
+    other user-drawn region of interest). First line is "point_count,0" -
+    the trailing 0 is Surfer's documented flag for "blank everything
+    OUTSIDE the polygon" (i.e. keep the interior), matching how this file
+    is meant to be used to mask a grid down to the survey footprint. The
+    first vertex is repeated at the end to close the ring if the caller
+    didn't already do so.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if len(x) < 3 or len(x) != len(y):
+        raise ValueError("BLN 저장을 위해서는 폴리곤 점이 3개 이상 필요합니다.")
+    if x[0] != x[-1] or y[0] != y[-1]:
+        x = np.append(x, x[0])
+        y = np.append(y, y[0])
+    lines = [f"{len(x)},0"] + [f"{xi:.3f},{yi:.3f}" for xi, yi in zip(x, y)]
+    return ("\n".join(lines) + "\n").encode("utf-8")

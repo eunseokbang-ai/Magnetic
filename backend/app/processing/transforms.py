@@ -123,18 +123,34 @@ def vertical_derivative(grid: np.ndarray, cell_size_m: float, order: int = 1) ->
     return _apply_filter(grid, cell_size_m, filt)
 
 
-def analytic_signal(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
-    """Amplitude of the analytic signal: sqrt(dF/dx^2 + dF/dy^2 + dF/dz^2)."""
+def _dxyz(grid: np.ndarray, cell_size_m: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Shared (d_easting, d_northing, d_vertical) real-space derivative
+    grids from a single padded FFT pass - the common basis behind
+    analytic_signal, total_horizontal_derivative, tilt_angle and
+    theta_map, so they all agree exactly on the same underlying gradient
+    rather than being recomputed (and re-padded) independently."""
     padded, mask, pad_widths = _pad_and_fill(grid)
     kx, ky, k_mag = _wavenumbers(padded.shape[0], padded.shape[1], cell_size_m, cell_size_m)
     spectrum = np.fft.fft2(padded)
 
-    dx = np.real(np.fft.ifft2(spectrum * (1j * kx)))
-    dy = np.real(np.fft.ifft2(spectrum * (1j * ky)))
-    dz = np.real(np.fft.ifft2(spectrum * k_mag))
+    # module convention: kx ~ northing (rows), ky ~ easting (cols) - see
+    # module docstring and processing/microlevel.py's note on this axis
+    # naming.
+    d_east = np.real(np.fft.ifft2(spectrum * (1j * ky)))
+    d_north = np.real(np.fft.ifft2(spectrum * (1j * kx)))
+    d_vert = np.real(np.fft.ifft2(spectrum * k_mag))
 
-    amplitude = np.sqrt(dx**2 + dy**2 + dz**2)
-    return _unpad_and_mask(amplitude, mask, pad_widths)
+    return (
+        _unpad_and_mask(d_east, mask, pad_widths),
+        _unpad_and_mask(d_north, mask, pad_widths),
+        _unpad_and_mask(d_vert, mask, pad_widths),
+    )
+
+
+def analytic_signal(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Amplitude of the analytic signal: sqrt(dF/dx^2 + dF/dy^2 + dF/dz^2)."""
+    d_east, d_north, d_vert = _dxyz(grid, cell_size_m)
+    return np.sqrt(d_east**2 + d_north**2 + d_vert**2)
 
 
 def total_horizontal_derivative(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
@@ -143,15 +159,100 @@ def total_horizontal_derivative(grid: np.ndarray, cell_size_m: float) -> np.ndar
     Peaks over the edges of a source body regardless of magnetization
     direction, so it's a common companion/alternative to 1VD for outlining
     contacts and boundaries."""
-    padded, mask, pad_widths = _pad_and_fill(grid)
-    kx, ky, k_mag = _wavenumbers(padded.shape[0], padded.shape[1], cell_size_m, cell_size_m)
-    spectrum = np.fft.fft2(padded)
+    d_east, d_north, _d_vert = _dxyz(grid, cell_size_m)
+    return np.hypot(d_east, d_north)
 
-    dx = np.real(np.fft.ifft2(spectrum * (1j * kx)))
-    dy = np.real(np.fft.ifft2(spectrum * (1j * ky)))
 
-    amplitude = np.sqrt(dx**2 + dy**2)
-    return _unpad_and_mask(amplitude, mask, pad_widths)
+def tilt_angle(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Tilt angle (Miller & Singh, 1994): arctan(1VD / THDR), in degrees,
+    range -90..+90. Crosses zero directly over a source's edge regardless
+    of its amplitude, so both shallow/strong and deep/weak sources produce
+    a usable zero-contour on the same map - a common complement to the
+    analytic signal when source strength varies a lot across a survey
+    (e.g. compact near-surface targets alongside broader geology)."""
+    d_east, d_north, d_vert = _dxyz(grid, cell_size_m)
+    thdr = np.hypot(d_east, d_north)
+    with np.errstate(invalid="ignore"):
+        return np.degrees(np.arctan2(d_vert, thdr))
+
+
+def theta_map(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Theta map (Wijns et al., 2005): arccos(THDR / analytic-signal
+    amplitude), in degrees, range 0..90. Another amplitude-independent
+    edge detector, normalizing the horizontal derivative by the full
+    gradient magnitude instead of just the vertical derivative (as tilt
+    angle does) - tends to sharpen edges slightly differently, so the two
+    are commonly viewed side by side."""
+    d_east, d_north, d_vert = _dxyz(grid, cell_size_m)
+    thdr = np.hypot(d_east, d_north)
+    asa = np.sqrt(d_east**2 + d_north**2 + d_vert**2)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = np.clip(thdr / asa, -1.0, 1.0)
+        theta = np.degrees(np.arccos(ratio))
+    return np.where(asa > 0, theta, np.nan)
+
+
+def derivative_easting(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """1st East-West (easting) horizontal derivative, dF/d(easting)."""
+
+    def filt(kx, ky, k_mag):
+        return 1j * ky
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def derivative_northing(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """1st North-South (northing) horizontal derivative, dF/d(northing)."""
+
+    def filt(kx, ky, k_mag):
+        return 1j * kx
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def second_derivative_ee(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """2nd East-West derivative, d^2F/d(easting)^2."""
+
+    def filt(kx, ky, k_mag):
+        return -(ky**2)
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def second_derivative_nn(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """2nd North-South derivative, d^2F/d(northing)^2."""
+
+    def filt(kx, ky, k_mag):
+        return -(kx**2)
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def second_derivative_en(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Mixed East-West/North-South 2nd derivative, d^2F/d(easting)d(northing)."""
+
+    def filt(kx, ky, k_mag):
+        return -(kx * ky)
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def second_derivative_ez(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Mixed East-West/vertical 2nd derivative, d^2F/d(easting)dz."""
+
+    def filt(kx, ky, k_mag):
+        return 1j * ky * k_mag
+
+    return _apply_filter(grid, cell_size_m, filt)
+
+
+def second_derivative_nz(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Mixed North-South/vertical 2nd derivative, d^2F/d(northing)dz."""
+
+    def filt(kx, ky, k_mag):
+        return 1j * kx * k_mag
+
+    return _apply_filter(grid, cell_size_m, filt)
 
 
 def upward_continuation(grid: np.ndarray, cell_size_m: float, height_m: float) -> np.ndarray:

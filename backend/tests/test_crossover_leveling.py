@@ -76,7 +76,15 @@ def test_crossover_leveling_recovers_injected_shifts():
     tie_line_id = detect_tie_lines(detected, dominant_azimuth, params, tie_tolerance_deg=20.0)
     assert (tie_line_id >= 0).sum() > 50, "expected the tie line to be detected"
 
-    result = compute_crossover_leveling(detected, tie_line_id, "value", max_crossover_distance_m=5.0)
+    # iterative=False: this test's synthetic setup treats the single tie
+    # line as a perfect, unshifted reference (only survey lines carry an
+    # injected error) - exactly the assumption the non-iterative single
+    # pass makes, so it's the right mode to check exact shift recovery
+    # against. The default iterative network mode is covered separately
+    # in test_dronemagadv_features.py, where it fairly redistributes
+    # residual between survey and tie lines instead of trusting the tie
+    # line completely.
+    result = compute_crossover_leveling(detected, tie_line_id, "value", max_crossover_distance_m=5.0, iterative=False)
     assert result.applied, result.reason
     assert result.n_tie_lines == 1
     assert result.n_survey_lines_corrected == 5

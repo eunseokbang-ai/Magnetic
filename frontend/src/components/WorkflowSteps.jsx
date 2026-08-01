@@ -11,6 +11,23 @@ const TRANSFORM_INFO = {
   upward_continuation: "상방연속 — 지정한 높이만큼 더 높은 고도에서 측정한 것처럼 계산을 재구성합니다. 얕고 짧은 파장 잡음이 깊고 넓은 이상보다 훨씬 빠르게 약해져, 광역 추세만 강조하거나 잡음을 완화할 때 사용합니다.",
   detrend: "추세면 제거 — 완만하게 변화하는 광역 배경(다항식 추세면)을 최소자승으로 맞춰 뺀 나머지(잔차)만 표시합니다. 얕은 국지 이상을 광역 배경과 분리해 볼 때 유용합니다.",
   microlevel: "마이크로레벨링(디코러게이션) — 측선과 나란한 방향의 짧은 파장(측선 간격 규모) 줄무늬 잡음만 골라 완화합니다. 헤딩/타이라인 보정 후에도 남는 줄무늬가 있을 때 사용합니다.",
+  "2vd": "2VD(수직 2차 미분) — 1VD보다 한 단계 더 미분해, 서로 가까이 붙은 여러 이상체를 분리해 보는 데 유용합니다 (잡음도 그만큼 더 증폭됩니다).",
+  tilt: "틸트 각(Tilt Angle) — 1VD/THDR의 비율을 각도(-90°~90°)로 표현해, 이상체 진폭 크기와 무관하게 경계에서 0을 지나갑니다. 강한 이상체와 약한 이상체가 섞여 있어도 같은 기준으로 경계를 볼 수 있습니다.",
+  theta: "세타 맵(Theta Map) — THDR을 해석신호 진폭(AS)으로 정규화한 각도(0°~90°)로, 틸트 각과 마찬가지로 진폭에 무관한 경계 탐지 보조 지표입니다.",
+  dx: "1차 동서방향 미분(dX) — 동서(easting) 방향 변화율.",
+  dy: "1차 남북방향 미분(dY) — 남북(northing) 방향 변화율.",
+  dxx: "2차 동서방향 미분(dXX).",
+  dyy: "2차 남북방향 미분(dYY).",
+  dxy: "동서-남북 혼합 2차 미분(dXY).",
+  dxz: "동서-수직 혼합 2차 미분(dXZ).",
+  dyz: "남북-수직 혼합 2차 미분(dYZ).",
+};
+
+const KOREA_PROJECTION_INFO = {
+  "": "비워두면 측선 중심 좌표로 UTM 존을 자동 감지합니다 (국내외 공통).",
+  korea_utm: "KoreaUTM (EPSG:5179) — GRS80 기반 한국 통합 좌표계 (KGD2002 Unified CS). 국내 조사에 권장.",
+  korea2010: "Korea2010 (EPSG:5185~5188) — 한반도 권역별(서부/중부/동부/동해) 띠 좌표계 (KGD2002 Belt 2010).",
+  utm: "UTM (EPSG:32651/32652) — 국내 지역 51N/52N을 경도 기준으로 자동 선택하는 표준 UTM.",
 };
 
 const FILTER_METHOD_INFO = {
@@ -105,6 +122,8 @@ export default function WorkflowSteps({
   setExportGeotiffColored,
   onExportXyz,
   exportingXyz,
+  onExportGrd,
+  exportingGrd,
   onExportPointsCsv,
   exportingPointsCsv,
   transformExtraParams,
@@ -159,6 +178,12 @@ export default function WorkflowSteps({
               시간범위: {droneSummary.time_range?.[0]} ~ {droneSummary.time_range?.[1]}
               <br />
               Mag 범위: {droneSummary.mag_range?.[0]?.toFixed(1)} ~ {droneSummary.mag_range?.[1]?.toFixed(1)} nT
+              {droneSummary.source_formats?.length > 0 && (
+                <>
+                  <br />
+                  인식된 파일 형식: {droneSummary.source_formats.join(", ")}
+                </>
+              )}
               {(droneSummary.n_duplicate_timestamps_removed > 0 || droneSummary.n_invalid_coords_removed > 0) && (
                 <>
                   <br />
@@ -312,6 +337,22 @@ export default function WorkflowSteps({
               <Field label="탐지 민감도 (표준편차 배수) — 작을수록 더 많이 스파이크로 판정">
                 <input type="number" step="0.5" min="0.1" style={inputStyle} value={dsp.threshold_k} onChange={(e) => updateDespike("threshold_k", parseFloat(e.target.value))} />
               </Field>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="checkbox" checked={dsp.adaptive} onChange={(e) => updateDespike("adaptive", e.target.checked)} />
+                <span>Adaptive Hampel — 급격한 기울기 구간(진짜 경사 신호)은 이동창을 넓혀 스파이크 오판을 줄임</span>
+              </label>
+              {dsp.adaptive && (
+                <Field label="급변 판정 기울기 (nT/샘플) — 이 값을 초과하면 창을 확장">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0.1"
+                    style={inputStyle}
+                    value={dsp.adaptive_gradient_threshold}
+                    onChange={(e) => updateDespike("adaptive_gradient_threshold", parseFloat(e.target.value))}
+                  />
+                </Field>
+              )}
             </>
           )}
 
@@ -327,8 +368,29 @@ export default function WorkflowSteps({
           <Field label="터닝 여분 구간 (m) — 측선 양끝에서 추가로 자를 거리">
             <input type="number" style={inputStyle} value={lp.turn_buffer_m} onChange={(e) => updateLine("turn_buffer_m", parseFloat(e.target.value))} />
           </Field>
+          <Field label="주 측선 방향 검출 방식">
+            <select style={inputStyle} value={lp.direction_method || "heading_histogram"} onChange={(e) => updateLine("direction_method", e.target.value)}>
+              <option value="heading_histogram">진행방향 히스토그램 (기본값) — 순간 비행 방향 최빈값</option>
+              <option value="pca">PCA 자동 방향 검출 — 측점 분포의 주축(길게 늘어진 방향) 기준</option>
+            </select>
+          </Field>
 
-          <Field label="좌표계 수동 지정 (EPSG 코드, 비워두면 측선 중심으로 UTM 자동 감지) — 예: UTM 48N = 32648">
+          <Field label="좌표계 (Korea Projection) — 국내 조사 시 표준 좌표계 선택, 비워두면 UTM 자동 감지">
+            <select
+              style={inputStyle}
+              value={processParams.korea_projection ?? ""}
+              onChange={(e) => setProcessParams((p) => ({ ...p, korea_projection: e.target.value === "" ? null : e.target.value }))}
+              title={KOREA_PROJECTION_INFO[processParams.korea_projection ?? ""]}
+            >
+              <option value="">자동 (UTM 자동 감지)</option>
+              <option value="korea_utm">KoreaUTM (EPSG:5179)</option>
+              <option value="korea2010">Korea2010 (EPSG:5185~5188)</option>
+              <option value="utm">UTM (국내 51N/52N)</option>
+            </select>
+          </Field>
+          <div style={{ color: "#9ca3af" }}>{KOREA_PROJECTION_INFO[processParams.korea_projection ?? ""]}</div>
+
+          <Field label="좌표계 수동 지정 (EPSG 코드) — 지정 시 위 Korea Projection 선택보다 우선 적용. 예: UTM 48N = 32648">
             <input
               type="number"
               style={inputStyle}
@@ -380,6 +442,10 @@ export default function WorkflowSteps({
                   onChange={(e) => updateCrossover("max_crossover_distance_m", parseFloat(e.target.value))}
                 />
               </Field>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="checkbox" checked={cl.iterative} onChange={(e) => updateCrossover("iterative", e.target.checked)} />
+                <span>반복(iterative) 네트워크 보정 — 타이라인도 함께 보정해 오차를 양쪽에 고르게 분산 (해제 시 타이라인을 고정 기준으로 취급)</span>
+              </label>
             </>
           )}
 
@@ -471,6 +537,7 @@ export default function WorkflowSteps({
               <option value="linear">선형(Linear) - 보통 속도</option>
               <option value="cubic">큐빅(Cubic) - 느림</option>
               <option value="spline">스플라인 (가장 부드러움, 가장 느림)</option>
+              <option value="minimum_curvature">최소곡률(Minimum Curvature) — Surfer 기본 격자화 방식과 동일한 알고리즘</option>
             </select>
           </Field>
           <Field label="보간 반경 (m) — 비워두면 측선 간격 기반 자동 계산">
@@ -553,8 +620,18 @@ export default function WorkflowSteps({
               ["rtp", "RTP"],
               ["rte", "RTE"],
               ["1vd", "1VD"],
+              ["2vd", "2VD"],
               ["as", "AS"],
               ["thdr", "THDR"],
+              ["tilt", "틸트각"],
+              ["theta", "세타맵"],
+              ["dx", "dX"],
+              ["dy", "dY"],
+              ["dxx", "dXX"],
+              ["dyy", "dYY"],
+              ["dxy", "dXY"],
+              ["dxz", "dXZ"],
+              ["dyz", "dYZ"],
               ["upward_continuation", "상방연속"],
               ["detrend", "추세면제거"],
               ["microlevel", "마이크로레벨링"],
@@ -652,6 +729,10 @@ export default function WorkflowSteps({
             {exportingXyz ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 XYZ(텍스트)로 저장`}
           </button>
           <div style={{ color: "#9ca3af" }}>경도·위도·값 3열의 공백 구분 텍스트 파일 — GeoTIFF를 지원하지 않는 다른 프로그램에서도 열람 가능.</div>
+          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingGrd || !processSummary} onClick={() => onExportGrd()}>
+            {exportingGrd ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 Surfer GRD로 저장`}
+          </button>
+          <div style={{ color: "#9ca3af" }}>Surfer 6 Binary Grid(.grd, DSBB) 형식 — Golden Software Surfer에서 바로 열람 가능.</div>
           <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingPointsCsv || !processSummary} onClick={() => onExportPointsCsv()}>
             {exportingPointsCsv ? "내보내는 중..." : "처리된 포인트 전체를 CSV로 저장"}
           </button>

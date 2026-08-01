@@ -5,6 +5,7 @@ samples that do not belong to a production line.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,38 @@ from pyproj import Transformer
 def _utm_epsg(lon: float, lat: float) -> int:
     zone = int((lon + 180) // 6) + 1
     return (32600 if lat >= 0 else 32700) + zone
+
+
+# Korea-specific projected CRS choices (GRS80-based, matching the codes
+# national mapping agencies/most Korean GIS software expect), offered as
+# an alternative to generic auto-UTM for surveys located in Korea.
+KOREA_UTM_EPSG = 5179  # KGD2002 Unified CS (GRS80 기반 한국 통합 좌표계)
+
+
+def korea2010_epsg(lon: float) -> int:
+    """KGD2002 Belt 2010 (Korea2010) EPSG by longitude band."""
+    if lon < 126:
+        return 5185  # 서부
+    if lon < 128:
+        return 5186  # 중부
+    if lon < 130:
+        return 5187  # 동부
+    return 5188  # 동해
+
+
+def resolve_korea_projection_epsg(korea_projection: str, lon_center: float) -> int:
+    """Resolve a "Korea Projection" selection (korea_utm/korea2010/utm) to
+    a concrete EPSG code, mirroring DroneMagAdv's Coordinate options."""
+    if korea_projection == "korea_utm":
+        return KOREA_UTM_EPSG
+    if korea_projection == "korea2010":
+        return korea2010_epsg(lon_center)
+    if korea_projection == "utm":
+        # Korea-domestic 51N/52N split (matches the general _utm_epsg
+        # result for Korea's longitude range, pinned explicitly here for
+        # the two documented Korean UTM zones).
+        return 32651 if lon_center < 126 else 32652
+    raise ValueError(f"알 수 없는 Korea Projection 값입니다: {korea_projection}")
 
 
 def project_to_local_xy(lat: np.ndarray, lon: np.ndarray, epsg_override: int | None = None) -> tuple[np.ndarray, np.ndarray, int]:
@@ -35,6 +68,26 @@ def _circular_diff_180(a: np.ndarray, b: float) -> np.ndarray:
     return np.abs(d)
 
 
+def _pca_dominant_azimuth(x: np.ndarray, y: np.ndarray) -> float:
+    """Dominant survey-line azimuth (degrees, mod 180) from PCA of the
+    (x, y) point cloud: the direction of greatest positional variance.
+    Complementary to the heading-histogram method (the default) - this
+    looks at the overall spatial footprint's elongation rather than each
+    sample's instantaneous heading, so it isn't biased by how much flight
+    time was spent on perpendicular tie lines vs. survey lines, at the
+    cost of being less informative when the survey block itself is closer
+    to square than elongated."""
+    pts = np.column_stack([x, y])
+    pts = pts[np.isfinite(pts).all(axis=1)]
+    if len(pts) < 2:
+        return 0.0
+    centered = pts - pts.mean(axis=0)
+    cov = np.cov(centered, rowvar=False)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    principal = eigvecs[:, int(np.argmax(eigvals))]
+    return float(np.degrees(np.arctan2(principal[1], principal[0])) % 180.0)
+
+
 @dataclass
 class LineDetectionParams:
     heading_lag_seconds: float = 1.0
@@ -43,6 +96,10 @@ class LineDetectionParams:
     min_line_length_m: float = 150.0
     turn_buffer_m: float = 15.0
     max_gap_seconds: float = 1.0
+    # "heading_histogram" (default): most common instantaneous flight
+    # heading. "pca": principal axis of the point cloud's spatial spread
+    # (DroneMagAdv's "자동 방향 검출").
+    direction_method: Literal["heading_histogram", "pca"] = "heading_histogram"
 
 
 def detect_lines(
@@ -88,7 +145,10 @@ def detect_lines(
     out["heading_deg"] = heading
 
     valid = ~np.isnan(heading) & (speed >= params.min_speed_mps)
-    if valid.sum() < 10:
+    if params.direction_method == "pca":
+        pca_source = (x[valid], y[valid]) if valid.sum() >= 10 else (x, y)
+        dominant_azimuth = _pca_dominant_azimuth(*pca_source)
+    elif valid.sum() < 10:
         dominant_azimuth = float(np.nanmedian(heading)) if np.isfinite(heading).any() else 0.0
     else:
         bins = np.arange(0, 180 + 2, 2.0)

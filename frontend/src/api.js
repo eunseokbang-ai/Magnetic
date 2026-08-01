@@ -223,6 +223,21 @@ export async function exportPointsCsv(projectId, filename) {
   downloadBlob(blob, filename);
 }
 
+export async function exportGridGrd(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/grid/grd`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportTransformGrd(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/transform/grd`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportPolygonBln(projectId, polygon, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/export/bln`, { method: "POST", body: JSON.stringify({ polygon }) });
+  downloadBlob(blob, filename);
+}
+
 export async function exportInversionSliceGeotiff(projectId, req, filename) {
   const blob = await requestBlob(`/projects/${projectId}/inversion/slice/geotiff`, { method: "POST", body: JSON.stringify(req) });
   downloadBlob(blob, filename);
