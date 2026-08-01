@@ -152,6 +152,22 @@ def grid_to_png_overlay(
     }
 
 
+def grid_to_xyz_bytes(grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray, utm_epsg: int) -> bytes:
+    """Plain-text XYZ export (space-delimited "lon lat value" rows, no
+    header, NaN cells skipped) - the conventional geophysics text-grid
+    format for import into other packages that don't want a GeoTIFF.
+    Coordinates are reprojected to lon/lat so the file is self-describing
+    without needing to also ship the local UTM zone/EPSG separately."""
+    transformer = Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
+    e2d, n2d = np.meshgrid(easting, northing)
+    finite = np.isfinite(grid_values)
+    lon, lat = transformer.transform(e2d[finite], n2d[finite])
+    values = grid_values[finite]
+
+    lines = [f"{lo:.7f} {la:.7f} {v:.4f}" for lo, la, v in zip(lon, lat, values)]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def grid_to_geotiff_bytes(grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray, utm_epsg: int) -> bytes:
     """Single-band float32 GeoTIFF with the raw (uncolored) grid values -
     unlike the PNG overlay above (which bakes in a colormap for display

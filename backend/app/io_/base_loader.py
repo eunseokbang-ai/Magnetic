@@ -70,9 +70,16 @@ def load_base_csv(path_or_buffer) -> pd.DataFrame:
 
 def load_base_csvs(buffers: list) -> pd.DataFrame:
     """Load and concatenate multiple base station CSVs (e.g. logs split
-    across days, or several deployments), re-sorted by timestamp."""
+    across days, or several deployments), re-sorted by timestamp and
+    deduplicated on exact-timestamp collisions (e.g. an overlapping
+    re-upload of the same log). The removed-duplicate count is attached
+    via combined.attrs for the caller to surface to the user."""
     if not buffers:
         raise BaseLoadError("베이스 파일이 없습니다.")
     parts = [load_base_csv(buf) for buf in buffers]
     combined = pd.concat(parts, ignore_index=True)
-    return combined.sort_values("timestamp").reset_index(drop=True)
+    combined = combined.sort_values("timestamp").reset_index(drop=True)
+    n_before_dedup = len(combined)
+    combined = combined.drop_duplicates(subset="timestamp", keep="first").reset_index(drop=True)
+    combined.attrs["n_duplicate_timestamps_removed"] = n_before_dedup - len(combined)
+    return combined

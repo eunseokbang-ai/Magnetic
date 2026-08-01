@@ -63,6 +63,20 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
     if df.empty:
         raise DroneLoadError("유효한 위치/자력 데이터가 없습니다.")
 
+    # Reject rows with out-of-range coordinates and the (0, 0) "GPS fix
+    # never acquired" sentinel some loggers write instead of leaving the
+    # field blank - both are junk, not real positions.
+    n_before_coord = len(df)
+    valid_coord = (
+        df["Latitude"].between(-90, 90)
+        & df["Longitude"].between(-180, 180)
+        & ~((df["Latitude"] == 0) & (df["Longitude"] == 0))
+    )
+    df = df[valid_coord]
+    n_invalid_coords_removed = n_before_coord - len(df)
+    if df.empty:
+        raise DroneLoadError("유효한 위치/자력 데이터가 없습니다 (좌표가 모두 비정상입니다).")
+
     df = df.sort_values("timestamp").reset_index(drop=True)
 
     # GGA-only fields (Altitude, Hdop, ...) are sparse; interpolate over time
@@ -100,6 +114,7 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
             ),
         }
     )
+    out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     return out
 
 
@@ -109,12 +124,24 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     Each file is parsed (and its sparse GGA-only fields interpolated)
     independently before concatenation, since interpolating across a time
     gap between two separate flights would be meaningless. The combined
-    result is re-sorted by timestamp and point_id is reassigned 0..N-1.
+    result is re-sorted by timestamp, deduplicated on exact-timestamp
+    collisions (only meaningful once files are combined - the same
+    instant logged twice, e.g. an overlapping re-upload of the same
+    flight), and point_id is reassigned 0..N-1. QC counts are attached
+    via combined.attrs for the caller to surface to the user.
     """
     if not buffers:
         raise DroneLoadError("드론 파일이 없습니다.")
     parts = [load_drone_csv(buf) for buf in buffers]
+    n_invalid_coords_removed = sum(p.attrs.get("n_invalid_coords_removed", 0) for p in parts)
+
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.sort_values("timestamp").reset_index(drop=True)
+    n_before_dedup = len(combined)
+    combined = combined.drop_duplicates(subset="timestamp", keep="first").reset_index(drop=True)
+    n_duplicate_timestamps_removed = n_before_dedup - len(combined)
+
     combined["point_id"] = np.arange(len(combined), dtype=np.int64)
+    combined.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
+    combined.attrs["n_duplicate_timestamps_removed"] = n_duplicate_timestamps_removed
     return combined

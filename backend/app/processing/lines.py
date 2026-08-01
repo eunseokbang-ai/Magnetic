@@ -16,8 +16,13 @@ def _utm_epsg(lon: float, lat: float) -> int:
     return (32600 if lat >= 0 else 32700) + zone
 
 
-def project_to_local_xy(lat: np.ndarray, lon: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-    epsg = _utm_epsg(float(np.nanmean(lon)), float(np.nanmean(lat)))
+def project_to_local_xy(lat: np.ndarray, lon: np.ndarray, epsg_override: int | None = None) -> tuple[np.ndarray, np.ndarray, int]:
+    """Project lat/lon to a local projected CRS in meters. Auto-detects
+    the UTM zone from the data's centroid unless epsg_override is given
+    (e.g. to match a specific national grid, or to keep results
+    consistent with a previous project that happened to sit near a UTM
+    zone boundary)."""
+    epsg = epsg_override or _utm_epsg(float(np.nanmean(lon)), float(np.nanmean(lat)))
     transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
     x, y = transformer.transform(lon, lat)
     return np.asarray(x), np.asarray(y), epsg
@@ -43,6 +48,7 @@ class LineDetectionParams:
 def detect_lines(
     df: pd.DataFrame,
     params: LineDetectionParams | None = None,
+    utm_epsg_override: int | None = None,
 ) -> pd.DataFrame:
     """Given a dataframe with timestamp/lat/lon columns (index-aligned,
     time-sorted), return a copy with added columns:
@@ -52,7 +58,7 @@ def detect_lines(
     params = params or LineDetectionParams()
     out = df.reset_index(drop=True).copy()
 
-    x, y, epsg = project_to_local_xy(out["lat"].to_numpy(), out["lon"].to_numpy())
+    x, y, epsg = project_to_local_xy(out["lat"].to_numpy(), out["lon"].to_numpy(), utm_epsg_override)
     out["x"] = x
     out["y"] = y
 

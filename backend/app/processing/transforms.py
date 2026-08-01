@@ -135,3 +135,39 @@ def analytic_signal(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
 
     amplitude = np.sqrt(dx**2 + dy**2 + dz**2)
     return _unpad_and_mask(amplitude, mask, pad_widths)
+
+
+def total_horizontal_derivative(grid: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Total horizontal derivative (THDR): sqrt(dF/dx^2 + dF/dy^2) - the
+    in-plane-only counterpart of the analytic signal above (no dz term).
+    Peaks over the edges of a source body regardless of magnetization
+    direction, so it's a common companion/alternative to 1VD for outlining
+    contacts and boundaries."""
+    padded, mask, pad_widths = _pad_and_fill(grid)
+    kx, ky, k_mag = _wavenumbers(padded.shape[0], padded.shape[1], cell_size_m, cell_size_m)
+    spectrum = np.fft.fft2(padded)
+
+    dx = np.real(np.fft.ifft2(spectrum * (1j * kx)))
+    dy = np.real(np.fft.ifft2(spectrum * (1j * ky)))
+
+    amplitude = np.sqrt(dx**2 + dy**2)
+    return _unpad_and_mask(amplitude, mask, pad_widths)
+
+
+def upward_continuation(grid: np.ndarray, cell_size_m: float, height_m: float) -> np.ndarray:
+    """Analytically continue the field upward by height_m, simulating a
+    survey flown that much higher - short-wavelength (near-surface, high
+    wavenumber) signal is attenuated faster than long-wavelength (deep/
+    regional) signal, via the standard exp(-|k|*h) filter. Used to smooth
+    out shallow noise and isolate regional trends, or as a sanity check
+    of how a feature's signal degrades with altitude. height_m must be
+    positive - upward continuation is a smoothing (not invertible in
+    practice) operation, unlike downward continuation which amplifies
+    noise and is not offered here."""
+    if height_m <= 0:
+        raise ValueError("상방연속 고도(height_m)는 0보다 커야 합니다.")
+
+    def filt(kx, ky, k_mag):
+        return np.exp(-k_mag * height_m)
+
+    return _apply_filter(grid, cell_size_m, filt)

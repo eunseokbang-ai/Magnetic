@@ -40,13 +40,26 @@ class CrossoverLevelingParams(BaseModel):
     max_crossover_distance_m: float = Field(15.0, gt=0)
 
 
+FilterMethod = Literal["butterworth", "savgol", "moving_average"]
+
+
 class ProcessParams(BaseModel):
-    filter_cutoff_hz: float = Field(1.0, gt=0)
+    filter_method: FilterMethod = "butterworth"
+    filter_cutoff_hz: float = Field(1.0, gt=0)  # used when filter_method="butterworth"
+    filter_window_seconds: float = Field(1.0, gt=0)  # used when filter_method="savgol" or "moving_average"
+    filter_polyorder: int = Field(3, ge=1, le=7)  # used when filter_method="savgol"
     # A known constant delay (seconds) between the magnetometer and GPS
     # position streams - some loggers' internal filtering/telemetry path
     # lags the GPS fix by a fraction of a second, which shows up as a
     # small along-track position error. 0.0 = no correction (default).
     gps_mag_lag_seconds: float = 0.0
+    # Target EPSG code for the local projected CRS used throughout
+    # processing/export (grid, GeoTIFF, XYZ, ...). Left as None (the
+    # default), the UTM zone is auto-detected from the data's centroid -
+    # set this to override it, e.g. to match a national grid or to keep
+    # results consistent with a survey area that straddles a UTM zone
+    # boundary.
+    utm_epsg_override: Optional[int] = None
     despike_params: DespikeParams = DespikeParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
@@ -55,7 +68,7 @@ class ProcessParams(BaseModel):
 
 
 ValueField = Literal["tmi", "anomaly"]
-TransformName = Literal["rtp", "rte", "1vd", "as"]
+TransformName = Literal["rtp", "rte", "1vd", "as", "thdr", "upward_continuation", "detrend", "microlevel"]
 GridMethod = Literal["nearest", "linear", "cubic", "spline"]
 
 
@@ -105,6 +118,14 @@ class TransformRequest(HillshadeParams, ContourParams):
     vmax: Optional[float] = None
     stretch: StretchName = "linear"
     colored: bool = False  # GeoTIFF export only: bake in the on-screen colormap as an RGBA GeoTIFF instead of raw float values
+    # transform="upward_continuation" only: how far to continue the field upward.
+    continuation_height_m: Optional[float] = Field(None, gt=0)
+    # transform="detrend" only: order of the polynomial regional surface removed (1=plane, 2=quadratic, 3=cubic).
+    trend_order: int = Field(1, ge=1, le=3)
+    # transform="microlevel" only: see processing/microlevel.py for what each controls.
+    microlevel_strength: float = Field(0.8, ge=0, le=1)
+    microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
+    microlevel_wavelength_factor: float = Field(1.5, gt=1)
 
 
 class ManualExcludeRequest(BaseModel):

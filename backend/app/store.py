@@ -31,7 +31,7 @@ from .processing.crossover_leveling import CrossoverLevelingResult, apply_crosso
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.diurnal import apply_diurnal_correction
-from .processing.filters import lowpass_filter
+from .processing.filters import lowpass_filter, moving_average_filter, savgol_filter_1d
 from .processing.gridding import GridResult, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
 from .processing.inversion import (
@@ -48,16 +48,25 @@ from .processing.inversion import (
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
-from .processing.lines import LineDetectionParams, detect_lines, detect_tie_lines, estimate_line_spacing_m
+from .processing.lines import LineDetectionParams, detect_lines, detect_tie_lines, estimate_line_spacing_m, project_to_local_xy
 from .processing.contours import compute_contours
 from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
 from .processing.geology_sample import GeologySampleError, sample_geotiff_at_point
 from .processing.gps_lag import apply_gps_mag_lag
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
-from .processing.render import grid_to_geotiff_bytes, grid_to_geotiff_bytes_colored, grid_to_png_overlay
+from .processing.render import grid_to_geotiff_bytes, grid_to_geotiff_bytes_colored, grid_to_png_overlay, grid_to_xyz_bytes
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
-from .processing.transforms import analytic_signal, reduction_to_equator, reduction_to_pole, vertical_derivative
+from .processing.transforms import (
+    analytic_signal,
+    reduction_to_equator,
+    reduction_to_pole,
+    total_horizontal_derivative,
+    upward_continuation,
+    vertical_derivative,
+)
+from .processing.microlevel import apply_microleveling
+from .processing.trend import remove_regional_trend
 
 DEFAULT_CMAPS = {
     "point": "viridis",
@@ -145,6 +154,9 @@ class Project:
             "lat_range": [float(d["lat"].min()), float(d["lat"].max())],
             "lon_range": [float(d["lon"].min()), float(d["lon"].max())],
             "mag_range": [float(d["mag_raw"].min()), float(d["mag_raw"].max())],
+            "n_duplicate_timestamps_removed": d.attrs.get("n_duplicate_timestamps_removed", 0),
+            "n_invalid_coords_removed": d.attrs.get("n_invalid_coords_removed", 0),
+            "median_speed_mps": _median_speed_mps(d),
         }
 
     def base_summary(self) -> dict:
@@ -155,6 +167,7 @@ class Project:
             "n_points": len(b),
             "time_range": [b["timestamp"].min().isoformat(), b["timestamp"].max().isoformat()],
             "mag_range": [float(b["mag"].min()), float(b["mag"].max())],
+            "n_duplicate_timestamps_removed": b.attrs.get("n_duplicate_timestamps_removed", 0),
         }
 
     def run_pipeline(self, params: ProcessParams) -> dict:
@@ -185,12 +198,21 @@ class Project:
         else:
             self.despike_info = {"enabled": False, "n_spikes_removed": 0, "pct_spikes_removed": 0.0}
 
-        df["mag_filtered"] = lowpass_filter(
-            df["mag_raw"].to_numpy(), df["timestamp"], cutoff_hz=params.filter_cutoff_hz
-        )
+        if params.filter_method == "savgol":
+            df["mag_filtered"] = savgol_filter_1d(
+                df["mag_raw"].to_numpy(), df["timestamp"], params.filter_window_seconds, params.filter_polyorder
+            )
+        elif params.filter_method == "moving_average":
+            df["mag_filtered"] = moving_average_filter(
+                df["mag_raw"].to_numpy(), df["timestamp"], params.filter_window_seconds
+            )
+        else:
+            df["mag_filtered"] = lowpass_filter(
+                df["mag_raw"].to_numpy(), df["timestamp"], cutoff_hz=params.filter_cutoff_hz
+            )
 
         line_params = LineDetectionParams(**params.line_params.model_dump())
-        df = detect_lines(df, line_params)
+        df = detect_lines(df, line_params, utm_epsg_override=params.utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
@@ -274,6 +296,7 @@ class Project:
             "n_excluded_auto": int((df["line_id"] < 0).sum()),
             "n_manual_included": sum(1 for v in self.manual_overrides.values() if v),
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
+            "utm_epsg": self.utm_epsg,
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
             "line_spacing_m": self.line_spacing_m,
             "inclination_deg": self.inclination_deg,
@@ -330,6 +353,33 @@ class Project:
             }
         )
         return out.to_dict(orient="records")
+
+    def get_line_profile(self, line_id: int, value: str) -> dict:
+        """Value-vs-along-track-distance series for a single flight line -
+        a QC view distinct from the map/grid overlays, for spotting
+        spikes, drift, or leveling offsets directly along one pass rather
+        than inferring them from the 2D color pattern."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed
+        line_df = df[df["line_id"] == line_id].sort_values("timestamp")
+        if line_df.empty:
+            raise ProjectError(f"측선 {line_id}을 찾을 수 없습니다.")
+
+        x = line_df["x"].to_numpy()
+        y = line_df["y"].to_numpy()
+        distance_m = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
+        col = "anomaly" if value == "anomaly" else "tmi"
+        active = self._active_mask()
+
+        return {
+            "line_id": line_id,
+            "distance_m": distance_m.tolist(),
+            "value": line_df[col].tolist(),
+            "lat": line_df["lat"].tolist(),
+            "lon": line_df["lon"].tolist(),
+            "excluded": (~active.reindex(line_df.index)).tolist(),
+        }
 
     def get_exclusion_state(self) -> dict:
         """Just the (point_id, excluded) pairs, not the full point record
@@ -428,7 +478,8 @@ class Project:
             )
         return overlay
 
-    def _transform_values(self, grid: GridResult, transform: str) -> tuple[np.ndarray, bool]:
+    def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
+        transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
         if transform == "rtp":
@@ -439,11 +490,34 @@ class Project:
             return vertical_derivative(grid.values, grid.cell_size_m, order=1), True
         if transform == "as":
             return analytic_signal(grid.values, grid.cell_size_m), False
+        if transform == "thdr":
+            return total_horizontal_derivative(grid.values, grid.cell_size_m), False
+        if transform == "upward_continuation":
+            height_m = req.continuation_height_m or (2.0 * grid.cell_size_m)
+            return upward_continuation(grid.values, grid.cell_size_m, height_m), True
+        if transform == "detrend":
+            residual, _trend = remove_regional_trend(grid.values, grid.easting, grid.northing, order=req.trend_order)
+            return residual, True
+        if transform == "microlevel":
+            if not self.line_spacing_m:
+                raise ProjectError("측선 간격을 추정할 수 없어 micro-leveling을 적용할 수 없습니다 (측선이 2개 이상 필요).")
+            return (
+                apply_microleveling(
+                    grid.values,
+                    grid.cell_size_m,
+                    self.dominant_azimuth_deg,
+                    self.line_spacing_m,
+                    strength=req.microlevel_strength,
+                    angle_tolerance_deg=req.microlevel_angle_tolerance_deg,
+                    wavelength_bandwidth_factor=req.microlevel_wavelength_factor,
+                ),
+                True,
+            )
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
     def get_transform_overlay(self, req: TransformRequest) -> dict:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
-        values, symmetric = self._transform_values(grid, req.transform)
+        values, symmetric = self._transform_values(grid, req)
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
         overlay = grid_to_png_overlay(
@@ -480,7 +554,7 @@ class Project:
 
     def export_transform_geotiff(self, req: TransformRequest) -> bytes:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
-        values, symmetric = self._transform_values(grid, req.transform)
+        values, symmetric = self._transform_values(grid, req)
         if req.colored:
             cmap = req.cmap or DEFAULT_CMAPS["derivative"]
             return grid_to_geotiff_bytes_colored(
@@ -491,6 +565,41 @@ class Project:
                 stretch=req.stretch,
             )
         return grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+
+    def export_grid_xyz(self, req: GridRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        return grid_to_xyz_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
+
+    def export_transform_xyz(self, req: TransformRequest) -> bytes:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        values, _symmetric = self._transform_values(grid, req)
+        return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+
+    def export_points_csv(self) -> bytes:
+        """Every processed point (active and manually/auto-excluded alike,
+        flagged via the `excluded` column) as plain CSV - lat/lon/x/y,
+        both value fields, line assignment, and timestamp - for use in
+        spreadsheets or other point-based tools that don't want the
+        gridded/GeoTIFF form."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed
+        active = self._active_mask()
+        out = pd.DataFrame(
+            {
+                "point_id": df["point_id"],
+                "timestamp": df["timestamp"].astype(str),
+                "lat": df["lat"],
+                "lon": df["lon"],
+                "x_m": df["x"],
+                "y_m": df["y"],
+                "anomaly_nt": df["anomaly"],
+                "tmi_nt": df["tmi"],
+                "line_id": df["line_id"],
+                "excluded": ~active,
+            }
+        )
+        return out.to_csv(index=False).encode("utf-8")
 
     def run_euler_deconvolution(self, req: EulerDeconvolutionRequest) -> dict:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
@@ -1197,6 +1306,24 @@ def _densify_path(x: np.ndarray, y: np.ndarray, spacing_m: float) -> tuple[np.nd
     sample_x = np.interp(sample_dist, cum, x)
     sample_y = np.interp(sample_dist, cum, y)
     return sample_x, sample_y
+
+
+def _median_speed_mps(drone_raw: pd.DataFrame) -> float | None:
+    """Median ground speed (m/s) estimated from consecutive raw GPS fixes,
+    used by the frontend to suggest a filter cutoff frequency from a
+    desired spatial wavelength (cutoff_hz = speed_mps / wavelength_m)
+    before the user has run any processing yet."""
+    if len(drone_raw) < 2:
+        return None
+    x, y, _epsg = project_to_local_xy(drone_raw["lat"].to_numpy(), drone_raw["lon"].to_numpy())
+    dt = drone_raw["timestamp"].diff().dt.total_seconds().to_numpy()[1:]
+    dist = np.hypot(np.diff(x), np.diff(y))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        speed = np.where(dt > 0, dist / dt, np.nan)
+    speed = speed[np.isfinite(speed)]
+    if speed.size == 0:
+        return None
+    return float(np.median(speed))
 
 
 def _stats(series: pd.Series) -> dict:

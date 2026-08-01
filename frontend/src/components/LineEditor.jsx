@@ -14,6 +14,8 @@ export default function LineEditor({
   onToggleShowPointsOverGrid,
   showLineLabels,
   onToggleShowLineLabels,
+  onShowLineProfile,
+  lineProfileLoadingId,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -84,6 +86,20 @@ export default function LineEditor({
               {l.n_points}pt / {l.length_m.toFixed(0)}m
               {l.heading_shift_nt != null && ` / ${l.heading_shift_nt >= 0 ? "+" : ""}${l.heading_shift_nt.toFixed(1)}nT`}
             </span>
+            {onShowLineProfile && (
+              <button
+                type="button"
+                title="측선 프로파일 보기 (거리-값 그래프)"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onShowLineProfile(l.line_id);
+                }}
+                disabled={lineProfileLoadingId === l.line_id}
+                style={{ border: "none", background: "none", cursor: "pointer", fontSize: 13, padding: "0 2px" }}
+              >
+                {lineProfileLoadingId === l.line_id ? "…" : "📈"}
+              </button>
+            )}
           </label>
         ))}
       </div>

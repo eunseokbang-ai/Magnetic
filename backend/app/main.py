@@ -118,6 +118,12 @@ def points(project_id: str, value: str = "anomaly"):
     return project.get_points(value)
 
 
+@app.get("/api/projects/{project_id}/line-profile")
+def line_profile(project_id: str, line_id: int, value: str = "anomaly"):
+    project = store.get(project_id)
+    return project.get_line_profile(line_id, value)
+
+
 @app.post("/api/projects/{project_id}/manual-exclude")
 def manual_exclude(project_id: str, req: ManualExcludeRequest):
     project = store.get(project_id)
@@ -150,6 +156,29 @@ def export_transform_geotiff(project_id: str, req: TransformRequest):
     return Response(
         content=data, media_type="image/tiff", headers={"Content-Disposition": f"attachment; filename={req.transform}.tif"}
     )
+
+
+@app.post("/api/projects/{project_id}/grid/xyz")
+def export_grid_xyz(project_id: str, req: GridRequest):
+    project = store.get(project_id)
+    data = project.export_grid_xyz(req)
+    return Response(content=data, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=grid.xyz"})
+
+
+@app.post("/api/projects/{project_id}/transform/xyz")
+def export_transform_xyz(project_id: str, req: TransformRequest):
+    project = store.get(project_id)
+    data = project.export_transform_xyz(req)
+    return Response(
+        content=data, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={req.transform}.xyz"}
+    )
+
+
+@app.get("/api/projects/{project_id}/points/csv")
+def export_points_csv(project_id: str):
+    project = store.get(project_id)
+    data = project.export_points_csv()
+    return Response(content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=points.csv"})
 
 
 @app.post("/api/projects/{project_id}/euler-deconvolution")

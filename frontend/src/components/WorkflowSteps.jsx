@@ -7,6 +7,16 @@ const TRANSFORM_INFO = {
   rte: "RTE(Reduction to Equator, 자기적도환산) — 저위도(적도 부근)처럼 복각이 낮아 RTP가 불안정한 지역에서 대신 사용하는 유사한 보정 기법입니다.",
   "1vd": "1VD(수직 1차 미분) — 값 자체가 아니라 수직 방향 변화율을 보여줘, 얕고 경계가 뚜렷한 이상체를 더 선명하게 강조합니다.",
   as: "AS(Analytic Signal, 해석 신호 진폭) — 자화 방향에 무관하게 이상체 바로 위에서 극대값을 갖는 값으로, 자화 방향을 모를 때도 이상체 위치를 판단하기 좋습니다.",
+  thdr: "THDR(총수평미분) — 수평 방향 변화율의 크기로, 자화 방향에 무관하게 이상체 경계에서 뚜렷하게 나타나 접촉면·경계 파악에 유용합니다.",
+  upward_continuation: "상방연속 — 지정한 높이만큼 더 높은 고도에서 측정한 것처럼 계산을 재구성합니다. 얕고 짧은 파장 잡음이 깊고 넓은 이상보다 훨씬 빠르게 약해져, 광역 추세만 강조하거나 잡음을 완화할 때 사용합니다.",
+  detrend: "추세면 제거 — 완만하게 변화하는 광역 배경(다항식 추세면)을 최소자승으로 맞춰 뺀 나머지(잔차)만 표시합니다. 얕은 국지 이상을 광역 배경과 분리해 볼 때 유용합니다.",
+  microlevel: "마이크로레벨링(디코러게이션) — 측선과 나란한 방향의 짧은 파장(측선 간격 규모) 줄무늬 잡음만 골라 완화합니다. 헤딩/타이라인 보정 후에도 남는 줄무늬가 있을 때 사용합니다.",
+};
+
+const FILTER_METHOD_INFO = {
+  butterworth: "Butterworth 저역통과 — 지정한 차단주파수 이상을 뚜렷하게 잘라내는 표준적인 영위상(zero-phase) 필터입니다.",
+  savgol: "Savitzky-Golay — 이동창 안에서 다항식을 맞춰 평활화합니다. 이동평균보다 이상체의 봉우리 높이·폭을 더 잘 보존합니다.",
+  moving_average: "이동평균 — 가장 단순한 평활화 방식으로, 뾰족한 이상체를 다소 무디게 만들 수 있습니다.",
 };
 
 const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
@@ -93,10 +103,17 @@ export default function WorkflowSteps({
   exportingGeotiff,
   exportGeotiffColored,
   setExportGeotiffColored,
+  onExportXyz,
+  exportingXyz,
+  onExportPointsCsv,
+  exportingPointsCsv,
+  transformExtraParams,
+  setTransformExtraParams,
   error,
 }) {
   const [droneFileNames, setDroneFileNames] = useState([]);
   const [baseFileNames, setBaseFileNames] = useState([]);
+  const [targetWavelengthM, setTargetWavelengthM] = useState(5.0);
 
   const lp = processParams.line_params;
   const dsp = processParams.despike_params;
@@ -142,6 +159,14 @@ export default function WorkflowSteps({
               시간범위: {droneSummary.time_range?.[0]} ~ {droneSummary.time_range?.[1]}
               <br />
               Mag 범위: {droneSummary.mag_range?.[0]?.toFixed(1)} ~ {droneSummary.mag_range?.[1]?.toFixed(1)} nT
+              {(droneSummary.n_duplicate_timestamps_removed > 0 || droneSummary.n_invalid_coords_removed > 0) && (
+                <>
+                  <br />
+                  <span style={{ color: "#b45309" }}>
+                    품질검사로 제외됨: 중복 시각 {droneSummary.n_duplicate_timestamps_removed}개, 비정상 좌표 {droneSummary.n_invalid_coords_removed}개
+                  </span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -173,6 +198,12 @@ export default function WorkflowSteps({
               시간범위: {baseSummary.time_range?.[0]} ~ {baseSummary.time_range?.[1]}
               <br />
               Mag 범위: {baseSummary.mag_range?.[0]?.toFixed(1)} ~ {baseSummary.mag_range?.[1]?.toFixed(1)} nT
+              {baseSummary.n_duplicate_timestamps_removed > 0 && (
+                <>
+                  <br />
+                  <span style={{ color: "#b45309" }}>품질검사로 제외됨: 중복 시각 {baseSummary.n_duplicate_timestamps_removed}개</span>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -181,15 +212,83 @@ export default function WorkflowSteps({
       <details style={sectionStyle} open>
         <summary style={summaryStyle}>3~5. 필터 · 측선판별 · 보정</summary>
         <div style={bodyStyle}>
-          <Field label="저주파 통과 필터 차단주파수 (Hz)">
-            <input
-              type="number"
-              step="0.1"
+          <Field label="필터 종류">
+            <select
               style={inputStyle}
-              value={processParams.filter_cutoff_hz}
-              onChange={(e) => setProcessParams((p) => ({ ...p, filter_cutoff_hz: parseFloat(e.target.value) }))}
-            />
+              value={processParams.filter_method || "butterworth"}
+              onChange={(e) => setProcessParams((p) => ({ ...p, filter_method: e.target.value }))}
+              title={FILTER_METHOD_INFO[processParams.filter_method || "butterworth"]}
+            >
+              <option value="butterworth">Butterworth 저역통과 (기본값)</option>
+              <option value="savgol">Savitzky-Golay (봉우리 보존)</option>
+              <option value="moving_average">이동평균 (가장 단순)</option>
+            </select>
           </Field>
+          <div style={{ color: "#9ca3af" }}>{FILTER_METHOD_INFO[processParams.filter_method || "butterworth"]}</div>
+
+          {(processParams.filter_method || "butterworth") === "butterworth" ? (
+            <>
+              <Field label="저주파 통과 필터 차단주파수 (Hz)">
+                <input
+                  type="number"
+                  step="0.1"
+                  style={inputStyle}
+                  value={processParams.filter_cutoff_hz}
+                  onChange={(e) => setProcessParams((p) => ({ ...p, filter_cutoff_hz: parseFloat(e.target.value) }))}
+                />
+              </Field>
+              {droneSummary?.median_speed_mps > 0 && (
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, color: "#6b7280" }}>
+                  <Field label={`평균 비행속도 ${droneSummary.median_speed_mps.toFixed(1)} m/s 기준, 보존할 최소 파장(m)`}>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0.1"
+                      style={inputStyle}
+                      value={targetWavelengthM}
+                      onChange={(e) => setTargetWavelengthM(parseFloat(e.target.value))}
+                    />
+                  </Field>
+                  <button
+                    type="button"
+                    style={{ ...buttonStyle, background: "white", color: "#2563eb", padding: "4px 8px", whiteSpace: "nowrap" }}
+                    disabled={!targetWavelengthM || targetWavelengthM <= 0}
+                    onClick={() => {
+                      const suggested = droneSummary.median_speed_mps / targetWavelengthM;
+                      setProcessParams((p) => ({ ...p, filter_cutoff_hz: Math.round(suggested * 1000) / 1000 }));
+                    }}
+                  >
+                    권장값 적용 ({(droneSummary.median_speed_mps / (targetWavelengthM || 1)).toFixed(3)} Hz)
+                  </button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <Field label="필터 창 크기 (초)">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  style={inputStyle}
+                  value={processParams.filter_window_seconds}
+                  onChange={(e) => setProcessParams((p) => ({ ...p, filter_window_seconds: parseFloat(e.target.value) }))}
+                />
+              </Field>
+              {processParams.filter_method === "savgol" && (
+                <Field label="다항식 차수 (커질수록 봉우리 보존↑, 잡음 제거↓)">
+                  <input
+                    type="number"
+                    min="1"
+                    max="7"
+                    style={inputStyle}
+                    value={processParams.filter_polyorder}
+                    onChange={(e) => setProcessParams((p) => ({ ...p, filter_polyorder: parseInt(e.target.value, 10) }))}
+                  />
+                </Field>
+              )}
+            </>
+          )}
 
           <Field label="GPS-자력계 시간 오프셋 (초) — 자력계 내부 지연으로 위치가 실제와 어긋날 때 보정. 0=보정 없음">
             <input
@@ -227,6 +326,16 @@ export default function WorkflowSteps({
           </Field>
           <Field label="터닝 여분 구간 (m) — 측선 양끝에서 추가로 자를 거리">
             <input type="number" style={inputStyle} value={lp.turn_buffer_m} onChange={(e) => updateLine("turn_buffer_m", parseFloat(e.target.value))} />
+          </Field>
+
+          <Field label="좌표계 수동 지정 (EPSG 코드, 비워두면 측선 중심으로 UTM 자동 감지) — 예: UTM 48N = 32648">
+            <input
+              type="number"
+              style={inputStyle}
+              placeholder="자동 감지"
+              value={processParams.utm_epsg_override ?? ""}
+              onChange={(e) => setProcessParams((p) => ({ ...p, utm_epsg_override: e.target.value === "" ? null : parseInt(e.target.value, 10) }))}
+            />
           </Field>
 
           <Field label="베이스 시간 오프셋 (초) — 베이스 로거 시계가 GPS와 안맞을 때 보정">
@@ -283,6 +392,8 @@ export default function WorkflowSteps({
               측선 {processSummary.n_lines}개 검출 / 유효 {processSummary.n_kept} / 자동제외 {processSummary.n_excluded_auto}
               <br />
               복각(Inclination): {processSummary.inclination_deg?.toFixed(2)}°, 편각(Declination): {processSummary.declination_deg?.toFixed(2)}°
+              <br />
+              좌표계: EPSG:{processSummary.utm_epsg}
               <br />
               {processSummary.gps_mag_lag?.lag_seconds !== 0 && (
                 <>
@@ -434,7 +545,7 @@ export default function WorkflowSteps({
       </details>
 
       <details style={sectionStyle}>
-        <summary style={summaryStyle}>10. 파생 그리드 (RTP / RTE / AS / 1VD)</summary>
+        <summary style={summaryStyle}>10. 파생 그리드 (RTP / RTE / AS / 1VD 외)</summary>
         <div style={bodyStyle}>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {[
@@ -443,6 +554,10 @@ export default function WorkflowSteps({
               ["rte", "RTE"],
               ["1vd", "1VD"],
               ["as", "AS"],
+              ["thdr", "THDR"],
+              ["upward_continuation", "상방연속"],
+              ["detrend", "추세면제거"],
+              ["microlevel", "마이크로레벨링"],
             ].map(([key, label]) => (
               <button
                 key={key}
@@ -460,6 +575,61 @@ export default function WorkflowSteps({
             ))}
           </div>
           {transformLoading && <div style={{ color: "#6b7280" }}>계산 중...</div>}
+          {activeTransform === "upward_continuation" && (
+            <Field label="상방연속 고도 (m)">
+              <input
+                type="number"
+                style={inputStyle}
+                value={transformExtraParams.continuation_height_m}
+                onChange={(e) => setTransformExtraParams((p) => ({ ...p, continuation_height_m: parseFloat(e.target.value) }))}
+              />
+            </Field>
+          )}
+          {activeTransform === "detrend" && (
+            <Field label="추세면 차수 (1=평면, 2=2차, 3=3차 - 높을수록 더 복잡한 배경을 뺌)">
+              <select
+                style={inputStyle}
+                value={transformExtraParams.trend_order}
+                onChange={(e) => setTransformExtraParams((p) => ({ ...p, trend_order: parseInt(e.target.value, 10) }))}
+              >
+                <option value={1}>1차 (평면)</option>
+                <option value={2}>2차</option>
+                <option value={3}>3차</option>
+              </select>
+            </Field>
+          )}
+          {activeTransform === "microlevel" && (
+            <>
+              <Field label={`보정 강도: ${transformExtraParams.microlevel_strength}`}>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={transformExtraParams.microlevel_strength}
+                  onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_strength: parseFloat(e.target.value) }))}
+                />
+              </Field>
+              <Field label="방향 허용오차 (deg) — 측선 직각방향 기준">
+                <input
+                  type="number"
+                  style={inputStyle}
+                  value={transformExtraParams.microlevel_angle_tolerance_deg}
+                  onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_angle_tolerance_deg: parseFloat(e.target.value) }))}
+                />
+              </Field>
+              <Field label="파장 대역폭 배수 (측선 간격 기준, 클수록 더 넓은 파장대를 완화)">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1.01"
+                  style={inputStyle}
+                  value={transformExtraParams.microlevel_wavelength_factor}
+                  onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_wavelength_factor: parseFloat(e.target.value) }))}
+                />
+              </Field>
+            </>
+          )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={exportGeotiffColored} onChange={(e) => setExportGeotiffColored(e.target.checked)} />
             <span>컬러 GeoTIFF로 저장 (화면에 보이는 색상 그대로, 값 아님)</span>
@@ -478,6 +648,13 @@ export default function WorkflowSteps({
               ? "화면에 보이는 컬러맵/힐쉐이드가 그대로 이미지로 저장됩니다 (Google Earth 등에서 바로 볼 때 적합, 값 재분석 불가)."
               : "실제 값(nT 등)이 그대로 저장되어 Oasis Montaj/QGIS/ArcGIS 등에서 다시 열 수 있습니다."}
           </div>
+          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingXyz || !processSummary} onClick={() => onExportXyz()}>
+            {exportingXyz ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 XYZ(텍스트)로 저장`}
+          </button>
+          <div style={{ color: "#9ca3af" }}>경도·위도·값 3열의 공백 구분 텍스트 파일 — GeoTIFF를 지원하지 않는 다른 프로그램에서도 열람 가능.</div>
+          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingPointsCsv || !processSummary} onClick={() => onExportPointsCsv()}>
+            {exportingPointsCsv ? "내보내는 중..." : "처리된 포인트 전체를 CSV로 저장"}
+          </button>
         </div>
       </details>
 

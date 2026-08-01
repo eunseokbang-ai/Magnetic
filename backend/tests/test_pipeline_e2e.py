@@ -32,18 +32,26 @@ def main():
     drone_path = FIXTURES / "sample_drone_survey.csv"
     base_path = FIXTURES / "sample_base_station.csv"
 
-    # multi-file upload: same fixture supplied twice, should double the row count
+    # multi-file upload: same fixture supplied twice exercises both file
+    # concatenation and exact-timestamp-duplicate QC removal at once - since
+    # the two "files" here are byte-identical, every row collides on
+    # timestamp with its twin and gets deduplicated back down to the
+    # original single-file row count (a real accidental double-upload
+    # would collapse the same way; two genuinely different overlapping
+    # flights would not, since their timestamps wouldn't line up exactly).
     r = client.post(f"/api/projects/{project_id}/upload/drone", files=_multi_files("files", drone_path, drone_path))
     assert r.status_code == 200, r.text
     drone_summary_multi = r.json()
     print("drone summary (2 files):", drone_summary_multi)
-    assert drone_summary_multi["n_points"] == 2 * 22025, drone_summary_multi["n_points"]
+    assert drone_summary_multi["n_points"] == 22025, drone_summary_multi["n_points"]
+    assert drone_summary_multi["n_duplicate_timestamps_removed"] == 22025, drone_summary_multi
 
     r = client.post(f"/api/projects/{project_id}/upload/base", files=_multi_files("files", base_path, base_path))
     assert r.status_code == 200, r.text
     base_summary_multi = r.json()
     print("base summary (2 files):", base_summary_multi)
-    assert base_summary_multi["n_points"] == 2 * 20314, base_summary_multi["n_points"]
+    assert base_summary_multi["n_points"] == 20314, base_summary_multi["n_points"]
+    assert base_summary_multi["n_duplicate_timestamps_removed"] == 20314, base_summary_multi
 
     # re-upload single files for the rest of the pipeline (multi-file loading
     # already proven above; a single real flight keeps line detection sane)

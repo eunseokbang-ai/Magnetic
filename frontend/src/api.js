@@ -111,6 +111,10 @@ export function runTargetDetection(projectId, req) {
   return request(`/projects/${projectId}/target-detection`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function getLineProfile(projectId, lineId, value) {
+  return request(`/projects/${projectId}/line-profile?line_id=${lineId}&value=${value}`);
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);
@@ -201,6 +205,21 @@ export async function exportGridGeotiff(projectId, req, filename) {
 
 export async function exportTransformGeotiff(projectId, req, filename) {
   const blob = await requestBlob(`/projects/${projectId}/transform/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportGridXyz(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/grid/xyz`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportTransformXyz(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/transform/xyz`, { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportPointsCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/points/csv`);
   downloadBlob(blob, filename);
 }
 

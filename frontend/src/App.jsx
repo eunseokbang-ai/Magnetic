@@ -8,6 +8,7 @@ import LineEditor from "./components/LineEditor";
 import LayerManager from "./components/LayerManager";
 import InversionPanel from "./components/InversionPanel";
 import InversionSectionView from "./components/InversionSectionView";
+import LineProfileView from "./components/LineProfileView";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
 // needs it, and most sessions never open it, so it's split into its own
@@ -50,9 +51,21 @@ const DEFAULT_TARGET_DETECTION_PARAMS = {
   min_fit_quality: 0.3,
 };
 
+const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
+  continuation_height_m: 20.0,
+  trend_order: 1,
+  microlevel_strength: 0.8,
+  microlevel_angle_tolerance_deg: 15.0,
+  microlevel_wavelength_factor: 1.5,
+};
+
 const DEFAULT_PARAMS = {
+  filter_method: "butterworth",
   filter_cutoff_hz: 1.0,
+  filter_window_seconds: 1.0,
+  filter_polyorder: 3,
   gps_mag_lag_seconds: 0.0,
+  utm_epsg_override: null,
   despike_params: {
     enabled: true,
     window_size: 11,
@@ -127,6 +140,11 @@ export default function App() {
   const [overlayLayers, setOverlayLayers] = useState([]);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [overlayError, setOverlayError] = useState(null);
+  const [transformExtraParams, setTransformExtraParams] = useState(DEFAULT_TRANSFORM_EXTRA_PARAMS);
+  const [exportingXyz, setExportingXyz] = useState(false);
+  const [exportingPointsCsv, setExportingPointsCsv] = useState(false);
+  const [lineProfileData, setLineProfileData] = useState(null);
+  const [lineProfileLoadingId, setLineProfileLoadingId] = useState(null);
 
   const [demStatus, setDemStatus] = useState(null);
   const [demUploading, setDemUploading] = useState(false);
@@ -297,6 +315,7 @@ export default function App() {
       setInversionSummary(null);
       setSectionResult(null);
       setVolumeData(null);
+      setLineProfileData(null);
       await refreshPoints(projectId, valueField);
     } catch (e) {
       handleError(e);
@@ -409,6 +428,7 @@ export default function App() {
         contour_interval_nt: contourInterval,
         contour_n_levels: contourNLevels,
         stretch,
+        ...transformExtraParams,
       });
       setOverlay(resp);
       setActiveTransform(name);
@@ -452,6 +472,54 @@ export default function App() {
       handleError(e);
     } finally {
       setExportingGeotiff(false);
+    }
+  };
+
+  const handleExportXyz = async () => {
+    try {
+      setError(null);
+      setExportingXyz(true);
+      const base = {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        ...transformExtraParams,
+      };
+      if (activeTransform === "none") {
+        await api.exportGridXyz(projectId, base, `${valueField}_${gridCellSize}m.xyz`);
+      } else {
+        await api.exportTransformXyz(projectId, { ...base, transform: activeTransform }, `${activeTransform}_${gridCellSize}m.xyz`);
+      }
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingXyz(false);
+    }
+  };
+
+  const handleExportPointsCsv = async () => {
+    try {
+      setError(null);
+      setExportingPointsCsv(true);
+      await api.exportPointsCsv(projectId, "points.csv");
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setExportingPointsCsv(false);
+    }
+  };
+
+  const handleShowLineProfile = async (lineId) => {
+    try {
+      setError(null);
+      setLineProfileLoadingId(lineId);
+      const resp = await api.getLineProfile(projectId, lineId, valueField);
+      setLineProfileData(resp);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setLineProfileLoadingId(null);
     }
   };
 
@@ -911,6 +979,12 @@ export default function App() {
           exportingGeotiff={exportingGeotiff}
           exportGeotiffColored={exportGeotiffColored}
           setExportGeotiffColored={setExportGeotiffColored}
+          onExportXyz={handleExportXyz}
+          exportingXyz={exportingXyz}
+          onExportPointsCsv={handleExportPointsCsv}
+          exportingPointsCsv={exportingPointsCsv}
+          transformExtraParams={transformExtraParams}
+          setTransformExtraParams={setTransformExtraParams}
           error={error}
         />
       </div>
@@ -966,6 +1040,13 @@ export default function App() {
           </Suspense>
         )}
         {!volumeData && sectionResult && <InversionSectionView data={sectionResult} onClose={() => setSectionResult(null)} />}
+        {!volumeData && !sectionResult && lineProfileData && (
+          <LineProfileView
+            data={lineProfileData}
+            valueLabel={valueField === "anomaly" ? "자력 이상 (nT)" : "TMI (nT)"}
+            onClose={() => setLineProfileData(null)}
+          />
+        )}
       </div>
 
       <div
@@ -987,6 +1068,8 @@ export default function App() {
           onToggleShowPointsOverGrid={setShowPointsOverGrid}
           showLineLabels={showLineLabels}
           onToggleShowLineLabels={setShowLineLabels}
+          onShowLineProfile={handleShowLineProfile}
+          lineProfileLoadingId={lineProfileLoadingId}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>12. 참조 레이어 (지질도 등 GeoTIFF)</h2>
