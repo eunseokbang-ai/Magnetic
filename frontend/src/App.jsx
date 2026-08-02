@@ -114,6 +114,7 @@ const DEFAULT_PARAMS = {
     tie_tolerance_deg: 20.0,
     max_crossover_distance_m: 15.0,
     iterative: true,
+    leveling_order: 0,
   },
   noise_qc: { enabled: true },
   notch_filter: { frequencies_hz: [], quality_factor: 30.0 },
@@ -134,6 +135,10 @@ export default function App() {
   const [hoverPoint, setHoverPoint] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
   const [drawAction, setDrawAction] = useState("exclude");
+  // 이착륙 램프 구간(이륙->측선시작, 측선종료->착륙)은 기본적으로 편집 화면에서
+  // 숨기고 제외/복원 드로잉의 영향도 받지 않도록 보호한다 - 켜면 다시 보이고
+  // 편집도 가능해진다 (backend: ManualExcludeRequest.include_ramp).
+  const [showRampPoints, setShowRampPoints] = useState(false);
   const [gridCellSize, setGridCellSize] = useState(10.0);
   const [gridMethod, setGridMethod] = useState("nearest");
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
@@ -425,7 +430,7 @@ export default function App() {
     setLastDrawnPolygon(latlngCoords);
     try {
       setError(null);
-      const summary = await api.manualExclude(projectId, { mode: "polygon", action: drawAction, polygon: latlngCoords });
+      const summary = await api.manualExclude(projectId, { mode: "polygon", action: drawAction, polygon: latlngCoords, include_ramp: showRampPoints });
       setProcessSummary(summary);
       applyExclusionDelta(summary.exclusion);
       setOverlay(null);
@@ -639,7 +644,7 @@ export default function App() {
   const handleManualExcludePointIds = async (pointIds, action) => {
     try {
       setError(null);
-      const summary = await api.manualExclude(projectId, { mode: "point_ids", action, point_ids: pointIds });
+      const summary = await api.manualExclude(projectId, { mode: "point_ids", action, point_ids: pointIds, include_ramp: showRampPoints });
       setProcessSummary(summary);
       applyExclusionDelta(summary.exclusion);
       setOverlay(null);
@@ -1022,6 +1027,14 @@ export default function App() {
     }
   };
 
+  // 이착륙 램프 구간은 기본적으로 지도/측선 편집 화면에서 숨긴다 (표시 옵션을
+  // 켜기 전까지는 제외/복원 드로잉의 대상도 되지 않도록 백엔드에서도 별도로
+  // 보호함 - handleShapeDrawn의 include_ramp 참고).
+  const editablePoints = useMemo(() => {
+    if (showRampPoints) return points;
+    return points.filter((p) => !(p.is_ramp && p.excluded));
+  }, [points, showRampPoints]);
+
   const autoColorRange = useMemo(() => {
     const stats = valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats;
     if (stats && stats.min != null) return { vmin: stats.min, vmax: stats.max };
@@ -1254,7 +1267,7 @@ export default function App() {
           </button>
         </div>
         <MapView
-          points={points}
+          points={editablePoints}
           colorRange={colorRange}
           cmapName={cmapName}
           overlay={overlay}
@@ -1336,11 +1349,13 @@ export default function App() {
           onExportBln={handleExportBln}
           exportingBln={exportingBln}
           canExportBln={!!lastDrawnPolygon}
+          showRampPoints={showRampPoints}
+          onToggleShowRampPoints={setShowRampPoints}
         />
 
         {flightPathEditorOpen && (
           <FlightPathEditor
-            points={points}
+            points={editablePoints}
             loading={pointsLoading}
             lines={processSummary?.lines}
             onApply={handleManualExcludePointIds}

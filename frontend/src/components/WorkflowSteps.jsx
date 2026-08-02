@@ -505,8 +505,38 @@ export default function WorkflowSteps({
             />
           </Field>
 
-          <Field label="베이스 시간 오프셋 (초) — 베이스 로거 시계가 GPS와 안맞을 때 보정">
-            <input type="number" style={inputStyle} value={dp.time_offset_seconds} onChange={(e) => updateDiurnal("time_offset_seconds", parseFloat(e.target.value))} />
+          <Field label="베이스 시간 오프셋 — 베이스 로거 시계가 GPS와 안맞을 때 보정 (기본값 0시간 0분 0초)">
+            {(() => {
+              const total = dp.time_offset_seconds || 0;
+              const sign = total < 0 ? -1 : 1;
+              const absTotal = Math.abs(total);
+              const h = Math.trunc(absTotal / 3600);
+              const m = Math.trunc((absTotal - h * 3600) / 60);
+              const s = Math.round(absTotal - h * 3600 - m * 60);
+              const setPart = (part, value) => {
+                const v = value === "" || Number.isNaN(value) ? 0 : Math.abs(value);
+                const next = { h, m, s, [part]: v };
+                updateDiurnal("time_offset_seconds", sign * (next.h * 3600 + next.m * 60 + next.s));
+              };
+              return (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    title="부호 전환 (베이스 시계가 GPS보다 빠르면 +, 느리면 -)"
+                    style={{ width: 28, padding: "3px 0", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db", background: "white", cursor: "pointer" }}
+                    onClick={() => updateDiurnal("time_offset_seconds", -total)}
+                  >
+                    {sign < 0 ? "−" : "+"}
+                  </button>
+                  <input type="number" min="0" style={{ ...inputStyle, width: 60 }} value={h} title="시" onChange={(e) => setPart("h", parseInt(e.target.value, 10))} />
+                  <span>시</span>
+                  <input type="number" min="0" style={{ ...inputStyle, width: 60 }} value={m} title="분" onChange={(e) => setPart("m", parseInt(e.target.value, 10))} />
+                  <span>분</span>
+                  <input type="number" min="0" style={{ ...inputStyle, width: 60 }} value={s} title="초" onChange={(e) => setPart("s", parseInt(e.target.value, 10))} />
+                  <span>초</span>
+                </div>
+              );
+            })()}
           </Field>
           <Field label="일변화 기준값">
             <select style={inputStyle} value={dp.reference} onChange={(e) => updateDiurnal("reference", e.target.value)}>
@@ -551,6 +581,18 @@ export default function WorkflowSteps({
                 <input type="checkbox" checked={cl.iterative} onChange={(e) => updateCrossover("iterative", e.target.checked)} />
                 <span>반복(iterative) 네트워크 보정 — 타이라인도 함께 보정해 오차를 양쪽에 고르게 분산 (해제 시 타이라인을 고정 기준으로 취급)</span>
               </label>
+              <Field
+                label={
+                  <span title="0차(상수): 측선 하나당 일정한 오프셋 하나만 보정합니다. 1차(폴리노미얼): 교차점 위치에 따라 보정값이 측선을 따라 선형으로 변하도록 fit합니다 - 타이라인이 2개 이상 있어 한 측선에 교차점이 여러 개 있을 때 더 정확합니다. 1차 선택 시 반복 네트워크 보정 여부와 무관하게 항상 단일 패스로 계산됩니다.">
+                    보정 차수 ⓘ
+                  </span>
+                }
+              >
+                <select style={inputStyle} value={cl.leveling_order} onChange={(e) => updateCrossover("leveling_order", parseInt(e.target.value, 10))}>
+                  <option value={0}>0차 (상수 오프셋, 기본값)</option>
+                  <option value={1}>1차 (폴리노미얼/선형 - 타이라인 2개 이상 권장)</option>
+                </select>
+              </Field>
             </>
           )}
 
@@ -647,6 +689,20 @@ export default function WorkflowSteps({
                   <br />
                 </>
               )}
+              {processSummary.sampling_qc?.available && (
+                <>
+                  샘플링 거리 QC: 중앙값 {processSummary.sampling_qc.median_distance_m?.toFixed(2)}m, 최대{" "}
+                  {processSummary.sampling_qc.max_distance_m?.toFixed(2)}m
+                  {processSummary.sampling_qc.n_gaps_exceeding_tolerance > 0 && (
+                    <span style={{ color: "#b45309" }}>
+                      {" "}
+                      — 허용기준({processSummary.sampling_qc.gap_tolerance_m}m) 초과 구간 {processSummary.sampling_qc.n_gaps_exceeding_tolerance}개 (
+                      {processSummary.sampling_qc.pct_gaps_exceeding_tolerance?.toFixed(2)}%, GPS 순간 끊김 가능성)
+                    </span>
+                  )}
+                  <br />
+                </>
+              )}
               {processSummary.file_level_check?.available && processSummary.file_level_check.flagged_any && (
                 <div style={{ color: "#dc2626", marginTop: 4 }}>
                   ⚠ 파일(타일) 간 레벨 불일치 감지: 베이스 위치 변경 등을 확인하세요 (
@@ -709,6 +765,7 @@ export default function WorkflowSteps({
               <option value="cubic">큐빅(Cubic) - 느림</option>
               <option value="spline">스플라인 (가장 부드러움, 가장 느림)</option>
               <option value="minimum_curvature">최소곡률(Minimum Curvature) — Surfer 기본 격자화 방식과 동일한 알고리즘</option>
+              <option value="boxing">Boxing — 빈 셀은 보간하지 않고, 실측값이 있는 셀만 그 평균으로 채움 (자료 없는 구간을 있는 그대로 표시)</option>
             </select>
           </Field>
           <Field label="보간 반경 (m) — 비워두면 측선 간격 기반 자동 계산">
@@ -764,6 +821,7 @@ export default function WorkflowSteps({
             <select style={inputStyle} value={stretch} onChange={(e) => setStretch(e.target.value)}>
               <option value="linear">선형 (기본값)</option>
               <option value="equalize">히스토그램 균등화 — 값 분포에 맞춰 대비 자동 강조 (극단값에 덜 묻힘)</option>
+              <option value="normal">정규분포 — 평균·표준편차 기준으로 색상 배분 (값이 정규분포에 가까울 때 적합)</option>
             </select>
           </Field>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

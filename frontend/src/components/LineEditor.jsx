@@ -20,6 +20,8 @@ export default function LineEditor({
   onExportBln,
   exportingBln,
   canExportBln,
+  showRampPoints,
+  onToggleShowRampPoints,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -49,6 +51,12 @@ export default function LineEditor({
         <input type="checkbox" checked={showPointsOverGrid} onChange={(e) => onToggleShowPointsOverGrid(e.target.checked)} />
         <span>그리드 위에 측선 점 표시</span>
       </label>
+      {onToggleShowRampPoints && (
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          <input type="checkbox" checked={showRampPoints} onChange={(e) => onToggleShowRampPoints(e.target.checked)} />
+          <span>이착륙 구간(이륙→측선시작, 측선종료→착륙) 표시 — 기본적으로 숨기고 제외/복원 대상에서도 제외됩니다</span>
+        </label>
+      )}
 
       <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
         {lines.map((l) => (

@@ -14,6 +14,13 @@ class LineParams(BaseModel):
     max_gap_seconds: float = Field(1.0, ge=0.1)
     # "heading_histogram" (default) or "pca" - see processing/lines.py.
     direction_method: Literal["heading_histogram", "pca"] = "heading_histogram"
+    # Bridge brief mid-line interruptions (wind, a momentary heading/GPS
+    # blip) back into the same line instead of leaving a data gap - see
+    # processing/lines.py::_bridge_line_gaps.
+    bridge_gaps: bool = True
+    bridge_max_gap_m: float = Field(100.0, ge=0)
+    bridge_max_offset_m: float = Field(15.0, ge=0)
+    bridge_straightness_factor: float = Field(2.0, ge=1.0)
 
 
 class DiurnalParams(BaseModel):
@@ -258,6 +265,13 @@ class ManualExcludeRequest(BaseModel):
     line_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
     point_ids: Optional[list[int]] = None
+    # By default, takeoff/landing ramp points (exclusion_reason
+    # takeoff_ramp/landing_ramp - see processing/lines.py) are protected
+    # from exclude/include drawing so they don't get accidentally toggled
+    # while editing the survey lines around them. Set True to allow them
+    # to be affected too (paired with the line editor's "show ramp
+    # points" toggle).
+    include_ramp: bool = False
 
 
 class InversionParams(BaseModel):

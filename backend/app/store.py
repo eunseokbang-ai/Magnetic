@@ -710,6 +710,7 @@ class Project:
                 "line_id": df["line_id"],
                 "tie_line_id": df["tie_line_id"],
                 "excluded": ~active,
+                "is_ramp": df["exclusion_reason"].isin(["takeoff_ramp", "landing_ramp"]),
                 "timestamp": df["timestamp"].astype(str),
             }
         )
@@ -778,6 +779,15 @@ class Project:
             poly_path = MplPath([(pt[1], pt[0]) for pt in req.polygon])  # (lon, lat)
             inside = poly_path.contains_points(np.column_stack([df["lon"], df["lat"]]))
             target_ids = set(df.loc[inside, "point_id"])
+
+        # Takeoff/landing ramp points are protected from exclude/include
+        # drawing by default (see ManualExcludeRequest.include_ramp) - the
+        # line editor hides them and this stops a draw action from
+        # silently toggling them just because they happened to fall
+        # inside the drawn shape.
+        if not req.include_ramp:
+            ramp_ids = set(df.loc[df["exclusion_reason"].isin(["takeoff_ramp", "landing_ramp"]), "point_id"])
+            target_ids -= ramp_ids
 
         # action="include" force-includes points regardless of automatic
         # line detection (e.g. restoring a turbulence segment the auto
