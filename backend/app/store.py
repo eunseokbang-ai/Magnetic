@@ -40,6 +40,7 @@ from .processing.inversion import (
     InversionError,
     InversionMesh,
     InversionResult,
+    box_faces,
     build_mesh,
     build_sensitivity_matrix,
     horizontal_slice,
@@ -104,6 +105,7 @@ from .processing.microlevel import apply_microleveling
 from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
 from .processing.noise_qc import compute_difference_qc
 from .processing.repeatability import analyze_repeatability
+from .processing.sampling_qc import compute_sampling_distance_qc
 from .processing.spectrum import compute_power_spectrum
 from .processing.trend import remove_regional_trend
 
@@ -165,6 +167,7 @@ class Project:
     crossover_info: dict | None = None
     gps_lag_info: dict | None = None
     noise_qc_info: dict | None = None
+    sampling_qc_info: dict | None = None
     file_level_info: dict | None = None
     repeatability_raw: pd.DataFrame | None = None
     repeatability_summary_cache: dict | None = None
@@ -337,6 +340,7 @@ class Project:
             self.noise_qc_info = compute_difference_qc(df, "mag_filtered")
         else:
             self.noise_qc_info = {"available": False}
+        self.sampling_qc_info = compute_sampling_distance_qc(df)
 
         sp = params.sway_detection
         if sp.enabled:
@@ -420,7 +424,8 @@ class Project:
         df["tie_line_id"] = tie_line_id
         if cp.enabled:
             crossover_result = compute_crossover_leveling(
-                df, tie_line_id, "anomaly", max_crossover_distance_m=cp.max_crossover_distance_m, iterative=cp.iterative
+                df, tie_line_id, "anomaly", max_crossover_distance_m=cp.max_crossover_distance_m,
+                iterative=cp.iterative, leveling_order=cp.leveling_order,
             )
             df["anomaly"] = apply_crossover_leveling(df, "anomaly", crossover_result)
             df["tmi"] = apply_crossover_leveling(df, "tmi", crossover_result)
@@ -655,6 +660,7 @@ class Project:
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,
             "noise_qc": self.noise_qc_info,
+            "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
@@ -1551,6 +1557,7 @@ class Project:
                 G, data_nt, mesh, rows, cols, layers,
                 regularization_strength=params.regularization_strength,
                 n_irls_iterations=params.n_irls_iterations,
+                assumed_noise_nt=params.assumed_noise_nt,
             )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
@@ -1582,6 +1589,12 @@ class Project:
             "auto_params": auto_used,
             "source_depth_estimate_m": auto_suggestion["source_depth_estimate_m"] if auto_suggestion else None,
             "resolution_warning": _resolution_warning(obs_cell_size_m, self.line_spacing_m, nx, ny),
+            "regularization_strength_used": result.regularization_strength_used,
+            "auto_regularization": params.assumed_noise_nt is not None,
+            "assumed_noise_nt": params.assumed_noise_nt,
+            "layer_elevations_m": [float(z) for z in mesh.z_centers],
+            "depth_resolution": result.depth_resolution,
+            "depth_resolution_warning": _depth_resolution_warning(result.depth_resolution, mesh.z_centers),
         }
         self.inversion_summary_cache = summary
         return summary
@@ -1653,9 +1666,12 @@ class Project:
                 path_x = np.full(n_samples, fixed_x)
 
         try:
-            section, distance = _inversion_vertical_section(self.inversion_result, path_x, path_y, req.threshold, req.threshold_max)
+            section, distance, ground_elev_path = _inversion_vertical_section(
+                self.inversion_result, path_x, path_y, req.threshold, req.threshold_max
+            )
             png = render_section_png(
-                section, distance, self.inversion_result.mesh.z_centers,
+                section, distance, self.inversion_result.mesh.z_centers, ground_elev_path,
+                path_x, path_y, mesh.x_centers, mesh.y_centers, profile=req.profile,
                 cmap_name=req.cmap or "geosoft_rainbow", vmin=req.vmin, vmax=req.vmax,
             )
         except InversionError as exc:
@@ -1713,6 +1729,23 @@ class Project:
             "stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "top": top,
         }
+
+    def get_inversion_box_faces(self, top_layer_index: int = 0) -> dict:
+        """Fence-diagram style 3D view: top horizontal slice + the 4
+        vertical boundary walls of the mesh, one continuous SI
+        colorscale, no threshold gating - see processing/inversion.py:
+        box_faces for the layout this mirrors."""
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        mesh = self.inversion_result.mesh
+        x0 = float(mesh.x_centers.mean())
+        y0 = float(mesh.y_centers.mean())
+        faces = box_faces(self.inversion_result, top_layer_index)
+        for key in ("top", "south", "north", "west", "east"):
+            face = faces[key]
+            face["x"] = (np.asarray(face["x"]) - x0).tolist()
+            face["y"] = (np.asarray(face["y"]) - y0).tolist()
+        return faces
 
     def export_inversion_npz(self) -> bytes:
         """Serialize the mesh + solved model (and enough context to
@@ -1869,6 +1902,25 @@ def _resolution_warning(obs_cell_size_m: float, line_spacing_m: float | None, nx
         "측선 자료가 가진 만큼의 해상도를 다 살리지 못합니다. 더 세밀한 결과가 필요하면 "
         "관심 영역만 잘라서(예: 측선 일부만 남기고 나머지를 수동 제외) 다시 처리하거나, "
         "자동 설정을 끄고 격자 크기를 직접 줄여보세요(실행 시간이 늘어납니다)."
+    )
+
+
+def _depth_resolution_warning(depth_resolution: dict | None, z_centers: np.ndarray) -> str | None:
+    """Human-readable caveat listing which depth layers the survey's own
+    geometry barely constrains at all (see
+    processing/inversion.py:resolution_diagnostics) - surfaced so a user
+    doesn't read the deepest part of the recovered model with the same
+    confidence as the well-resolved shallow part."""
+    if not depth_resolution:
+        return None
+    poor = depth_resolution.get("poorly_resolved_layers") or []
+    if not poor:
+        return None
+    elevations = [float(z_centers[i]) for i in poor]
+    return (
+        f"심도 레이어 {len(poor)}개(고도 {min(elevations):.0f}~{max(elevations):.0f}m, 대체로 더 깊은 쪽)는 "
+        "이 측선 배치/고도로는 실제 민감도가 최상층 대비 5% 미만입니다 - 해당 구간의 역산 결과는 "
+        "참고용으로만 보고, 얕은 구간보다 신뢰도를 낮게 두세요."
     )
 
 

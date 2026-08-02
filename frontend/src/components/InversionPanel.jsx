@@ -157,12 +157,30 @@ export default function InversionPanel({
             <NumberField label="깊이 레이어 수" value={params.n_layers} step="1" min="1" max="50" onChange={(v) => setParams((p) => ({ ...p, n_layers: v }))} />
           </>
         )}
-        <NumberField
-          label="정규화 강도 (클수록 완만/작을수록 뾰족)"
-          value={params.regularization_strength}
-          step="0.5"
-          onChange={(v) => setParams((p) => ({ ...p, regularization_strength: v }))}
-        />
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 8 }}>
+          <input
+            type="checkbox"
+            checked={params.assumed_noise_nt != null}
+            onChange={(e) => setParams((p) => ({ ...p, assumed_noise_nt: e.target.checked ? 2.0 : null }))}
+          />
+          정규화 강도 자동 선택 (discrepancy principle - 목표 잔차가 예상 잡음수준에 가깝도록)
+        </label>
+        {params.assumed_noise_nt != null ? (
+          <NumberField
+            label="예상 관측 잡음수준 (nT) - 클수록 더 완만한 결과"
+            value={params.assumed_noise_nt}
+            step="0.5"
+            min="0.01"
+            onChange={(v) => setParams((p) => ({ ...p, assumed_noise_nt: v }))}
+          />
+        ) : (
+          <NumberField
+            label="정규화 강도 (클수록 완만/작을수록 뾰족)"
+            value={params.regularization_strength}
+            step="0.5"
+            onChange={(v) => setParams((p) => ({ ...p, regularization_strength: v }))}
+          />
+        )}
         <NumberField label="IRLS 반복 횟수 (덩어리화)" value={params.n_irls_iterations} step="1" min="1" max="30" onChange={(v) => setParams((p) => ({ ...p, n_irls_iterations: v }))} />
         <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 8 }}>
           격자를 촘촘하게/레이어를 많이 설정할수록 더 상세하지만 실행 시간이 길어집니다(최대 1~2분 정도).
@@ -196,6 +214,29 @@ export default function InversionPanel({
               ⚠ {summary.resolution_warning}
             </div>
           )}
+          {summary.depth_resolution_warning && (
+            <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>
+              ⚠ {summary.depth_resolution_warning}
+            </div>
+          )}
+          {summary.auto_regularization && (
+            <div style={{ marginTop: 4 }}>
+              자동 선택된 정규화 강도: {summary.regularization_strength_used?.toFixed(3)} (목표 잡음수준 {summary.assumed_noise_nt} nT 기준)
+            </div>
+          )}
+          {summary.depth_resolution?.per_layer_relative_sensitivity && (
+            <div style={{ marginTop: 6, paddingTop: 4, borderTop: "1px dashed #d1d5db" }}>
+              <div style={{ marginBottom: 3 }}>레이어별 해상도(민감도) - 낮을수록 신뢰도 낮음</div>
+              {summary.depth_resolution.per_layer_relative_sensitivity.map((rel, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 1 }}>
+                  <span style={{ width: 46, color: "#6b7280" }}>{summary.layer_elevations_m?.[i]?.toFixed(0)}m</span>
+                  <div style={{ flex: 1, height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ width: `${Math.max(2, rel * 100)}%`, height: "100%", background: rel < 0.05 ? "#f59e0b" : "#2563eb" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {summary.imported && <div style={{ marginTop: 4, color: "#059669" }}>불러온 결과입니다 (역산을 다시 돌리지 않았습니다).</div>}
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             <button style={{ ...btnStyleAlt, flex: 1 }} onClick={onExportInversion}>
@@ -214,6 +255,9 @@ export default function InversionPanel({
           <div style={rowStyle}>
             <label style={labelStyle}>
               깊이 레이어: {sliceLayerIndex} / {nLayers - 1}
+              {summary.layer_elevations_m?.[sliceLayerIndex] != null && (
+                <> — 고도 약 {summary.layer_elevations_m[sliceLayerIndex].toFixed(0)} m</>
+              )}
             </label>
             <input
               type="range"
@@ -223,6 +267,17 @@ export default function InversionPanel({
               value={sliceLayerIndex}
               onChange={(e) => setSliceLayerIndex(parseInt(e.target.value, 10))}
             />
+            {summary.layer_elevations_m?.length > 1 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#9ca3af" }}>
+                <span>{summary.layer_elevations_m[0].toFixed(0)} m (얕음)</span>
+                <span>{summary.layer_elevations_m.at(-1).toFixed(0)} m (깊음)</span>
+              </div>
+            )}
+            {summary.depth_resolution?.poorly_resolved_layers?.includes(sliceLayerIndex) && (
+              <div style={{ fontSize: 10, color: "#92400e", background: "#fffbeb", padding: 4, borderRadius: 4, marginTop: 2 }}>
+                ⚠ 이 레이어는 측선 배치상 민감도가 낮아(최상층 대비 5% 미만) 결과 신뢰도가 낮습니다.
+              </div>
+            )}
           </div>
           <RangeThresholdFields min={sliceThreshold} setMin={setSliceThreshold} max={sliceThresholdMax} setMax={setSliceThresholdMax} />
           <button style={{ ...btnStyleAlt, width: "100%" }} onClick={onShowSlice}>

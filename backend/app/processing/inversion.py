@@ -31,10 +31,10 @@ from dataclasses import dataclass
 from io import BytesIO
 
 import matplotlib
+import matplotlib.patches
 import numpy as np
 from choclo.prism import magnetic_field
 from numba import njit, prange
-from PIL import Image
 from scipy.ndimage import zoom as ndi_zoom
 
 MU0 = 4.0 * np.pi * 1e-7
@@ -65,6 +65,8 @@ class InversionResult:
     n_active_cells: int
     n_obs: int
     iterations: int
+    regularization_strength_used: float = 1.0
+    depth_resolution: dict | None = None  # see resolution_diagnostics()
 
 
 def build_mesh(
@@ -168,6 +170,128 @@ def build_sensitivity_matrix(
     return G, rows, cols, layers
 
 
+def resolution_diagnostics(G: np.ndarray, layers: np.ndarray, n_layers: int) -> dict:
+    """Cheap per-depth-layer sensitivity summary (mean column L2 norm of
+    the already-built, unweighted sensitivity matrix, grouped by layer) -
+    not a full model resolution matrix (that would cost an n_active x
+    n_active computation this mesh scale can't afford), but a real,
+    physically meaningful signal computed from the same G already built
+    for the solve: since the raw magnetic response of a unit-susceptibility
+    cell genuinely falls off with distance from the sensors, a layer's
+    mean sensitivity here is a direct, honest measure of how much the
+    survey's own geometry actually constrains that depth - not an
+    artifact of the depth-weighting/regularization choices used to
+    compensate for it in the solve itself. Surfaced to the user as a
+    reliability caveat: depths where this has dropped to a small fraction
+    of the shallowest layer's value should be trusted much less than the
+    shallow, well-constrained part of the model."""
+    col_norm = np.sqrt(np.sum(G**2, axis=0))
+    per_layer = np.zeros(n_layers)
+    n_cells = np.zeros(n_layers, dtype=int)
+    for layer_idx in range(n_layers):
+        mask = layers == layer_idx
+        if mask.any():
+            per_layer[layer_idx] = float(np.mean(col_norm[mask]))
+            n_cells[layer_idx] = int(mask.sum())
+    peak = float(per_layer.max()) if per_layer.max() > 0 else 1.0
+    relative = per_layer / peak
+    return {
+        "per_layer_mean_sensitivity": per_layer.tolist(),
+        "per_layer_relative_sensitivity": relative.tolist(),
+        "n_cells_per_layer": n_cells.tolist(),
+        # layers whose relative sensitivity has fallen under 5% of the
+        # best-resolved layer - a common rule-of-thumb cutoff for "this
+        # part of the model is barely constrained by the data at all".
+        "poorly_resolved_layers": [i for i, r in enumerate(relative) if r < 0.05 and n_cells[i] > 0],
+    }
+
+
+def _ridge_solve(Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, identity_obs: np.ndarray, chi_max: float) -> np.ndarray:
+    """One regularized normal-equations solve in data space (see invert's
+    docstring for the Woodbury/dual reformulation this implements),
+    non-negativity clipped. p = 1/(depth_weight^2 * compact_weight)."""
+    GP = Gw * p[np.newaxis, :]
+    A_reduced = GP @ Gw.T + alpha0 * identity_obs
+    lam = np.linalg.solve(A_reduced, dw)
+    m = p * (Gw.T @ lam)
+    return np.clip(m, 0.0, chi_max)
+
+
+def _select_regularization_strength(
+    Gw: np.ndarray, dw: np.ndarray, p0: np.ndarray, alpha_scale: float, chi_max: float, target_rms_nt: float
+) -> float:
+    """Discrepancy-principle style search for the regularization_strength
+    multiplier that brings the misfit under weighting p0 close to a
+    target RMS level derived from the survey's own assumed noise floor -
+    the standard, principled way to pick "how much" Tikhonov
+    regularization to apply (UBC-GIF/SimPEG "beta search"), instead of
+    leaving it purely to the user's own trial-and-error multiplier. p0
+    should already fold in a representative compact-weight snapshot (see
+    invert(), which builds one before calling this) - searching only
+    against the plain depth-weighted (compact_weight=1) misfit
+    systematically undershoots because the IRLS focusing that follows
+    concentrates the model further and increases the final misfit several-
+    fold past what the flat first pass alone predicts (confirmed
+    empirically). Only cheap n_obs x n_obs solves are used for the search
+    itself - misfit increases monotonically with regularization strength,
+    so log-space bisection converges in a fixed, small number of solves
+    regardless of mesh size (the expensive part, building G, already
+    happened once before this is called)."""
+    n_obs = Gw.shape[0]
+    identity_obs = np.eye(n_obs)
+
+    def misfit_at(reg_strength: float) -> float:
+        alpha0 = alpha_scale * reg_strength
+        m = _ridge_solve(Gw, dw, p0, alpha0, identity_obs, chi_max)
+        predicted = Gw @ m
+        return float(np.sqrt(np.mean((predicted - dw) ** 2)))
+
+    # Misfit-vs-regularization is *not* globally monotonic here, unlike
+    # plain (unclipped) Tikhonov: at very low regularization the
+    # non-negativity clip on m starts binding hard (the near-unregularized
+    # solve wants large positive/negative oscillations to chase noise,
+    # which get clipped to 0), which makes the *clipped* misfit rise again
+    # instead of continuing to fall toward an unregularized fit - verified
+    # empirically (misfit can be several times *worse* at reg_strength
+    # 1e-4 than at a moderate 0.3-1). The curve is instead roughly
+    # U-shaped: misfit falls from a very regularized/oversmoothed high,
+    # bottoms out at some "natural" regularization level, then rises
+    # again toward the clipped-noise regime at very low regularization.
+    # So a plain bisection (which assumes one monotonic crossing) isn't
+    # safe over the whole range - first locate the minimum with a coarse
+    # log-spaced scan, then bisect only within the reliably-monotonic
+    # increasing branch from there upward.
+    grid = np.geomspace(1e-3, 1e3, num=13)
+    misfits = np.array([misfit_at(float(g)) for g in grid])
+    i_min = int(np.argmin(misfits))
+
+    if misfits[i_min] > target_rms_nt:
+        # Even the best achievable point on this grid can't reach the
+        # target (noise floor set unrealistically tight, or the survey
+        # geometry just can't fit the data that closely) - this is the
+        # closest achievable regularization strength.
+        return float(grid[i_min])
+
+    if i_min == len(grid) - 1 or misfits[i_min] >= target_rms_nt:
+        # Minimum sits at (or past) the top of the grid, or already meets
+        # the target - nothing to bisect, just use it.
+        return float(grid[i_min])
+
+    lo, hi = float(grid[i_min]), float(grid[-1])
+    for _ in range(8):
+        if misfit_at(hi) >= target_rms_nt:
+            break
+        hi *= 10.0
+
+    for _ in range(20):
+        mid = float(np.sqrt(lo * hi))
+        if misfit_at(mid) > target_rms_nt:
+            hi = mid
+        else:
+            lo = mid
+    return float(np.sqrt(lo * hi))
+
+
 def invert(
     G: np.ndarray,
     data_nt: np.ndarray,
@@ -177,6 +301,7 @@ def invert(
     layers: np.ndarray,
     regularization_strength: float = 1.0,
     n_irls_iterations: int = 5,
+    assumed_noise_nt: float | None = None,
 ) -> InversionResult:
     """Depth-weighted Tikhonov inversion with IRLS compact/focusing
     reweighting (Li & Oldenburg 1996 + Portniaguine & Zhdanov 2002).
@@ -184,10 +309,13 @@ def invert(
     Each iteration solves the regularized normal equations
         (GtG + alpha * diag(depth_weight^2 * compact_weight)) m = Gt d
     with a non-negativity clip, then recomputes the compact ("minimum
-    support") weight from the new model before the next pass. No
-    discrepancy-principle beta cooling - a fixed iteration count and a
-    user-adjustable regularization multiplier are used instead, which
-    keeps run time predictable at this mesh scale.
+    support") weight from the new model before the next pass. A fixed
+    IRLS iteration count is used (keeps run time predictable at this mesh
+    scale) - but the regularization strength itself can now be chosen
+    automatically: if assumed_noise_nt is given, regularization_strength
+    is *overridden* by a discrepancy-principle search (see
+    _select_regularization_strength) targeting that noise level instead
+    of using the passed-in value directly.
 
     The mesh routinely has far more voxels than there are observations
     (n_active >> n_obs), so the normal equations are solved in "data
@@ -218,12 +346,38 @@ def invert(
     # forming either dense n_active x n_active or n_obs x n_obs product
     # just for this scalar. alpha scales with the data's own units (via
     # sum(G^2)) so regularization_strength alone is a unit-free knob.
-    alpha0 = float(np.sum(Gw ** 2)) / n_active * float(regularization_strength)
+    alpha_scale = float(np.sum(Gw ** 2)) / n_active
 
     # Physically-plausible soft ceiling: even iron-rich rocks rarely exceed
     # a few SI units of susceptibility; this only guards against numerical
     # runaway, it does not otherwise constrain the solution.
     chi_max = 1.0
+
+    if assumed_noise_nt is not None and assumed_noise_nt > 0:
+        # A plain depth-weighted-only search systematically undershoots
+        # the target (see _select_regularization_strength) because the
+        # IRLS compact/focusing passes that follow concentrate the model
+        # further and raise the final misfit well past what that flat
+        # first pass alone predicts. One quick snapshot solve at a
+        # neutral (reg_strength=1) alpha stands in for "what will the
+        # compact weighting roughly look like", so the search targets a
+        # weighting shaped like what the full IRLS run will actually use.
+        identity_obs_snapshot = np.eye(n_obs)
+        p_flat = 1.0 / (depth_weight**2)
+        m_snapshot = _ridge_solve(Gw, dw, p_flat, alpha_scale, identity_obs_snapshot, chi_max)
+        positive_snapshot = m_snapshot[m_snapshot > 0]
+        rms_m_snapshot = float(np.sqrt(np.mean(positive_snapshot**2))) if positive_snapshot.size else 1e-6
+        eps_snapshot = max(1e-6, 0.05 * rms_m_snapshot)
+        compact_weight_snapshot = 1.0 / (m_snapshot**2 + eps_snapshot**2)
+        compact_weight_snapshot = compact_weight_snapshot / np.max(compact_weight_snapshot)
+        compact_weight_snapshot = np.clip(compact_weight_snapshot, 0.02, 1.0)
+        p_snapshot = 1.0 / (depth_weight**2 * compact_weight_snapshot)
+
+        regularization_strength = _select_regularization_strength(
+            Gw, dw, p_snapshot, alpha_scale, chi_max, float(assumed_noise_nt)
+        )
+
+    alpha0 = alpha_scale * float(regularization_strength)
 
     m = np.zeros(n_active, dtype=float)
     compact_weight = np.ones(n_active, dtype=float)
@@ -262,6 +416,9 @@ def invert(
     susceptibility = np.zeros(mesh.active.shape, dtype=float)
     susceptibility[rows, cols, layers] = m
 
+    n_layers = mesh.active.shape[2]
+    depth_resolution = resolution_diagnostics(Gw, layers, n_layers)
+
     return InversionResult(
         mesh=mesh,
         susceptibility=susceptibility,
@@ -271,6 +428,8 @@ def invert(
         n_active_cells=n_active,
         n_obs=n_obs,
         iterations=n_iter,
+        regularization_strength_used=float(regularization_strength),
+        depth_resolution=depth_resolution,
     )
 
 
@@ -345,8 +504,11 @@ def vertical_section(
 ):
     """Sample the susceptibility model at every depth layer along an
     arbitrary path (already densified to the desired along-path
-    resolution, in local UTM meters). Returns (section, distance_m)
-    where section has shape (n_layers, n_samples), row 0 = shallowest."""
+    resolution, in local UTM meters). Returns (section, distance_m,
+    ground_elevation_m) where section has shape (n_layers, n_samples),
+    row 0 = shallowest, and ground_elevation_m is the terrain elevation
+    sampled along the same path (for drawing a ground-surface line on
+    the rendered section)."""
     mesh = result.mesh
     path_x = np.asarray(path_x, dtype=float)
     path_y = np.asarray(path_y, dtype=float)
@@ -363,20 +525,101 @@ def vertical_section(
     active = mesh.active[row_idx, col_idx, :].T
     section = np.where(active, section, np.nan)
     section = _apply_range(section, threshold, threshold_max)
+    ground_elevation = mesh.ground_elevation[row_idx, col_idx]
 
-    return section, distance
+    return section, distance, ground_elevation
+
+
+def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
+    """Assemble a "fence diagram" style box for 3D display: the top
+    horizontal slice plus susceptibility on the 4 vertical boundary
+    walls of the inversion mesh (south/north/west/east), all continuous
+    (no threshold gating) and sharing one SI colorscale - mirrors the
+    standard published-figure style of a colored box with a distinct
+    top surface and 4 colored side faces, as an alternative to the
+    single-threshold isosurface "blob" view."""
+    mesh = result.mesh
+    chi = result.susceptibility
+    active = mesh.active
+    x, y, z = mesh.x_centers, mesh.y_centers, mesh.z_centers
+    ny, nx, nz = chi.shape
+    top_layer_index = int(np.clip(top_layer_index, 0, nz - 1))
+
+    def masked(values, mask):
+        out = values.astype(float).copy()
+        out[~mask] = np.nan
+        return out
+
+    x_grid, y_grid = np.meshgrid(x, y)  # (ny, nx)
+    top = {
+        "x": x_grid.tolist(),
+        "y": y_grid.tolist(),
+        "z": np.full_like(x_grid, float(z[top_layer_index])).tolist(),
+        "value": masked(chi[:, :, top_layer_index], active[:, :, top_layer_index]).tolist(),
+    }
+
+    def wall_along_x(row_idx: int) -> dict:
+        # a vertical wall at fixed y (south/north boundary): distance runs
+        # east-west, so the coordinate grid is (x, z).
+        x_grid_w, z_grid_w = np.meshgrid(x, z)  # (nz, nx)
+        val = masked(chi[row_idx, :, :].T, active[row_idx, :, :].T)  # (nz, nx)
+        return {
+            "x": x_grid_w.tolist(),
+            "y": np.full_like(x_grid_w, float(y[row_idx])).tolist(),
+            "z": z_grid_w.tolist(),
+            "value": val.tolist(),
+        }
+
+    def wall_along_y(col_idx: int) -> dict:
+        # a vertical wall at fixed x (west/east boundary): distance runs
+        # north-south, so the coordinate grid is (y, z).
+        y_grid_w, z_grid_w = np.meshgrid(y, z)  # (nz, ny)
+        val = masked(chi[:, col_idx, :].T, active[:, col_idx, :].T)  # (nz, ny)
+        return {
+            "x": np.full_like(y_grid_w, float(x[col_idx])).tolist(),
+            "y": y_grid_w.tolist(),
+            "z": z_grid_w.tolist(),
+            "value": val.tolist(),
+        }
+
+    active_chi = chi[chi > 0]
+    return {
+        "top": top,
+        "south": wall_along_x(0),
+        "north": wall_along_x(ny - 1),
+        "west": wall_along_y(0),
+        "east": wall_along_y(nx - 1),
+        "vmin": 0.0,
+        "vmax": float(active_chi.max()) if active_chi.size else 1.0,
+        "top_layer_index": top_layer_index,
+        "top_elevation_m": float(z[top_layer_index]),
+        "n_layers": int(nz),
+    }
+
+
+_PROFILE_LABELS = {"custom": "자유선", "ew": "동서", "ns": "남북"}
 
 
 def render_section_png(
     section: np.ndarray,
     distance_m: np.ndarray,
     z_centers: np.ndarray,
+    ground_elevation_m: np.ndarray,
+    path_x: np.ndarray,
+    path_y: np.ndarray,
+    mesh_x_centers: np.ndarray,
+    mesh_y_centers: np.ndarray,
+    profile: str = "custom",
     cmap_name: str = "geosoft_rainbow",
     vmin: float | None = None,
     vmax: float | None = None,
 ) -> dict:
-    """Render a (n_layers, n_samples) vertical-section array (distance vs.
-    elevation, not geo-referenced) as a plain PNG data URL."""
+    """Render a (n_layers, n_samples) vertical-section array as a proper
+    labeled figure: real distance (m) / elevation (m) axes, a terrain
+    line marking the ground surface, a colorbar, and a small locator
+    inset showing where this profile sits within the full inversion
+    mesh extent (project area context) - addresses the request to show
+    depth/x/y coordinates and the section's location on the map."""
     finite = section[np.isfinite(section)]
     if finite.size == 0:
         raise InversionError("표시할 유효한 역산 값이 없는 단면입니다 (임계값을 낮춰보세요).")
@@ -387,14 +630,62 @@ def render_section_png(
     if vmin == vmax:
         vmin, vmax = vmin - 1e-6, vmax + 1e-6
 
-    norm = matplotlib.colors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = matplotlib.colormaps[cmap_name]
-    rgba = (cmap(norm(section)) * 255).astype(np.uint8)
-    rgba[..., 3] = np.where(np.isfinite(section), 255, 0).astype(np.uint8)
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
-    image = Image.fromarray(rgba, mode="RGBA")
+    dist_max = float(distance_m[-1]) if len(distance_m) else 1.0
+    z_lo, z_hi = float(z_centers[-1]), float(z_centers[0])  # ascending: deepest -> shallowest
+
+    fig = Figure(figsize=(11.0, 6.5), dpi=110)
+    FigureCanvasAgg(fig)
+    fig.set_facecolor("white")
+    matplotlib.rcParams["font.family"] = "NanumGothic"  # Hangul labels need a CJK-capable font
+    matplotlib.rcParams["axes.unicode_minus"] = False  # NanumGothic lacks the U+2212 minus glyph
+    ax = fig.add_axes([0.09, 0.13, 0.78, 0.75])
+
+    cmap = matplotlib.colormaps[cmap_name]
+    im = ax.imshow(
+        section, extent=[0.0, dist_max, z_lo, z_hi], origin="upper", aspect="auto",
+        cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest",
+    )
+    ax.plot(distance_m, ground_elevation_m, color="black", linewidth=1.2, label="지표면")
+    ax.set_xlabel("측선을 따른 거리 (m)")
+    ax.set_ylabel("고도 (m)")
+    profile_label = _PROFILE_LABELS.get(profile, profile)
+    ax.set_title(f"수직 단면 - {profile_label} (자화율, SI)")
+    ax.set_xlim(0.0, dist_max)
+    ax.set_ylim(z_lo, z_hi)
+    ax.text(0.01, 1.02, "A", transform=ax.transAxes, fontsize=12, fontweight="bold")
+    ax.text(0.99, 1.02, "A'", transform=ax.transAxes, fontsize=12, fontweight="bold", ha="right")
+
+    cbar_ax = fig.add_axes([0.885, 0.13, 0.02, 0.75])
+    fig.colorbar(im, cax=cbar_ax, label="자화율 (SI)")
+
+    # Locator inset: full mesh (project inversion) extent as a light-gray
+    # box, this profile's path drawn on top, so the user can see where
+    # the cross-section sits within the overall surveyed area.
+    loc_ax = ax.inset_axes([0.01, 0.62, 0.32, 0.36])
+    x_lo, x_hi = float(np.min(mesh_x_centers)), float(np.max(mesh_x_centers))
+    y_lo, y_hi = float(np.min(mesh_y_centers)), float(np.max(mesh_y_centers))
+    pad_x = 0.05 * max(x_hi - x_lo, 1.0)
+    pad_y = 0.05 * max(y_hi - y_lo, 1.0)
+    loc_ax.add_patch(
+        matplotlib.patches.Rectangle((x_lo, y_lo), x_hi - x_lo, y_hi - y_lo, facecolor="#e5e7eb", edgecolor="#9ca3af", linewidth=0.8)
+    )
+    loc_ax.plot(path_x, path_y, color="#dc2626", linewidth=1.8)
+    loc_ax.text(path_x[0], path_y[0], "A", fontsize=8, fontweight="bold", color="#dc2626")
+    loc_ax.text(path_x[-1], path_y[-1], "A'", fontsize=8, fontweight="bold", color="#dc2626", ha="right")
+    loc_ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
+    loc_ax.set_ylim(y_lo - pad_y, y_hi + pad_y)
+    loc_ax.set_aspect("equal")
+    loc_ax.set_title("위치 (전체 조사구역 내)", fontsize=7.5)
+    loc_ax.tick_params(labelsize=6)
+    loc_ax.set_facecolor("white")
+    for spine in loc_ax.spines.values():
+        spine.set_linewidth(0.6)
+
     buf = BytesIO()
-    image.save(buf, format="PNG")
+    fig.savefig(buf, format="png")
     png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     return {

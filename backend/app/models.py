@@ -98,6 +98,15 @@ class CrossoverLevelingParams(BaseModel):
     # instead of treating the tie-line network as a perfect fixed
     # reference - see processing/crossover_leveling.py.
     iterative: bool = True
+    # 0 (default) = constant DC shift per line ("zero order" levelling).
+    # 1 = polynomial/linear levelling - shift varies along each line
+    # instead of being one constant, per the UAV magnetics guidelines'
+    # "Polynomial Levelling" method. Needs at least 2 tie-line crossings
+    # per survey line to fit a slope; falls back to a constant for lines
+    # with fewer. Always uses the single-pass (non-iterative) fit
+    # regardless of the `iterative` setting above - see
+    # processing/crossover_leveling.py:compute_crossover_leveling.
+    leveling_order: int = Field(0, ge=0, le=1)
 
 
 class NotchFilterParams(BaseModel):
@@ -153,7 +162,7 @@ TransformName = Literal[
     "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
     "upward_continuation", "detrend", "microlevel",
 ]
-GridMethod = Literal["nearest", "linear", "cubic", "spline", "minimum_curvature"]
+GridMethod = Literal["nearest", "linear", "cubic", "spline", "minimum_curvature", "boxing"]
 
 
 class HillshadeParams(BaseModel):
@@ -168,7 +177,7 @@ class HillshadeParams(BaseModel):
     hillshade_exaggeration: float = Field(3.0, gt=0, le=20)
 
 
-StretchName = Literal["linear", "equalize"]
+StretchName = Literal["linear", "equalize", "normal"]
 
 
 class ContourParams(BaseModel):
@@ -262,6 +271,12 @@ class InversionParams(BaseModel):
     assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
     regularization_strength: float = Field(1.0, gt=0)
     n_irls_iterations: int = Field(6, ge=1, le=30)
+    # When set, overrides regularization_strength via a discrepancy-
+    # principle search that targets this RMS misfit level (nT) instead of
+    # using regularization_strength directly - see
+    # processing/inversion.py:_select_regularization_strength. Leave None
+    # (default) to keep manually setting regularization_strength.
+    assumed_noise_nt: Optional[float] = Field(None, gt=0)
 
 
 class InversionSliceRequest(HillshadeParams):

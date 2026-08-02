@@ -105,6 +105,98 @@ def test_crossover_leveling_recovers_injected_shifts():
     print("recovered shifts:", result.line_shifts, "rms before/after:", result.rms_before_nt, result.rms_after_nt)
 
 
+def _make_synthetic_survey_with_linear_error():
+    """Same 5 N-S survey lines as above, but with 2 E-W tie lines (y=100,
+    y=300, both fixed/unshifted references) and a per-line error that
+    varies *linearly* with y (centered on the survey's own y-midpoint, so
+    the true intercept at each line's own centroid is ~0) instead of a
+    flat per-line constant - the case leveling_order=1 exists for."""
+    slope_per_line = {0: 0.05, 1: -0.03, 2: 0.08, 3: 0.0, 4: -0.06}  # nT/m
+
+    def geology(x, y):
+        return 50.0 + 0.02 * x + 0.01 * y
+
+    rows = []
+    t = pd.Timestamp("2026-01-01T00:00:00")
+    line_id_counter = 0
+    turn_gap = pd.Timedelta(seconds=60)
+    for i, x0 in enumerate([0.0, 50.0, 100.0, 150.0, 200.0]):
+        t += turn_gap
+        for y in np.arange(0.0, 400.0, 2.0):
+            val = geology(x0, y) + slope_per_line[i] * (y - 200.0)
+            rows.append({"x": x0, "y": y, "value": val, "line_id": line_id_counter, "t": t})
+            t += pd.Timedelta(seconds=1)
+        line_id_counter += 1
+
+    tie_rows = []
+    for y_tie in (100.0, 300.0):
+        t += turn_gap
+        for x in np.arange(-20.0, 220.0, 2.0):
+            val = geology(x, y_tie)  # tie lines NOT shifted - fixed reference
+            tie_rows.append({"x": x, "y": y_tie, "value": val, "t": t})
+            t += pd.Timedelta(seconds=1)
+
+    survey_df = pd.DataFrame(rows)
+    tie_df = pd.DataFrame(tie_rows)
+    return survey_df, tie_df, slope_per_line
+
+
+def test_polynomial_leveling_recovers_linear_error():
+    survey_df, tie_df, slope_per_line = _make_synthetic_survey_with_linear_error()
+
+    df = pd.concat([survey_df[["x", "y", "value", "t"]], tie_df[["x", "y", "value", "t"]]], ignore_index=True)
+    df = df.sort_values("t").reset_index(drop=True)
+    df["timestamp"] = df["t"]
+    lat0, lon0 = 37.5, 127.0
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * np.cos(np.radians(lat0))
+    df["lat"] = lat0 + df["y"] / m_per_deg_lat
+    df["lon"] = lon0 + df["x"] / m_per_deg_lon
+
+    params = LineDetectionParams(
+        heading_lag_seconds=1.0, heading_tolerance_deg=20.0, min_speed_mps=0.1, min_line_length_m=50.0, turn_buffer_m=2.0, max_gap_seconds=5.0
+    )
+    detected = detect_lines(df, params)
+    dominant_azimuth = detected.attrs["dominant_azimuth_deg"]
+    assert detected.loc[detected["line_id"] >= 0, "line_id"].nunique() == 5
+
+    tie_line_id = detect_tie_lines(detected, dominant_azimuth, params, tie_tolerance_deg=20.0)
+    assert tie_line_id[tie_line_id >= 0].nunique() == 2, "expected both tie lines to be detected"
+
+    result = compute_crossover_leveling(
+        detected, tie_line_id, "value", max_crossover_distance_m=5.0, leveling_order=1
+    )
+    assert result.applied, result.reason
+    assert result.line_shifts_linear is not None
+
+    centroid_x = detected[detected["line_id"] >= 0].groupby("line_id")["x"].mean().sort_values()
+    ordered_detected_ids = centroid_x.index.tolist()
+
+    before_values = detected["value"].to_numpy(copy=True)
+    from app.processing.crossover_leveling import apply_crossover_leveling
+
+    leveled_values = apply_crossover_leveling(detected, "value", result)
+
+    for injected_idx, detected_lid in enumerate(ordered_detected_ids):
+        true_slope = slope_per_line[injected_idx]
+        _intercept, recovered_slope, *_rest = result.line_shifts_linear[detected_lid]
+        # recovered slope has opposite sign of the injected one (levelling
+        # subtracts the error back out)
+        assert abs(-recovered_slope - true_slope) < 0.02, (
+            f"line {detected_lid}: expected recovered slope ~{-true_slope}, got {recovered_slope}"
+        )
+
+    # the levelled data should be much flatter (less y-dependent residual
+    # per line) than before - check overall variance reduction as a coarse
+    # end-to-end sanity check that apply_crossover_leveling's per-point
+    # linear correction actually matches what was fit.
+    line0_mask = (detected["line_id"] == ordered_detected_ids[2]).to_numpy()  # slope 0.08, largest
+    resid_before = before_values[line0_mask] - float(np.mean(before_values[line0_mask]))
+    resid_after = leveled_values[line0_mask] - float(np.mean(leveled_values[line0_mask]))
+    assert np.std(resid_after) < np.std(resid_before) * 0.3
+
+
 if __name__ == "__main__":
     test_crossover_leveling_recovers_injected_shifts()
+    test_polynomial_leveling_recovers_linear_error()
     print("ALL CHECKS PASSED")

@@ -193,6 +193,13 @@ export function getInversionVolume(projectId, threshold, thresholdMax) {
   return request(`/projects/${projectId}/inversion/volume${q}`);
 }
 
+export function getInversionBoxFaces(projectId, topLayerIndex) {
+  const params = new URLSearchParams();
+  if (topLayerIndex != null) params.set("top_layer_index", topLayerIndex);
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return request(`/projects/${projectId}/inversion/box_faces${q}`);
+}
+
 async function requestBlob(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },

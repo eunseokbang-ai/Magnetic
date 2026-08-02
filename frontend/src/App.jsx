@@ -43,6 +43,7 @@ const DEFAULT_INVERSION_PARAMS = {
   assumed_agl_m: 50.0,
   regularization_strength: 1.0,
   n_irls_iterations: 6,
+  assumed_noise_nt: null,
 };
 
 const DEFAULT_TARGET_DETECTION_PARAMS = {
@@ -198,6 +199,9 @@ export default function App() {
   const [volumeThreshold, setVolumeThreshold] = useState("");
   const [volumeThresholdMax, setVolumeThresholdMax] = useState("");
   const [volumeData, setVolumeData] = useState(null);
+  const [boxFacesData, setBoxFacesData] = useState(null);
+  const [boxTopLayerIndex, setBoxTopLayerIndex] = useState(0);
+  const [boxFacesLoading, setBoxFacesLoading] = useState(false);
 
   const [eulerStructuralIndex, setEulerStructuralIndex] = useState(1.0);
   const [eulerWindowSize, setEulerWindowSize] = useState(100.0);
@@ -964,8 +968,22 @@ export default function App() {
       const thresholdMax = volumeThresholdMax === "" ? null : volumeThresholdMax;
       const resp = await api.getInversionVolume(projectId, threshold, thresholdMax);
       setVolumeData({ ...resp, threshold, thresholdMax });
+      setBoxFacesData(null);
     } catch (e) {
       setInversionError(e.message || String(e));
+    }
+  };
+
+  const handleLoadBoxFaces = async (topLayerIndex) => {
+    try {
+      setBoxTopLayerIndex(topLayerIndex);
+      setBoxFacesLoading(true);
+      const resp = await api.getInversionBoxFaces(projectId, topLayerIndex);
+      setBoxFacesData(resp);
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setBoxFacesLoading(false);
     }
   };
 
@@ -1025,7 +1043,7 @@ export default function App() {
   const legendStats = overlay?.stats || (valueField === "anomaly" ? processSummary?.anomaly_stats : processSummary?.tmi_stats);
   const legendLabel =
     activeTransform === "inversion_slice"
-      ? "역산 자화율 (SI)"
+      ? `역산 자화율 (SI) - 고도 약 ${overlay?.elevation_m?.toFixed(0) ?? "?"} m (레이어 ${overlay?.layer_index ?? "?"}/${(overlay?.n_layers ?? 1) - 1})`
       : activeTransform !== "none"
         ? activeTransform.toUpperCase()
         : valueField === "anomaly"
@@ -1272,7 +1290,15 @@ export default function App() {
               </div>
             }
           >
-            <InversionVolumeView data={volumeData} onClose={() => setVolumeData(null)} />
+            <InversionVolumeView
+              data={volumeData}
+              onClose={() => setVolumeData(null)}
+              boxData={boxFacesData}
+              boxTopLayerIndex={boxTopLayerIndex}
+              onBoxTopLayerIndexChange={handleLoadBoxFaces}
+              boxLoading={boxFacesLoading}
+              nLayers={inversionSummary?.n_layers}
+            />
           </Suspense>
         )}
         {!volumeData && sectionResult && <InversionSectionView data={sectionResult} onClose={() => setSectionResult(null)} />}

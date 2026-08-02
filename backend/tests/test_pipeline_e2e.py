@@ -450,6 +450,17 @@ def _check_inversion(client, project_id, pts):
     r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "custom"})
     assert r.status_code == 400, r.text
 
+    # box-face "fence diagram" view: top slice + 4 continuous-SI side walls
+    r = client.get(f"/api/projects/{project_id}/inversion/box_faces", params={"top_layer_index": 1})
+    assert r.status_code == 200, r.text
+    faces = r.json()
+    assert faces["top_layer_index"] == 1
+    assert faces["vmax"] > 0
+    for key in ("top", "south", "north", "west", "east"):
+        face = faces[key]
+        assert len(face["x"]) == len(face["y"]) == len(face["z"]) == len(face["value"])
+    print("box_faces top_elevation_m:", faces["top_elevation_m"], "vmax:", faces["vmax"])
+
     # auto-parameter mode: omitting the mesh params should pick sensible
     # values from line spacing / spectral depth and run successfully.
     r = client.post(f"/api/projects/{project_id}/inversion", json={})

@@ -147,6 +147,14 @@ def generate_report_markdown(
     else:
         lines.append("- 노이즈 QC (4th/8th difference): 미적용")
 
+    sq = process_summary.get("sampling_qc")
+    if sq and sq.get("available"):
+        lines.append(
+            f"- **샘플링 거리 QC**: 중앙값 {_fmt(sq.get('median_distance_m'))} m, 최대 {_fmt(sq.get('max_distance_m'))} m "
+            f"(허용기준 {_fmt(sq.get('gap_tolerance_m'), 0)} m 초과 구간 {sq.get('n_gaps_exceeding_tolerance')}개, "
+            f"{_fmt(sq.get('pct_gaps_exceeding_tolerance'))}%)"
+        )
+
     flc = process_summary.get("file_level_check")
     if flc and flc.get("available"):
         if flc.get("flagged_any"):

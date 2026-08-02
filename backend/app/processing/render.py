@@ -10,6 +10,7 @@ import matplotlib
 import numpy as np
 import rasterio
 from matplotlib.colors import LightSource, Normalize
+from scipy.stats import norm as _scipy_norm
 from PIL import Image
 from pyproj import Transformer
 from rasterio.crs import CRS
@@ -44,6 +45,34 @@ class _EqualizeNorm(Normalize):
         return np.ma.array(result, mask=mask)
 
 
+class _NormalNorm(Normalize):
+    """"Normal distribution" stretch (per the UAV magnetics guidelines'
+    common-stretches list): maps each value through the Gaussian CDF
+    fitted to the grid's own mean/std, rather than either a plain linear
+    fraction of [vmin, vmax] or the empirical-rank _EqualizeNorm above.
+    Unlike equalize (which reproduces whatever the actual distribution
+    shape is, exactly, via ranks), this assumes the data is close to
+    normally distributed and stretches accordingly - most of the color
+    range concentrates within a few standard deviations of the mean,
+    which suits a grid that genuinely is roughly bell-shaped around a
+    background level (typical for anomaly grids dominated by background
+    noise with a few real anomalies), without needing every individual
+    rank to be preserved."""
+
+    def __init__(self, mean: float, std: float):
+        std = std if std > 0 else 1.0
+        super().__init__(vmin=mean - 3.0 * std, vmax=mean + 3.0 * std, clip=False)
+        self._mean = mean
+        self._std = std
+
+    def __call__(self, value, clip=None):
+        arr = np.ma.asarray(value, dtype=float)
+        filled = arr.filled(self._mean) if np.ma.is_masked(arr) else np.asarray(arr)
+        result = _scipy_norm.cdf(filled, loc=self._mean, scale=self._std)
+        mask = np.ma.getmaskarray(arr) if np.ma.is_masked(arr) else False
+        return np.ma.array(result, mask=mask)
+
+
 def _render_rgba(
     grid_values: np.ndarray,
     cmap_name: str,
@@ -70,6 +99,9 @@ def _render_rgba(
         # a linear stretch) doesn't apply - every finite cell contributes.
         norm = _EqualizeNorm(np.sort(finite))
         vmin, vmax = float(finite.min()), float(finite.max())
+    elif stretch == "normal":
+        norm = _NormalNorm(float(np.mean(finite)), float(np.std(finite)))
+        vmin, vmax = norm.vmin, norm.vmax
     else:
         explicit_range = vmin is not None and vmax is not None
         if vmin is None:

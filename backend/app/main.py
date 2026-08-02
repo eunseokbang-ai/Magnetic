@@ -360,6 +360,12 @@ def inversion_volume(project_id: str, threshold: float | None = None, threshold_
     return _fast_json_response(project.get_inversion_volume(threshold, threshold_max))
 
 
+@app.get("/api/projects/{project_id}/inversion/box_faces")
+def inversion_box_faces(project_id: str, top_layer_index: int = 0):
+    project = store.get(project_id)
+    return _fast_json_response(project.get_inversion_box_faces(top_layer_index))
+
+
 @app.get("/api/projects/{project_id}/inversion/export")
 def export_inversion(project_id: str):
     project = store.get(project_id)

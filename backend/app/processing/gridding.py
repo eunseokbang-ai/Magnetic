@@ -106,10 +106,15 @@ def grid_points(
     method: "nearest" (fast KD-tree nearest-value fill, blocky "raw cell"
     look - default), "linear" or "cubic" (scipy.interpolate.griddata,
     smoother but slower), "spline" (verde bi-harmonic spline, smoothest
-    but solves a dense linear system - can be slow with many points), or
+    but solves a dense linear system - can be slow with many points),
     "minimum_curvature" (Briggs 1974 minimum-curvature relaxation, the
     algorithm behind Golden Software Surfer's default gridder - see
-    _grid_minimum_curvature below).
+    _grid_minimum_curvature below), or "boxing" (each cell's value is
+    simply the average of the raw points that fall inside it, per the
+    UAV magnetics guidelines' "Boxing" gridding method - cells with no
+    data stay NaN rather than being filled in from a neighbor, unlike
+    every other method here; the most literal, assumption-free option
+    when you specifically don't want any interpolation to happen).
 
     Cells farther than max_distance_m from any input point are masked to
     NaN so the grid doesn't extrapolate far beyond the flown lines. The
@@ -190,6 +195,8 @@ def grid_points(
             grid_values = np.where(nan_mask, nearest, grid_values)
     elif method == "minimum_curvature":
         grid_values = _grid_minimum_curvature(x_r, y_r, values_r, easting_2d, northing_2d)
+    elif method == "boxing":
+        grid_values = _grid_boxing(x_r, y_r, values_r, easting_2d, northing_2d)
     else:
         raise ValueError(f"알 수 없는 보간 방법입니다: {method}")
 
@@ -221,6 +228,29 @@ def _nearest_axis_index(axis_1d: np.ndarray, values: np.ndarray) -> np.ndarray:
     idx = np.clip(np.searchsorted(axis_1d, values), 1, len(axis_1d) - 1)
     left, right = axis_1d[idx - 1], axis_1d[idx]
     return np.where((values - left) <= (right - values), idx - 1, idx)
+
+
+def _grid_boxing(
+    x_r: np.ndarray, y_r: np.ndarray, values_r: np.ndarray, easting_2d: np.ndarray, northing_2d: np.ndarray
+) -> np.ndarray:
+    """"Boxing" gridding (see grid_points docstring): each cell gets the
+    plain average of whichever already block-reduced points snap to it -
+    no interpolation into empty cells at all, unlike every other method
+    here."""
+    ny, nx = easting_2d.shape
+    easting_1d, northing_1d = easting_2d[0, :], northing_2d[:, 0]
+    col_idx = _nearest_axis_index(easting_1d, x_r)
+    row_idx = _nearest_axis_index(northing_1d, y_r)
+
+    sum_grid = np.zeros((ny, nx))
+    count_grid = np.zeros((ny, nx))
+    np.add.at(sum_grid, (row_idx, col_idx), values_r)
+    np.add.at(count_grid, (row_idx, col_idx), 1)
+
+    out = np.full((ny, nx), np.nan)
+    mask = count_grid > 0
+    out[mask] = sum_grid[mask] / count_grid[mask]
+    return out
 
 
 def _minimum_curvature_relax(
