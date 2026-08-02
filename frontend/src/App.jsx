@@ -428,8 +428,17 @@ export default function App() {
     try {
       setError(null);
       if (name === "none") {
-        setOverlay(null);
-        setActiveTransform("none");
+        // "그리드(원본)" must redisplay the plain gridded raster, not just
+        // clear the overlay - clearing it left nothing but the raw survey
+        // point layer showing through underneath, which looks like the
+        // grid silently reverted to scattered points instead of the
+        // interpolated surface.
+        setTransformLoading(true);
+        try {
+          await handleGrid();
+        } finally {
+          setTransformLoading(false);
+        }
         return;
       }
       setTransformLoading(true);
