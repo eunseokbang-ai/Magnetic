@@ -80,6 +80,8 @@ export default function WorkflowSteps({
   onUploadBase,
   baseSummary,
   baseUploadProgress,
+  onShowBaseTimeseries,
+  baseTimeseriesLoading,
   onUploadHeadingCalibration,
   headingCalibrationSummary,
   headingCalibrationUploadProgress,
@@ -245,6 +247,79 @@ export default function WorkflowSteps({
               )}
             </div>
           )}
+          {onShowBaseTimeseries && (
+            <button
+              type="button"
+              onClick={onShowBaseTimeseries}
+              disabled={!baseSummary || baseTimeseriesLoading}
+              style={{ ...buttonStyle, opacity: baseSummary ? 1 : 0.5 }}
+            >
+              {baseTimeseriesLoading ? "불러오는 중..." : "📈 베이스 원본/보정 자료 그래프 보기"}
+            </button>
+          )}
+          <details style={{ marginTop: 6 }}>
+            <summary style={{ cursor: "pointer", color: "#374151" }}>베이스 자료 QC 옵션 (설치/회수 노이즈 트림 · 스파이크 제거)</summary>
+            <div style={{ ...bodyStyle, paddingTop: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={processParams.base_qc_params.trim_enabled}
+                  onChange={(e) =>
+                    setProcessParams((p) => ({ ...p, base_qc_params: { ...p.base_qc_params, trim_enabled: e.target.checked } }))
+                  }
+                />
+                <span>설치/회수 구간 트림 사용 (베이스 로거를 내려놓거나 집어들 때의 큰 노이즈 제거)</span>
+              </label>
+              {processParams.base_qc_params.trim_enabled && (
+                <Field label="트림 민감도 (임계값 배수 - 낮을수록 더 많이 트림)">
+                  <input
+                    type="number"
+                    step="0.5"
+                    style={inputStyle}
+                    value={processParams.base_qc_params.trim_threshold_k}
+                    onChange={(e) =>
+                      setProcessParams((p) => ({
+                        ...p,
+                        base_qc_params: { ...p.base_qc_params, trim_threshold_k: parseFloat(e.target.value) || 6.0 },
+                      }))
+                    }
+                  />
+                </Field>
+              )}
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={processParams.base_qc_params.despike_enabled}
+                  onChange={(e) =>
+                    setProcessParams((p) => ({ ...p, base_qc_params: { ...p.base_qc_params, despike_enabled: e.target.checked } }))
+                  }
+                />
+                <span>중간 구간 스파이크 제거 사용</span>
+              </label>
+              {processParams.base_qc_params.despike_enabled && (
+                <Field label="스파이크 민감도 (임계값 배수 - 낮을수록 더 많이 제거)">
+                  <input
+                    type="number"
+                    step="0.5"
+                    style={inputStyle}
+                    value={processParams.base_qc_params.despike_threshold_k}
+                    onChange={(e) =>
+                      setProcessParams((p) => ({
+                        ...p,
+                        base_qc_params: { ...p.base_qc_params, despike_threshold_k: parseFloat(e.target.value) || 5.0 },
+                      }))
+                    }
+                  />
+                </Field>
+              )}
+              {processSummary?.base_qc && (
+                <div style={{ color: "#374151" }}>
+                  설치구간 트림: {processSummary.base_qc.n_trimmed_start}건 · 회수구간 트림: {processSummary.base_qc.n_trimmed_end}건 · 스파이크
+                  제거: {processSummary.base_qc.n_spikes_removed}건
+                </div>
+              )}
+            </div>
+          </details>
         </div>
       </details>
 

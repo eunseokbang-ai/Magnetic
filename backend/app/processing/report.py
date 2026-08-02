@@ -117,6 +117,14 @@ def generate_report_markdown(
     else:
         lines.append("- IMU 흔들림(스웨이) 검출: 미적용")
 
+    base_qc = process_summary.get("base_qc")
+    if base_qc:
+        lines.append(
+            f"- **베이스 자료 QC**: 설치구간 {base_qc.get('n_trimmed_start')}건, 회수구간 {base_qc.get('n_trimmed_end')}건 트림, "
+            f"중간 스파이크 {base_qc.get('n_spikes_removed')}건 제거 "
+            f"({base_qc.get('n_points_raw')} → {base_qc.get('n_points_corrected')} 포인트)"
+        )
+
     diurnal = process_summary.get("diurnal")
     if diurnal:
         overlap_note = "정상 (비행-베이스 시간 겹침)" if diurnal.get("has_overlap") else "⚠ 베이스와 비행 시간이 겹치지 않음"

@@ -18,6 +18,7 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     ManualExcludeRequest,
+    ManualSmoothRequest,
     MultiscaleEdgeRequest,
     PolygonExportRequest,
     PowerSpectrumRequest,
@@ -188,6 +189,18 @@ def line_profile(project_id: str, line_id: int, value: str = "anomaly"):
 def manual_exclude(project_id: str, req: ManualExcludeRequest):
     project = store.get(project_id)
     return project.set_manual_exclude(req)
+
+
+@app.get("/api/projects/{project_id}/base/timeseries")
+def base_timeseries(project_id: str):
+    project = store.get(project_id)
+    return project.get_base_timeseries()
+
+
+@app.post("/api/projects/{project_id}/smooth")
+def smooth(project_id: str, req: ManualSmoothRequest):
+    project = store.get(project_id)
+    return project.set_manual_smoothing(req)
 
 
 @app.post("/api/projects/{project_id}/grid")

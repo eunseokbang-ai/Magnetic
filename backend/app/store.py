@@ -23,12 +23,15 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     ManualExcludeRequest,
+    ManualSmoothRequest,
     MultiscaleEdgeRequest,
     PowerSpectrumRequest,
     ProcessParams,
     TargetDetectionRequest,
     TransformRequest,
 )
+from .processing.base_qc import process_base_station
+from .processing.manual_smooth import apply_manual_smoothing
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
@@ -148,7 +151,17 @@ class Project:
     id: str
     drone_raw: pd.DataFrame | None = None
     base_raw: pd.DataFrame | None = None
+    base_processed: pd.DataFrame | None = None  # base_raw after trim+despike QC (base_qc.py) - see run_pipeline
+    base_qc_info: dict | None = None
     processed: pd.DataFrame | None = None
+    # processed, before any manual smoothing (set_manual_smoothing) is
+    # applied - the pristine base that manual smoothing is re-derived from
+    # on every call, so toggling/adding smoothed points never compounds.
+    processed_base: pd.DataFrame | None = None
+    # point_ids flagged as affected by a localized non-geological
+    # disturbance (building, fence, vehicle, ...) and interpolated across
+    # - see _apply_manual_smoothing / set_manual_smoothing.
+    manual_smooth_point_ids: set = field(default_factory=set)
     # point_id -> True (force include, even if auto-excluded) | False (force
     # exclude, even if auto-included). Absent point_ids fall back to the
     # automatic line_id>=0 result.
@@ -275,6 +288,28 @@ class Project:
             "n_duplicate_timestamps_removed": b.attrs.get("n_duplicate_timestamps_removed", 0),
         }
 
+    def get_base_timeseries(self) -> dict:
+        """Raw vs QC-corrected (transient-trimmed + despiked) base-station
+        log, for the user to visually confirm the installation/pickup trim
+        and interior despiking did the right thing (see base_qc.py). Falls
+        back to the raw series alone (base_processed=None) when the pipeline
+        hasn't been run yet, so this is usable right after upload."""
+        if self.base_raw is None:
+            raise ProjectError("베이스(일변화) 자료를 먼저 업로드하세요.")
+        raw = self.base_raw.sort_values("timestamp")
+        out = {
+            "raw_timestamp": raw["timestamp"].astype(str).tolist(),
+            "raw_mag": raw["mag"].tolist(),
+            "corrected_timestamp": None,
+            "corrected_mag": None,
+            "qc_info": self.base_qc_info,
+        }
+        if self.base_processed is not None:
+            corrected = self.base_processed.sort_values("timestamp")
+            out["corrected_timestamp"] = corrected["timestamp"].astype(str).tolist()
+            out["corrected_mag"] = corrected["mag"].tolist()
+        return out
+
     def run_pipeline(self, params: ProcessParams) -> dict:
         if self.drone_raw is None:
             raise ProjectError("드론 자료를 먼저 업로드하세요.")
@@ -290,6 +325,11 @@ class Project:
             "lag_seconds": params.gps_mag_lag_seconds,
             "n_points_dropped": n_before_lag - len(df),
         }
+
+        # Pristine copy of the sensor reading, taken before despike/notch
+        # touch mag_raw in place below - lets get_line_profile show what
+        # the filtering pipeline actually changed (see its docstring).
+        df["mag_original"] = df["mag_raw"].to_numpy(copy=True)
 
         dp = params.despike_params
         if dp.enabled:
@@ -363,10 +403,31 @@ class Project:
 
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
+        bqc = params.base_qc_params
+        base_qc_result = process_base_station(
+            self.base_raw,
+            trim_enabled=bqc.trim_enabled,
+            trim_window_seconds=bqc.trim_window_seconds,
+            trim_threshold_k=bqc.trim_threshold_k,
+            trim_confirm_seconds=bqc.trim_confirm_seconds,
+            trim_max_fraction=bqc.trim_max_fraction,
+            despike_enabled=bqc.despike_enabled,
+            despike_window_size=bqc.despike_window_size,
+            despike_threshold_k=bqc.despike_threshold_k,
+        )
+        self.base_processed = base_qc_result.corrected
+        self.base_qc_info = {
+            "n_points_raw": len(self.base_raw),
+            "n_points_corrected": len(base_qc_result.corrected),
+            "n_trimmed_start": base_qc_result.n_trimmed_start,
+            "n_trimmed_end": base_qc_result.n_trimmed_end,
+            "n_spikes_removed": base_qc_result.n_spikes_removed,
+        }
+
         diurnal_result = apply_diurnal_correction(
             df["timestamp"],
             df["mag_filtered"].to_numpy(),
-            self.base_raw,
+            self.base_processed,
             time_offset_seconds=params.diurnal_params.time_offset_seconds,
             reference=params.diurnal_params.reference,
         )
@@ -444,7 +505,9 @@ class Project:
         self.file_level_info = self._check_file_level_offsets(df)
 
         self.processed = df
+        self.processed_base = df.copy()
         self.manual_overrides = {}
+        self.manual_smooth_point_ids = set()
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
@@ -536,7 +599,7 @@ class Project:
             cal_diurnal = apply_diurnal_correction(
                 cal["timestamp"],
                 cal["mag_raw"].to_numpy(),
-                self.base_raw,
+                self.base_processed,
                 time_offset_seconds=params.diurnal_params.time_offset_seconds,
                 reference=params.diurnal_params.reference,
             )
@@ -653,6 +716,7 @@ class Project:
             "inclination_deg": self.inclination_deg,
             "declination_deg": self.declination_deg,
             "diurnal": self.diurnal_info,
+            "base_qc": self.base_qc_info,
             "despike": self.despike_info,
             "sway_detection": self.sway_info,
             "heading_effect_calibration": self.heading_calibration_info,
@@ -720,7 +784,19 @@ class Project:
         """Value-vs-along-track-distance series for a single flight line -
         a QC view distinct from the map/grid overlays, for spotting
         spikes, drift, or leveling offsets directly along one pass rather
-        than inferring them from the 2D color pattern."""
+        than inferring them from the 2D color pattern.
+
+        Also returns a raw_value trace alongside the processed value, so
+        the user can compare what despike/notch/lowpass filtering removed.
+        Since diurnal and IGRF correction are purely additive/subtractive
+        terms computed from timestamp/position alone (not from the drone's
+        own magnetometer reading), the filtering pipeline's effect on the
+        final anomaly/tmi can be isolated without re-running diurnal/IGRF/
+        heading-correction on a separate raw path:
+            raw_value = value + (mag_original - mag_filtered)
+        mag_original is the sensor reading captured before despike/notch
+        mutate mag_raw in place (see run_pipeline); mag_filtered is what
+        those steps plus the lowpass/Savitzky-Golay filter produced."""
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         df = self.processed
@@ -733,14 +809,18 @@ class Project:
         distance_m = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
         col = "anomaly" if value == "anomaly" else "tmi"
         active = self._active_mask()
+        filter_delta = line_df["mag_original"] - line_df["mag_filtered"]
 
         return {
             "line_id": line_id,
+            "point_id": line_df["point_id"].tolist(),
             "distance_m": distance_m.tolist(),
             "value": line_df[col].tolist(),
+            "raw_value": (line_df[col] + filter_delta).tolist(),
             "lat": line_df["lat"].tolist(),
             "lon": line_df["lon"].tolist(),
             "excluded": (~active.reindex(line_df.index)).tolist(),
+            "smoothed": line_df["point_id"].isin(self.manual_smooth_point_ids).tolist(),
         }
 
     def get_exclusion_state(self) -> dict:
@@ -795,6 +875,41 @@ class Project:
         forced_value = req.action == "include"
         for pid in target_ids:
             self.manual_overrides[int(pid)] = forced_value
+        self.grid_cache = {}
+        self.transform_cache = {}
+        return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
+
+    def set_manual_smoothing(self, req: ManualSmoothRequest) -> dict:
+        """Remove a user-identified ground-structure distortion (a house,
+        building etc. visibly perturbing the signal) from a stretch of a
+        line, by linearly interpolating anomaly/tmi across it - see
+        processing/manual_smooth.py. Always recomputed from
+        self.processed_base (the pristine post-pipeline, pre-smoothing
+        snapshot) rather than compounding onto the currently-displayed
+        values, mirroring why manual_overrides is applied lazily via
+        _active_mask() instead of mutating stored values - except here the
+        edit genuinely must mutate anomaly/tmi, so the pristine snapshot is
+        what makes "always fresh, never compounding" possible."""
+        if self.processed_base is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        base_df = self.processed_base
+
+        if req.mode == "reset":
+            self.manual_smooth_point_ids = set()
+        else:
+            if req.mode == "point_ids":
+                if not req.point_ids:
+                    raise ProjectError("point_ids가 필요합니다.")
+                new_ids = set(req.point_ids)
+            else:
+                if not req.polygon or len(req.polygon) < 3:
+                    raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
+                poly_path = MplPath([(pt[1], pt[0]) for pt in req.polygon])  # (lon, lat)
+                inside = poly_path.contains_points(np.column_stack([base_df["lon"], base_df["lat"]]))
+                new_ids = set(base_df.loc[inside, "point_id"])
+            self.manual_smooth_point_ids |= new_ids
+
+        self.processed = apply_manual_smoothing(base_df, self.manual_smooth_point_ids)
         self.grid_cache = {}
         self.transform_cache = {}
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
@@ -1395,6 +1510,7 @@ class Project:
         meta = {
             "last_params": self.last_params.model_dump() if self.last_params is not None else None,
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
+            "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
         }
@@ -1459,6 +1575,9 @@ class Project:
                         self.manual_overrides = {int(k): v for k, v in overrides.items()}
                         self.grid_cache = {}
                         self.transform_cache = {}
+                    smooth_ids = meta.get("manual_smooth_point_ids") or []
+                    if smooth_ids:
+                        self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
                     processed = True
 
                 inversion_summary = None

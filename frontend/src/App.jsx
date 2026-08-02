@@ -10,6 +10,7 @@ import LayerManager from "./components/LayerManager";
 import InversionPanel from "./components/InversionPanel";
 import InversionSectionView from "./components/InversionSectionView";
 import LineProfileView from "./components/LineProfileView";
+import BaseStationView from "./components/BaseStationView";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
 // needs it, and most sessions never open it, so it's split into its own
@@ -81,6 +82,16 @@ const DEFAULT_PARAMS = {
     adaptive: true,
     adaptive_gradient_threshold: 5.0,
     adaptive_expand_samples: 4,
+  },
+  base_qc_params: {
+    trim_enabled: true,
+    trim_window_seconds: 30.0,
+    trim_threshold_k: 6.0,
+    trim_confirm_seconds: 60.0,
+    trim_max_fraction: 0.2,
+    despike_enabled: true,
+    despike_window_size: 11,
+    despike_threshold_k: 5.0,
   },
   sway_detection: {
     enabled: true,
@@ -183,6 +194,10 @@ export default function App() {
   const [flightPathEditorOpen, setFlightPathEditorOpen] = useState(false);
   const [lineProfileData, setLineProfileData] = useState(null);
   const [lineProfileLoadingId, setLineProfileLoadingId] = useState(null);
+  const [smoothing, setSmoothing] = useState(false);
+  const [baseTimeseries, setBaseTimeseries] = useState(null);
+  const [baseTimeseriesLoading, setBaseTimeseriesLoading] = useState(false);
+  const [smoothDrawMode, setSmoothDrawMode] = useState(false);
 
   const [demStatus, setDemStatus] = useState(null);
   const [demUploading, setDemUploading] = useState(false);
@@ -668,6 +683,7 @@ export default function App() {
   const handleShowLineProfile = async (lineId) => {
     try {
       setError(null);
+      setBaseTimeseries(null);
       setLineProfileLoadingId(lineId);
       const resp = await api.getLineProfile(projectId, lineId, valueField);
       setLineProfileData(resp);
@@ -675,6 +691,61 @@ export default function App() {
       handleError(e);
     } finally {
       setLineProfileLoadingId(null);
+    }
+  };
+
+  // Removes a user-identified ground-structure distortion (house, fence,
+  // parked vehicle...) by interpolating anomaly/tmi across the selected
+  // points - see backend set_manual_smoothing. Always recomputed fresh
+  // from the pristine post-pipeline snapshot server-side, so this is safe
+  // to call repeatedly without compounding smoothing on smoothing. Any
+  // existing grid/overlay is stale afterwards (anomaly/tmi values
+  // changed, not just exclusion flags), so it's cleared like a re-process.
+  const handleApplySmoothing = async (pointIds) => {
+    try {
+      setError(null);
+      setSmoothing(true);
+      const summary = await api.applySmoothing(projectId, { mode: "point_ids", point_ids: pointIds });
+      setProcessSummary(summary);
+      setOverlay(null);
+      await refreshPoints(projectId, valueField);
+      if (lineProfileData) {
+        const refreshed = await api.getLineProfile(projectId, lineProfileData.line_id, valueField);
+        setLineProfileData(refreshed);
+      }
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSmoothing(false);
+    }
+  };
+
+  const handleSmoothPolygonDrawn = async (latlngCoords) => {
+    try {
+      setError(null);
+      setSmoothing(true);
+      const summary = await api.applySmoothing(projectId, { mode: "polygon", polygon: latlngCoords });
+      setProcessSummary(summary);
+      setOverlay(null);
+      await refreshPoints(projectId, valueField);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSmoothing(false);
+    }
+  };
+
+  const handleShowBaseTimeseries = async () => {
+    try {
+      setError(null);
+      setLineProfileData(null);
+      setBaseTimeseriesLoading(true);
+      const resp = await api.getBaseTimeseries(projectId);
+      setBaseTimeseries(resp);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setBaseTimeseriesLoading(false);
     }
   };
 
@@ -961,6 +1032,8 @@ export default function App() {
   const handleMapShapeDrawn = (coords) => {
     if (sectionDrawMode) {
       handleSectionPathDrawn(coords);
+    } else if (smoothDrawMode) {
+      handleSmoothPolygonDrawn(coords);
     } else {
       handleShapeDrawn(coords);
     }
@@ -1195,6 +1268,8 @@ export default function App() {
           onUploadBase={handleUploadBase}
           baseSummary={baseSummary}
           baseUploadProgress={baseUploadProgress}
+          onShowBaseTimeseries={handleShowBaseTimeseries}
+          baseTimeseriesLoading={baseTimeseriesLoading}
           onUploadHeadingCalibration={handleUploadHeadingCalibration}
           headingCalibrationSummary={headingCalibrationSummary}
           headingCalibrationUploadProgress={headingCalibrationUploadProgress}
@@ -1277,7 +1352,7 @@ export default function App() {
           lines={processSummary?.lines}
           showLineLabels={showLineLabels}
           onHoverPoint={setHoverPoint}
-          drawMode={drawMode || sectionDrawMode}
+          drawMode={drawMode || sectionDrawMode || smoothDrawMode}
           drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
           onShapeDrawn={handleMapShapeDrawn}
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
@@ -1320,7 +1395,12 @@ export default function App() {
             data={lineProfileData}
             valueLabel={valueField === "anomaly" ? "자력 이상 (nT)" : "TMI (nT)"}
             onClose={() => setLineProfileData(null)}
+            onApplySmoothing={handleApplySmoothing}
+            smoothing={smoothing}
           />
+        )}
+        {!volumeData && !sectionResult && !lineProfileData && baseTimeseries && (
+          <BaseStationView data={baseTimeseries} onClose={() => setBaseTimeseries(null)} />
         )}
       </div>
 
@@ -1335,7 +1415,16 @@ export default function App() {
           drawMode={drawMode}
           drawAction={drawAction}
           onSetDrawAction={setDrawAction}
-          onToggleDrawMode={() => setDrawMode((v) => !v)}
+          onToggleDrawMode={() => {
+            setSmoothDrawMode(false);
+            setDrawMode((v) => !v);
+          }}
+          smoothDrawMode={smoothDrawMode}
+          onToggleSmoothDrawMode={() => {
+            setDrawMode(false);
+            setSmoothDrawMode((v) => !v);
+          }}
+          smoothing={smoothing}
           onResetManual={handleResetManual}
           nManualIncluded={processSummary?.n_manual_included}
           nManualExcluded={processSummary?.n_manual_excluded}

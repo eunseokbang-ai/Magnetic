@@ -22,6 +22,9 @@ export default function LineEditor({
   canExportBln,
   showRampPoints,
   onToggleShowRampPoints,
+  smoothDrawMode,
+  onToggleSmoothDrawMode,
+  smoothing,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -171,6 +174,33 @@ export default function LineEditor({
       >
         수동 편집 모두 되돌리기 (완전 자동으로)
       </button>
+
+      {onToggleSmoothDrawMode && (
+        <>
+          <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "4px 0" }} />
+          <div style={{ fontSize: 12, color: "#374151" }}>
+            지상 구조물(집, 건물 등)로 인한 자력값 왜곡을 지도에서 직접 제거합니다. 위 "12. 참조 레이어"에 드론
+            정사영상(orthophoto)을 GeoTIFF로 올려두면 구조물 위치를 눈으로 확인하며 그 위에 영역을 그릴 수 있습니다.
+            선택한 영역의 이상/TMI 값이 주변 값으로 보간되어 왜곡이 제거됩니다.
+          </div>
+          <button
+            onClick={onToggleSmoothDrawMode}
+            disabled={smoothing}
+            style={{
+              padding: "6px 10px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: smoothDrawMode ? "1px solid #16a34a" : "1px solid #d1d5db",
+              background: smoothDrawMode ? "#f0fdf4" : "white",
+              color: smoothDrawMode ? "#16a34a" : "#374151",
+              cursor: "pointer",
+              opacity: smoothing ? 0.6 : 1,
+            }}
+          >
+            {smoothing ? "스무딩 적용 중..." : smoothDrawMode ? "지도에서 왜곡 영역 그리기 (종료하려면 다시 클릭)" : "지도에서 왜곡 영역 그려 스무딩"}
+          </button>
+        </>
+      )}
 
       {onOpenFlightPathEditor && (
         <>

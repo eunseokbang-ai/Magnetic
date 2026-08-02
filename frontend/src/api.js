@@ -139,6 +139,14 @@ export function getLineProfile(projectId, lineId, value) {
   return request(`/projects/${projectId}/line-profile?line_id=${lineId}&value=${value}`);
 }
 
+export function getBaseTimeseries(projectId) {
+  return request(`/projects/${projectId}/base/timeseries`);
+}
+
+export function applySmoothing(projectId, req) {
+  return request(`/projects/${projectId}/smooth`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);

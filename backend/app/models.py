@@ -28,6 +28,23 @@ class DiurnalParams(BaseModel):
     reference: str = "mean"  # "mean" | "first" | numeric string
 
 
+class BaseQCParams(BaseModel):
+    # Trims the noisy installation/pickup transient at the start/end of
+    # the base station log (handling, mechanical shock, proximity to the
+    # operator) before it's used for diurnal correction - see
+    # processing/base_qc.py:trim_base_transients.
+    trim_enabled: bool = True
+    trim_window_seconds: float = Field(30.0, gt=0)
+    trim_threshold_k: float = Field(6.0, gt=0)
+    trim_confirm_seconds: float = Field(60.0, gt=0)
+    trim_max_fraction: float = Field(0.2, ge=0, le=0.49)
+    # Despikes the (already-trimmed) interior with the same robust
+    # median/MAD logic as the drone despike step - see processing/despike.py.
+    despike_enabled: bool = True
+    despike_window_size: int = Field(11, ge=3, le=101)
+    despike_threshold_k: float = Field(5.0, gt=0)
+
+
 class HeadingCorrectionParams(BaseModel):
     enabled: bool = True
     quiet_percentile: float = Field(40.0, ge=1, le=100)
@@ -153,6 +170,7 @@ class ProcessParams(BaseModel):
     # Korea-domestic UTM 51N/52N. None (default) = generic auto UTM.
     korea_projection: Optional[Literal["korea_utm", "korea2010", "utm"]] = None
     despike_params: DespikeParams = DespikeParams()
+    base_qc_params: BaseQCParams = BaseQCParams()
     sway_detection: SwayDetectionParams = SwayDetectionParams()
     heading_effect_calibration: HeadingEffectCalibrationParams = HeadingEffectCalibrationParams()
     line_params: LineParams = LineParams()
@@ -272,6 +290,21 @@ class ManualExcludeRequest(BaseModel):
     # to be affected too (paired with the line editor's "show ramp
     # points" toggle).
     include_ramp: bool = False
+
+
+class ManualSmoothRequest(BaseModel):
+    """Marks points as affected by a localized, non-geological
+    disturbance (a building, fence, parked vehicle, ...) so their
+    anomaly/TMI value is replaced with a straight-line interpolation from
+    the nearest unflagged points on either side along their own line,
+    instead of being fabricated from a fitted model. See
+    store.py::_apply_manual_smoothing. Points are targeted either by an
+    explicit point_id list (e.g. a drag-selected range on a line's time
+    series chart) or by a lat/lon polygon (e.g. drawn on the map over a
+    structure visible in an imported orthophoto reference layer)."""
+    mode: Literal["point_ids", "polygon", "reset"]
+    point_ids: Optional[list[int]] = None
+    polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
 
 
 class InversionParams(BaseModel):
