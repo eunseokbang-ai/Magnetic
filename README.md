@@ -90,8 +90,10 @@
 ```bash
 cd backend
 pip install -r requirements.txt
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
+
+`--reload`를 붙이면 프론트엔드(Vite)처럼 코드가 바뀔 때마다 서버가 자동으로 재시작됩니다 — 매번 터미널에서 껐다 켤 필요가 없습니다. (다만 코드 저장 후 서버가 재시작되는 짧은 순간에는 요청이 실패할 수 있으니, 재시작 로그가 끝난 뒤 새로고침하세요.)
 
 AI 해석 도우미(챗봇, 기능 35)를 쓰려면 백엔드 실행 전에 `ANTHROPIC_API_KEY` 환경변수를 설정하세요. 설정하지 않아도 나머지 기능은 모두 정상 동작합니다.
 
