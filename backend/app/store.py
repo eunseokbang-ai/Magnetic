@@ -60,6 +60,12 @@ from .processing.contours import compute_contours
 from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
 from .processing.geology_sample import GeologySampleError, sample_geotiff_at_point
 from .processing.gps_lag import apply_gps_mag_lag
+from .processing.heading_calibration import (
+    HeadingCalibrationError,
+    calibration_angular_coverage_deg,
+    fit_heading_effect_map,
+    magnetic_heading,
+)
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
 from .processing.sway import detect_sway
@@ -145,6 +151,8 @@ class Project:
     diurnal_info: dict | None = None
     despike_info: dict | None = None
     sway_info: dict | None = None
+    calibration_raw: pd.DataFrame | None = None
+    heading_calibration_info: dict | None = None
     crossover_info: dict | None = None
     gps_lag_info: dict | None = None
     inversion_summary_cache: dict | None = None
@@ -169,6 +177,26 @@ class Project:
     def load_base(self, buffers: list) -> dict:
         self.base_raw = load_base_csvs(buffers)
         return self.base_summary()
+
+    def load_heading_calibration(self, buffers: list) -> dict:
+        """A short calibration flight (same instrument/file format as the
+        main survey) flown sweeping through many orientations over a
+        magnetically quiet patch - see processing/heading_calibration.py.
+        Parsed with the same multi-format loader as the main survey since
+        it's the identical instrument output."""
+        self.calibration_raw = load_drone_csvs(buffers)
+        return self.heading_calibration_summary()
+
+    def heading_calibration_summary(self) -> dict:
+        if self.calibration_raw is None:
+            return {}
+        d = self.calibration_raw
+        has_compass = d["compass_x"].notna().sum() >= 10
+        return {
+            "n_points": len(d),
+            "time_range": [d["timestamp"].min().isoformat(), d["timestamp"].max().isoformat()],
+            "has_compass_data": bool(has_compass),
+        }
 
     def drone_summary(self) -> dict:
         if self.drone_raw is None:
@@ -291,6 +319,16 @@ class Project:
             "drone_time_range": [str(diurnal_result.drone_time_range[0]), str(diurnal_result.drone_time_range[1])],
         }
 
+        hec = params.heading_effect_calibration
+        if hec.enabled:
+            self.heading_calibration_info = self._apply_heading_effect_calibration(df, params)
+        else:
+            self.heading_calibration_info = {
+                "enabled": False,
+                "available": self.calibration_raw is not None,
+                "applied": False,
+            }
+
         igrf_total = compute_igrf_total_field(
             df["lat"].to_numpy(), df["lon"].to_numpy(), df["altitude_ellipsoidal_m"].to_numpy(), df["timestamp"]
         )
@@ -349,6 +387,68 @@ class Project:
         self.last_params = params
         return self.process_summary()
 
+    def _apply_heading_effect_calibration(self, df: pd.DataFrame, params: ProcessParams) -> dict:
+        """Zhang et al. (2022) heading-effect compensation (see
+        processing/heading_calibration.py): fits a DeltaB(theta, phi)
+        deviation surface from self.calibration_raw and subtracts it from
+        df["mag_diurnal_corrected"] in place, before IGRF/anomaly are
+        derived from it. A no-op (returns available=False) whenever no
+        calibration flight was uploaded or neither dataset has usable
+        compass data - callers don't need to check beforehand."""
+        if self.calibration_raw is None:
+            return {"enabled": True, "available": False, "applied": False}
+
+        cal = self.calibration_raw
+        if cal["compass_x"].notna().sum() < 30 or df["compass_x"].notna().sum() < 1:
+            return {
+                "enabled": True,
+                "available": False,
+                "applied": False,
+                "reason": "캘리브레이션 또는 측선 자료에 나침반(Compass) 데이터가 없습니다 (지원 포맷: Geometrics MagArrow 등).",
+            }
+
+        cal_diurnal = apply_diurnal_correction(
+            cal["timestamp"],
+            cal["mag_raw"].to_numpy(),
+            self.base_raw,
+            time_offset_seconds=params.diurnal_params.time_offset_seconds,
+            reference=params.diurnal_params.reference,
+        )
+        theta_cal, phi_cal = magnetic_heading(
+            cal["compass_x"].to_numpy(), cal["compass_y"].to_numpy(), cal["compass_z"].to_numpy()
+        )
+
+        try:
+            heading_map = fit_heading_effect_map(theta_cal, phi_cal, cal_diurnal.corrected)
+        except HeadingCalibrationError as exc:
+            return {"enabled": True, "available": False, "applied": False, "reason": str(exc)}
+
+        theta_survey, phi_survey = magnetic_heading(
+            df["compass_x"].to_numpy(), df["compass_y"].to_numpy(), df["compass_z"].to_numpy()
+        )
+        deviation, extrapolated = heading_map.query(theta_survey, phi_survey)
+
+        corrected_mask = np.isfinite(deviation)
+        if corrected_mask.any():
+            df.loc[corrected_mask, "mag_diurnal_corrected"] = (
+                df.loc[corrected_mask, "mag_diurnal_corrected"] - deviation[corrected_mask]
+            )
+
+        coverage = calibration_angular_coverage_deg(heading_map.theta_cal, heading_map.phi_cal)
+        n = len(corrected_mask)
+        return {
+            "enabled": True,
+            "available": True,
+            "applied": bool(corrected_mask.any()),
+            "n_calibration_points": int(len(heading_map.theta_cal)),
+            "n_survey_points_corrected": int(corrected_mask.sum()),
+            "n_survey_points_extrapolated": int((extrapolated & corrected_mask).sum()),
+            "pct_survey_points_corrected": float(100.0 * corrected_mask.sum() / n) if n else 0.0,
+            "mean_abs_correction_nt": float(np.nanmean(np.abs(deviation[corrected_mask]))) if corrected_mask.any() else 0.0,
+            "theta_range_deg": coverage["theta_range_deg"],
+            "phi_range_deg": coverage["phi_range_deg"],
+        }
+
     def process_summary(self) -> dict:
         df = self.processed
         active = self._active_mask()
@@ -368,6 +468,7 @@ class Project:
             "diurnal": self.diurnal_info,
             "despike": self.despike_info,
             "sway_detection": self.sway_info,
+            "heading_effect_calibration": self.heading_calibration_info,
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,
@@ -1044,6 +1145,8 @@ class Project:
             zf.writestr("drone_raw.csv", self.drone_raw.to_csv(index=False))
             if self.base_raw is not None:
                 zf.writestr("base_raw.csv", self.base_raw.to_csv(index=False))
+            if self.calibration_raw is not None:
+                zf.writestr("calibration_raw.csv", self.calibration_raw.to_csv(index=False))
             zf.writestr("meta.json", json.dumps(meta))
             if self.dem_bytes is not None:
                 zf.writestr("dem.tif", self.dem_bytes)
@@ -1071,6 +1174,13 @@ class Project:
                     self.base_raw = base_df
                 else:
                     self.base_raw = None
+
+                if "calibration_raw.csv" in names:
+                    cal_df = pd.read_csv(io.BytesIO(zf.read("calibration_raw.csv")))
+                    cal_df["timestamp"] = pd.to_datetime(cal_df["timestamp"])
+                    self.calibration_raw = cal_df
+                else:
+                    self.calibration_raw = None
 
                 meta = json.loads(zf.read("meta.json").decode("utf-8"))
 

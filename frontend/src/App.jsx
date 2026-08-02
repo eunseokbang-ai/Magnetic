@@ -81,6 +81,9 @@ const DEFAULT_PARAMS = {
     enabled: true,
     threshold_k: 4.0,
   },
+  heading_effect_calibration: {
+    enabled: true,
+  },
   line_params: {
     heading_lag_seconds: 1.0,
     heading_tolerance_deg: 20.0,
@@ -111,6 +114,8 @@ export default function App() {
   const [projectId, setProjectId] = useState(null);
   const [droneSummary, setDroneSummary] = useState(null);
   const [baseSummary, setBaseSummary] = useState(null);
+  const [headingCalibrationSummary, setHeadingCalibrationSummary] = useState(null);
+  const [headingCalibrationUploadProgress, setHeadingCalibrationUploadProgress] = useState(null);
   const [processParams, setProcessParams] = useState(DEFAULT_PARAMS);
   const [processSummary, setProcessSummary] = useState(null);
   const [processing, setProcessing] = useState(false);
@@ -253,6 +258,20 @@ export default function App() {
       handleError(e);
     } finally {
       setBaseUploadProgress(null);
+    }
+  };
+
+  const handleUploadHeadingCalibration = async (files) => {
+    try {
+      setError(null);
+      setHeadingCalibrationUploadProgress(0);
+      const id = await ensureProject();
+      const summary = await api.uploadHeadingCalibration(id, files, setHeadingCalibrationUploadProgress);
+      setHeadingCalibrationSummary(summary);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setHeadingCalibrationUploadProgress(null);
     }
   };
 
@@ -1039,6 +1058,9 @@ export default function App() {
           onUploadBase={handleUploadBase}
           baseSummary={baseSummary}
           baseUploadProgress={baseUploadProgress}
+          onUploadHeadingCalibration={handleUploadHeadingCalibration}
+          headingCalibrationSummary={headingCalibrationSummary}
+          headingCalibrationUploadProgress={headingCalibrationUploadProgress}
           processParams={processParams}
           setProcessParams={setProcessParams}
           onProcess={handleProcess}

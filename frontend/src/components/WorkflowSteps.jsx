@@ -80,6 +80,9 @@ export default function WorkflowSteps({
   onUploadBase,
   baseSummary,
   baseUploadProgress,
+  onUploadHeadingCalibration,
+  headingCalibrationSummary,
+  headingCalibrationUploadProgress,
   processParams,
   setProcessParams,
   onProcess,
@@ -137,6 +140,7 @@ export default function WorkflowSteps({
 }) {
   const [droneFileNames, setDroneFileNames] = useState([]);
   const [baseFileNames, setBaseFileNames] = useState([]);
+  const [headingCalFileNames, setHeadingCalFileNames] = useState([]);
   const [targetWavelengthM, setTargetWavelengthM] = useState(5.0);
 
   const lp = processParams.line_params;
@@ -144,6 +148,9 @@ export default function WorkflowSteps({
   const updateDespike = (key, val) => setProcessParams((p) => ({ ...p, despike_params: { ...p.despike_params, [key]: val } }));
   const swd = processParams.sway_detection;
   const updateSway = (key, val) => setProcessParams((p) => ({ ...p, sway_detection: { ...p.sway_detection, [key]: val } }));
+  const hec = processParams.heading_effect_calibration;
+  const updateHeadingCal = (key, val) =>
+    setProcessParams((p) => ({ ...p, heading_effect_calibration: { ...p.heading_effect_calibration, [key]: val } }));
   const cl = processParams.crossover_leveling;
   const updateCrossover = (key, val) => setProcessParams((p) => ({ ...p, crossover_leveling: { ...p.crossover_leveling, [key]: val } }));
   const dp = processParams.diurnal_params;
@@ -238,6 +245,49 @@ export default function WorkflowSteps({
               )}
             </div>
           )}
+        </div>
+      </details>
+
+      <details style={sectionStyle}>
+        <summary style={summaryStyle}>2-1. 헤딩효과 캘리브레이션 비행 (선택사항)</summary>
+        <div style={bodyStyle}>
+          <div style={{ color: "#6b7280" }}>
+            Geometrics MagArrow 등 나침반(Compass) 데이터가 있는 장비에서, 자기 경사도가 낮은(1nT/m 미만) 좁은 구역(10x10m
+            내외)을 여러 자세로 선회하며 짧게 비행한 자료입니다. 업로드하면 헤딩(자세)에 따른 판독 오차를 모델링해 본 측선
+            자료에서 제거합니다 (Zhang et al. 2022, The Leading Edge — MagArrow 개발사 논문 기법).
+          </div>
+          <input
+            type="file"
+            accept=".csv"
+            multiple
+            style={inputStyle}
+            onChange={(e) => {
+              const files = Array.from(e.target.files);
+              if (files.length > 0) {
+                setHeadingCalFileNames(files.map((f) => f.name));
+                onUploadHeadingCalibration(files);
+              }
+            }}
+          />
+          <ProgressBar fraction={headingCalibrationUploadProgress} />
+          {headingCalFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{headingCalFileNames.join(", ")}</div>}
+          {headingCalibrationSummary && (
+            <div style={{ color: "#374151" }}>
+              포인트 수: {headingCalibrationSummary.n_points}
+              <br />
+              시간범위: {headingCalibrationSummary.time_range?.[0]} ~ {headingCalibrationSummary.time_range?.[1]}
+              <br />
+              {headingCalibrationSummary.has_compass_data ? (
+                <span>나침반(Compass) 데이터 확인됨</span>
+              ) : (
+                <span style={{ color: "#b45309" }}>⚠ 나침반(Compass) 컬럼을 찾지 못했습니다 — 지원 포맷(MagArrow 등)인지 확인하세요.</span>
+              )}
+            </div>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={hec.enabled} onChange={(e) => updateHeadingCal("enabled", e.target.checked)} />
+            <span>헤딩효과 보정 사용 — 위 캘리브레이션 자료가 있을 때만 적용됩니다</span>
+          </label>
         </div>
       </details>
 
@@ -501,6 +551,22 @@ export default function WorkflowSteps({
                   <br />
                 </>
               )}
+              {processSummary.heading_effect_calibration?.applied && (
+                <>
+                  헤딩효과 캘리브레이션 보정: 측선 {processSummary.heading_effect_calibration.n_survey_points_corrected}개 포인트 보정 (
+                  {processSummary.heading_effect_calibration.pct_survey_points_corrected?.toFixed(1)}%, 평균{" "}
+                  {processSummary.heading_effect_calibration.mean_abs_correction_nt?.toFixed(2)} nT)
+                  <br />
+                </>
+              )}
+              {processSummary.heading_effect_calibration?.enabled &&
+                !processSummary.heading_effect_calibration?.applied &&
+                processSummary.heading_effect_calibration?.reason && (
+                  <>
+                    <span style={{ color: "#9ca3af" }}>헤딩효과 캘리브레이션 보정: {processSummary.heading_effect_calibration.reason}</span>
+                    <br />
+                  </>
+                )}
               {processSummary.sway_detection?.enabled && processSummary.sway_detection?.available && (
                 <>
                   IMU 흔들림 검출: {processSummary.sway_detection.n_points_excluded}개 포인트 제외 ({processSummary.sway_detection.pct_points_flagged?.toFixed(2)}%, 신호:{" "}

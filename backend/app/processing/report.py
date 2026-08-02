@@ -79,6 +79,20 @@ def generate_report_markdown(
     else:
         lines.append("- 스파이크 제거: 미적용")
 
+    hec = process_summary.get("heading_effect_calibration")
+    if hec and hec.get("enabled") and hec.get("applied"):
+        lines.append(
+            f"- **헤딩효과 캘리브레이션 보정** (Zhang et al. 2022): 캘리브레이션 {hec.get('n_calibration_points')}개 포인트로 "
+            f"측선 {hec.get('n_survey_points_corrected')}개 포인트 보정 ({_fmt(hec.get('pct_survey_points_corrected'))}%, "
+            f"평균 보정량 {_fmt(hec.get('mean_abs_correction_nt'))} nT, 외삽 {hec.get('n_survey_points_extrapolated')}개)"
+        )
+    elif hec and hec.get("enabled") and hec.get("reason"):
+        lines.append(f"- 헤딩효과 캘리브레이션 보정: 미적용 ({hec['reason']})")
+    elif hec and hec.get("enabled"):
+        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용 (캘리브레이션 비행 자료 없음)")
+    else:
+        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용")
+
     sw = process_summary.get("sway_detection")
     if sw and sw.get("enabled") and sw.get("available"):
         lines.append(

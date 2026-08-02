@@ -134,6 +134,14 @@ async def upload_base(project_id: str, files: list[UploadFile] = File(...)):
     return summary
 
 
+@app.post("/api/projects/{project_id}/upload/heading_calibration")
+async def upload_heading_calibration(project_id: str, files: list[UploadFile] = File(...)):
+    project = store.get(project_id)
+    buffers = [io.BytesIO(await f.read()) for f in files]
+    summary = project.load_heading_calibration(buffers)
+    return summary
+
+
 @app.post("/api/projects/{project_id}/process")
 def process(project_id: str, params: ProcessParams):
     project = store.get(project_id)

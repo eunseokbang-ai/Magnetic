@@ -79,6 +79,12 @@ export function uploadBase(projectId, files, onProgress) {
   return uploadWithProgress(`/projects/${projectId}/upload/base`, form, onProgress);
 }
 
+export function uploadHeadingCalibration(projectId, files, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  return uploadWithProgress(`/projects/${projectId}/upload/heading_calibration`, form, onProgress);
+}
+
 export function processProject(projectId, params) {
   return request(`/projects/${projectId}/process`, { method: "POST", body: JSON.stringify(params) });
 }

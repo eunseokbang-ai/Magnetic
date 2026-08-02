@@ -35,6 +35,16 @@ SPARSE_NUMERIC_COLUMNS = ["Altitude", "HeightOverEllipsoid", "Hdop", "SpeedOverG
 _GYRO_COLUMNS = ["GyroscopeX", "GyroscopeY", "GyroscopeZ"]
 _ACCEL_HORIZ_COLUMNS = ["AccelerometerX", "AccelerometerY"]
 
+# Optional 3-axis compass (vector magnetometer) columns, also only present
+# in the generic/Geometrics MagArrow schema - used by
+# processing.heading_calibration to derive the sensor's orientation
+# relative to the earth's field (polar/azimuth heading) for the Zhang et
+# al. (2022, The Leading Edge) heading-effect calibration-and-compensation
+# method. Distinct from the gyroscope: the compass gives absolute
+# orientation, which the calibration needs, while the gyroscope only gives
+# rotation *rate*, which processing.sway uses to flag abnormal swinging.
+_COMPASS_COLUMNS = ["CompassX", "CompassY", "CompassZ"]
+
 # MicroInfinity Mag's MagField_Jn columns are in microtesla; internally
 # every other loader/downstream step works in nT.
 _UT_TO_NT = 1000.0
@@ -117,6 +127,10 @@ def _parse_generic(text: str) -> pd.DataFrame:
         ax, ay = (pd.to_numeric(df[c], errors="coerce") for c in _ACCEL_HORIZ_COLUMNS)
         accel_horiz = np.sqrt(ax**2 + ay**2)
 
+    compass_x = compass_y = compass_z = np.nan
+    if all(c in df.columns for c in _COMPASS_COLUMNS):
+        compass_x, compass_y, compass_z = (pd.to_numeric(df[c], errors="coerce") for c in _COMPASS_COLUMNS)
+
     return pd.DataFrame(
         {
             "timestamp": df["timestamp"],
@@ -128,6 +142,9 @@ def _parse_generic(text: str) -> pd.DataFrame:
             "speed_over_ground": df["SpeedOverGround"] if "SpeedOverGround" in df.columns else np.nan,
             "gyro_mag": gyro_mag,
             "accel_horiz_g": accel_horiz,
+            "compass_x": compass_x,
+            "compass_y": compass_y,
+            "compass_z": compass_z,
         }
     )
 
@@ -347,7 +364,10 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
     reconstruction. See load_drone_csv for the ellipsoidal-height note.
     """
     df = raw.copy()
-    for col in ["lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground", "gyro_mag", "accel_horiz_g"]:
+    for col in [
+        "lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground",
+        "gyro_mag", "accel_horiz_g", "compass_x", "compass_y", "compass_z",
+    ]:
         if col not in df.columns:
             df[col] = np.nan
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -400,6 +420,9 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
             "speed_over_ground": df["speed_over_ground"].astype(float).values,
             "gyro_mag": df["gyro_mag"].astype(float).values,
             "accel_horiz_g": df["accel_horiz_g"].astype(float).values,
+            "compass_x": df["compass_x"].astype(float).values,
+            "compass_y": df["compass_y"].astype(float).values,
+            "compass_z": df["compass_z"].astype(float).values,
         }
     )
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
@@ -416,10 +439,11 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
 
     Returns columns: point_id, timestamp, lat, lon, mag_raw, altitude_msl_m,
     geoid_separation_m, altitude_ellipsoidal_m, speed_over_ground, gyro_mag,
-    accel_horiz_g (may be NaN if not present in source - gyro_mag/
-    accel_horiz_g are only populated for the generic/Geometrics MagArrow
-    schema, see processing.sway). Result carries the detected format name
-    in `.attrs["source_format"]`.
+    accel_horiz_g, compass_x, compass_y, compass_z (may be NaN if not
+    present in source - gyro_mag/accel_horiz_g/compass_* are only
+    populated for the generic/Geometrics MagArrow schema, see
+    processing.sway and processing.heading_calibration). Result carries
+    the detected format name in `.attrs["source_format"]`.
 
     Note: despite its name, the generic source's `HeightOverEllipsoid`
     column matches the GGA "geoid separation" field position/magnitude

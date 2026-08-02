@@ -49,6 +49,18 @@ class SwayDetectionParams(BaseModel):
     threshold_k: float = Field(4.0, gt=0)  # robust-z multiples before a sample counts as high-sway
 
 
+class HeadingEffectCalibrationParams(BaseModel):
+    # Applies the Zhang et al. (2022, The Leading Edge) heading-effect
+    # compensation: uses a separately-uploaded short calibration flight
+    # (see /upload/heading_calibration) to model each sample's magnetometer
+    # reading offset as a function of its 3-axis-compass-derived orientation,
+    # then subtracts it from the survey data - recovering samples that
+    # sway detection (processing/sway.py) would otherwise just exclude.
+    # A no-op whenever no calibration flight has been uploaded, or the
+    # source format has no Compass columns.
+    enabled: bool = True
+
+
 class CrossoverLevelingParams(BaseModel):
     # Off by default - tie lines aren't always flown, and this only does
     # anything useful when perpendicular calibration lines are present in
@@ -89,6 +101,7 @@ class ProcessParams(BaseModel):
     korea_projection: Optional[Literal["korea_utm", "korea2010", "utm"]] = None
     despike_params: DespikeParams = DespikeParams()
     sway_detection: SwayDetectionParams = SwayDetectionParams()
+    heading_effect_calibration: HeadingEffectCalibrationParams = HeadingEffectCalibrationParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
