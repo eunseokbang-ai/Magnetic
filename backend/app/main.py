@@ -18,7 +18,9 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     ManualExcludeRequest,
+    MultiscaleEdgeRequest,
     PolygonExportRequest,
+    PowerSpectrumRequest,
     ProcessParams,
     TargetDetectionRequest,
     TransformRequest,
@@ -140,6 +142,20 @@ async def upload_heading_calibration(project_id: str, files: list[UploadFile] = 
     buffers = [io.BytesIO(await f.read()) for f in files]
     summary = project.load_heading_calibration(buffers)
     return summary
+
+
+@app.post("/api/projects/{project_id}/upload/repeatability")
+async def upload_repeatability(project_id: str, files: list[UploadFile] = File(...)):
+    project = store.get(project_id)
+    buffers = [io.BytesIO(await f.read()) for f in files]
+    summary = project.load_repeatability(buffers)
+    return summary
+
+
+@app.post("/api/projects/{project_id}/repeatability/analyze")
+def repeatability_analyze(project_id: str):
+    project = store.get(project_id)
+    return project.run_repeatability_analysis()
 
 
 @app.post("/api/projects/{project_id}/process")
@@ -264,6 +280,18 @@ def euler_deconvolution(project_id: str, req: EulerDeconvolutionRequest):
 def target_detection(project_id: str, req: TargetDetectionRequest):
     project = store.get(project_id)
     return project.run_target_detection(req)
+
+
+@app.post("/api/projects/{project_id}/multiscale-edges")
+def multiscale_edges(project_id: str, req: MultiscaleEdgeRequest):
+    project = store.get(project_id)
+    return project.run_multiscale_edges(req)
+
+
+@app.post("/api/projects/{project_id}/spectrum")
+def power_spectrum(project_id: str, req: PowerSpectrumRequest):
+    project = store.get(project_id)
+    return project.get_power_spectrum(req)
 
 
 @app.post("/api/overlay-images")

@@ -23,6 +23,8 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     ManualExcludeRequest,
+    MultiscaleEdgeRequest,
+    PowerSpectrumRequest,
     ProcessParams,
     TargetDetectionRequest,
     TransformRequest,
@@ -31,7 +33,7 @@ from .processing.crossover_leveling import CrossoverLevelingResult, apply_crosso
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.diurnal import apply_diurnal_correction
-from .processing.filters import lowpass_filter, moving_average_filter, savgol_filter_1d
+from .processing.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
 from .processing.gridding import GridResult, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
 from .processing.inversion import (
@@ -99,6 +101,10 @@ from .processing.transforms import (
     vertical_derivative,
 )
 from .processing.microlevel import apply_microleveling
+from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
+from .processing.noise_qc import compute_difference_qc
+from .processing.repeatability import analyze_repeatability
+from .processing.spectrum import compute_power_spectrum
 from .processing.trend import remove_regional_trend
 
 DEFAULT_CMAPS = {
@@ -158,6 +164,11 @@ class Project:
     heading_calibration_info: dict | None = None
     crossover_info: dict | None = None
     gps_lag_info: dict | None = None
+    noise_qc_info: dict | None = None
+    file_level_info: dict | None = None
+    repeatability_raw: pd.DataFrame | None = None
+    repeatability_summary_cache: dict | None = None
+    multiscale_edges_summary_cache: dict | None = None
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
     target_summary_cache: dict | None = None
@@ -189,6 +200,39 @@ class Project:
         it's the identical instrument output."""
         self.calibration_raw = load_drone_csvs(buffers)
         return self.heading_calibration_summary()
+
+    def load_repeatability(self, buffers: list) -> dict:
+        """A dedicated repeatability-test flight (same file format as the
+        main survey) - see processing/repeatability.py. Not mixed into the
+        main survey data; analysed on its own via run_repeatability_analysis."""
+        self.repeatability_raw = load_drone_csvs(buffers)
+        return {
+            "n_points": len(self.repeatability_raw),
+            "time_range": [
+                self.repeatability_raw["timestamp"].min().isoformat(),
+                self.repeatability_raw["timestamp"].max().isoformat(),
+            ],
+        }
+
+    def run_repeatability_analysis(self) -> dict:
+        if self.repeatability_raw is None:
+            raise ProjectError("반복측선(Repeatability) 자료를 먼저 업로드하세요.")
+        if self.base_raw is None:
+            raise ProjectError("베이스(일변화) 자료를 먼저 업로드하세요.")
+        diurnal_params = self.last_params.diurnal_params if self.last_params else None
+        line_params = (
+            LineDetectionParams(**self.last_params.line_params.model_dump()) if self.last_params else None
+        )
+        result = analyze_repeatability(
+            self.repeatability_raw,
+            self.base_raw,
+            time_offset_seconds=diurnal_params.time_offset_seconds if diurnal_params else 0.0,
+            diurnal_reference=diurnal_params.reference if diurnal_params else "mean",
+            line_params=line_params,
+            utm_epsg_override=self.utm_epsg,
+        )
+        self.repeatability_summary_cache = result
+        return result
 
     def heading_calibration_summary(self) -> dict:
         if self.calibration_raw is None:
@@ -263,6 +307,10 @@ class Project:
         else:
             self.despike_info = {"enabled": False, "n_spikes_removed": 0, "pct_spikes_removed": 0.0}
 
+        nf = params.notch_filter
+        for freq_hz in nf.frequencies_hz:
+            df["mag_raw"] = notch_filter(df["mag_raw"].to_numpy(), df["timestamp"], freq_hz, nf.quality_factor)
+
         if params.filter_method == "savgol":
             df["mag_filtered"] = savgol_filter_1d(
                 df["mag_raw"].to_numpy(), df["timestamp"], params.filter_window_seconds, params.filter_polyorder
@@ -284,6 +332,11 @@ class Project:
         df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
+
+        if params.noise_qc.enabled:
+            self.noise_qc_info = compute_difference_qc(df, "mag_filtered")
+        else:
+            self.noise_qc_info = {"available": False}
 
         sp = params.sway_detection
         if sp.enabled:
@@ -383,12 +436,64 @@ class Project:
             "rms_after_nt": crossover_result.rms_after_nt,
         }
 
+        self.file_level_info = self._check_file_level_offsets(df)
+
         self.processed = df
         self.manual_overrides = {}
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
         return self.process_summary()
+
+    def _check_file_level_offsets(self, df: pd.DataFrame) -> dict:
+        """Flags a DC level shift between separately-uploaded flight files
+        (e.g. flown on different days, or with the base station moved in
+        between) - the UAV magnetics guidelines' most-cited cause of
+        artefacts when a survey is assembled from multiple files/tiles.
+        Only an approximate diagnostic (comparing each file's own median
+        final anomaly against the pooled median, not true crossover
+        misties), but it is a no-op (never modifies the data) so a false
+        positive on genuinely-overlapping-but-different geology just shows
+        an informational warning rather than any risk."""
+        if "source_file_index" not in df.columns:
+            return {"available": False}
+        active = df["line_id"] >= 0
+        kept = df.loc[active]
+        n_files = kept["source_file_index"].nunique()
+        if n_files < 2:
+            return {"available": False}
+
+        overall_median = float(kept["anomaly"].median())
+        # Robust point-to-point noise estimate (MAD-based std of adjacent
+        # differences within each file) as the yardstick for "how big an
+        # offset would actually be suspicious" - scale-appropriate for
+        # this survey's own noise level rather than a fixed nT threshold.
+        diffs = kept.groupby("source_file_index")["anomaly"].apply(lambda s: np.diff(s.to_numpy()))
+        all_diffs = np.concatenate([d for d in diffs if len(d)]) if len(diffs) else np.array([])
+        noise_std = float(1.4826 * np.median(np.abs(all_diffs - np.median(all_diffs)))) if all_diffs.size else 0.0
+        flag_threshold_nt = max(3.0 * noise_std, 1.0)
+
+        files_out = []
+        for idx, group in kept.groupby("source_file_index"):
+            median_anomaly = float(group["anomaly"].median())
+            deviation = median_anomaly - overall_median
+            files_out.append(
+                {
+                    "source_file_index": int(idx),
+                    "n_points": int(len(group)),
+                    "median_anomaly_nt": median_anomaly,
+                    "deviation_nt": deviation,
+                    "flagged": bool(abs(deviation) > flag_threshold_nt),
+                }
+            )
+
+        return {
+            "available": True,
+            "n_files": int(n_files),
+            "flag_threshold_nt": flag_threshold_nt,
+            "flagged_any": any(f["flagged"] for f in files_out),
+            "files": files_out,
+        }
 
     def _apply_heading_effect_calibration(self, df: pd.DataFrame, params: ProcessParams) -> dict:
         """Zhang et al. (2022) heading-effect compensation (see
@@ -549,6 +654,8 @@ class Project:
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,
+            "noise_qc": self.noise_qc_info,
+            "file_level_check": self.file_level_info,
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling),
@@ -568,6 +675,8 @@ class Project:
             self.inversion_summary_cache,
             self.euler_summary_cache,
             self.target_summary_cache,
+            repeatability_summary=self.repeatability_summary_cache,
+            multiscale_edges_summary=self.multiscale_edges_summary_cache,
         )
 
     def _active_mask(self) -> pd.Series:
@@ -719,6 +828,30 @@ class Project:
         self.grid_cache[key] = result
         return result
 
+    def _cell_size_guideline_warning(self, cell_size_m: float) -> str | None:
+        """The UAV magnetics survey guidelines' rule of thumb (Section
+        11.1): grid to a cell size of 1/4 to 1/5 of the nominal line
+        spacing - coarser under-resolves the data (unnecessary smoothing),
+        finer risks fabricating detail the line spacing can't actually
+        support (gridding artefacts). Purely informational (never blocks
+        the request); a generous tolerance band around that rule since it
+        is itself only a guideline, not a hard limit."""
+        if not self.line_spacing_m or self.line_spacing_m <= 0:
+            return None
+        ratio = self.line_spacing_m / cell_size_m
+        if ratio < 3.0:
+            return (
+                f"셀 크기({cell_size_m:.1f}m)가 측선 간격({self.line_spacing_m:.1f}m)에 비해 너무 큽니다 - "
+                "가이드라인 권장 비율은 측선 간격의 1/4~1/5이며, 이보다 크면 자료가 불필요하게 뭉개질 수 있습니다."
+            )
+        if ratio > 8.0:
+            return (
+                f"셀 크기({cell_size_m:.1f}m)가 측선 간격({self.line_spacing_m:.1f}m)에 비해 너무 작습니다 - "
+                "가이드라인 권장 비율(측선 간격의 1/4~1/5)보다 촘촘해 측선 사이 보간이 실제로 뒷받침하지 못하는 "
+                "디테일이 만들어질 위험이 있습니다."
+            )
+        return None
+
     def get_grid_overlay(self, req: GridRequest) -> dict:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
@@ -744,6 +877,7 @@ class Project:
         )
         overlay["stats"] = _stats(pd.Series(grid.values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
+        overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         if req.show_contours:
             overlay["contours"] = compute_contours(
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
@@ -879,6 +1013,7 @@ class Project:
         )
         overlay["stats"] = _stats(pd.Series(values.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
+        overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         overlay["transform"] = req.transform
         if req.show_contours:
             overlay["contours"] = compute_contours(
@@ -1026,6 +1161,37 @@ class Project:
         }
         self.euler_summary_cache = summary
         return summary
+
+    def run_multiscale_edges(self, req: MultiscaleEdgeRequest) -> dict:
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        points = _multiscale_edges_solve(
+            grid.values,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.utm_epsg,
+            heights_m=req.heights_m,
+            percentile=req.percentile,
+        )
+        summary = {
+            "n_points": len(points),
+            "heights_m": req.heights_m,
+            "percentile": req.percentile,
+            "points": [
+                {"lat": p.lat, "lon": p.lon, "height_m": p.height_m, "thdr_value": p.thdr_value} for p in points
+            ],
+        }
+        self.multiscale_edges_summary_cache = summary
+        return summary
+
+    def get_power_spectrum(self, req: PowerSpectrumRequest) -> dict:
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed
+        line_df = df[df["line_id"] == req.line_id].sort_values("timestamp")
+        if line_df.empty:
+            raise ProjectError(f"측선 {req.line_id}을 찾을 수 없습니다.")
+        return compute_power_spectrum(line_df[req.value].to_numpy(), line_df["timestamp"])
 
     def run_target_detection(self, req: TargetDetectionRequest) -> dict:
         """Near-surface compact-target detection (mines, buried ordnance,

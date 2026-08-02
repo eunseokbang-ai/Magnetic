@@ -15,6 +15,10 @@ import LineProfileView from "./components/LineProfileView";
 // needs it, and most sessions never open it, so it's split into its own
 // chunk and fetched on demand instead of bloating the initial bundle.
 const InversionVolumeView = lazy(() => import("./components/InversionVolumeView"));
+// GuidelinePanel also pulls in plotly.js-dist-min (for the power-spectrum
+// chart) - same reasoning as InversionVolumeView above, split into its own
+// chunk rather than bloating the initial bundle.
+const GuidelinePanel = lazy(() => import("./components/GuidelinePanel"));
 import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
@@ -110,6 +114,8 @@ const DEFAULT_PARAMS = {
     max_crossover_distance_m: 15.0,
     iterative: true,
   },
+  noise_qc: { enabled: true },
+  notch_filter: { frequencies_hz: [], quality_factor: 30.0 },
 };
 
 export default function App() {
@@ -200,6 +206,25 @@ export default function App() {
   const [eulerResult, setEulerResult] = useState(null);
   const [eulerError, setEulerError] = useState(null);
   const [showEulerSolutions, setShowEulerSolutions] = useState(true);
+
+  const [repeatabilityUploading, setRepeatabilityUploading] = useState(false);
+  const [repeatabilityUploadInfo, setRepeatabilityUploadInfo] = useState(null);
+  const [repeatabilityAnalyzing, setRepeatabilityAnalyzing] = useState(false);
+  const [repeatabilityResult, setRepeatabilityResult] = useState(null);
+  const [repeatabilityError, setRepeatabilityError] = useState(null);
+
+  const [spectrumLineId, setSpectrumLineId] = useState(null);
+  const [spectrumValue, setSpectrumValue] = useState("mag_raw");
+  const [spectrumLoading, setSpectrumLoading] = useState(false);
+  const [spectrumResult, setSpectrumResult] = useState(null);
+  const [spectrumError, setSpectrumError] = useState(null);
+
+  const [multiscaleHeightsText, setMultiscaleHeightsText] = useState("0, 25, 50, 100, 200");
+  const [multiscalePercentile, setMultiscalePercentile] = useState(80.0);
+  const [multiscaleRunning, setMultiscaleRunning] = useState(false);
+  const [multiscaleResult, setMultiscaleResult] = useState(null);
+  const [multiscaleError, setMultiscaleError] = useState(null);
+  const [showMultiscaleLayer, setShowMultiscaleLayer] = useState(true);
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
@@ -757,6 +782,85 @@ export default function App() {
     }
   };
 
+  const handleUploadRepeatability = async (files) => {
+    try {
+      setRepeatabilityError(null);
+      setRepeatabilityUploading(true);
+      const id = await ensureProject();
+      const summary = await api.uploadRepeatability(id, files);
+      setRepeatabilityUploadInfo(summary);
+      setRepeatabilityResult(null);
+    } catch (e) {
+      setRepeatabilityError(e.message || String(e));
+    } finally {
+      setRepeatabilityUploading(false);
+    }
+  };
+
+  const handleAnalyzeRepeatability = async () => {
+    try {
+      setRepeatabilityError(null);
+      setRepeatabilityAnalyzing(true);
+      const resp = await api.analyzeRepeatability(projectId);
+      setRepeatabilityResult(resp);
+    } catch (e) {
+      setRepeatabilityError(e.message || String(e));
+    } finally {
+      setRepeatabilityAnalyzing(false);
+    }
+  };
+
+  const handleViewSpectrum = async () => {
+    try {
+      setSpectrumError(null);
+      setSpectrumLoading(true);
+      const resp = await api.getPowerSpectrum(projectId, { line_id: spectrumLineId, value: spectrumValue });
+      setSpectrumResult(resp);
+    } catch (e) {
+      setSpectrumError(e.message || String(e));
+    } finally {
+      setSpectrumLoading(false);
+    }
+  };
+
+  const handleAddNotchFrequency = (freqHz) => {
+    setProcessParams((p) => ({
+      ...p,
+      notch_filter: { ...p.notch_filter, frequencies_hz: [...p.notch_filter.frequencies_hz, freqHz] },
+    }));
+  };
+
+  const handleRemoveNotchFrequency = (freqHz) => {
+    setProcessParams((p) => ({
+      ...p,
+      notch_filter: { ...p.notch_filter, frequencies_hz: p.notch_filter.frequencies_hz.filter((f) => f !== freqHz) },
+    }));
+  };
+
+  const handleRunMultiscaleEdges = async () => {
+    try {
+      setMultiscaleError(null);
+      setMultiscaleRunning(true);
+      const heights_m = multiscaleHeightsText
+        .split(",")
+        .map((s) => parseFloat(s.trim()))
+        .filter((v) => !Number.isNaN(v));
+      const resp = await api.runMultiscaleEdges(projectId, {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        heights_m,
+        percentile: multiscalePercentile,
+      });
+      setMultiscaleResult(resp);
+    } catch (e) {
+      setMultiscaleError(e.message || String(e));
+    } finally {
+      setMultiscaleRunning(false);
+    }
+  };
+
   const handleSetPurposeMode = (mode) => {
     setPurposeMode(mode);
     setGridCellSize(mode === "target" ? 1.0 : 10.0);
@@ -1147,6 +1251,7 @@ export default function App() {
           onShapeDrawn={handleMapShapeDrawn}
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
           detectedTargets={showDetectedTargets ? targetDetectionResult?.targets : null}
+          multiscaleEdgePoints={showMultiscaleLayer ? multiscaleResult?.points : null}
         />
         {volumeData && (
           <Suspense
@@ -1295,6 +1400,52 @@ export default function App() {
           />
         </details>
 
+        <details style={{ marginBottom: 10 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}>
+            15. UAV 자력탐사 가이드라인 진단 도구 (반복측선 · 파워스펙트럼/노치필터 · 멀티스케일 엣지)
+          </summary>
+          <Suspense fallback={<div style={{ fontSize: 12, color: "#6b7280", padding: 8 }}>불러오는 중...</div>}>
+          <GuidelinePanel
+            ready={!!processSummary}
+            repeatability={{
+              onUploadFiles: handleUploadRepeatability,
+              uploading: repeatabilityUploading,
+              uploadInfo: repeatabilityUploadInfo,
+              onAnalyze: handleAnalyzeRepeatability,
+              analyzing: repeatabilityAnalyzing,
+              result: repeatabilityResult,
+              error: repeatabilityError,
+            }}
+            spectrum={{
+              lineOptions: (processSummary?.lines || []).map((l) => l.line_id),
+              selectedLineId: spectrumLineId,
+              setSelectedLineId: setSpectrumLineId,
+              spectrumValue,
+              setSpectrumValue,
+              onView: handleViewSpectrum,
+              loading: spectrumLoading,
+              result: spectrumResult,
+              error: spectrumError,
+              notchFrequencies: processParams.notch_filter.frequencies_hz,
+              onAddNotch: handleAddNotchFrequency,
+              onRemoveNotch: handleRemoveNotchFrequency,
+            }}
+            multiscaleEdges={{
+              heightsText: multiscaleHeightsText,
+              setHeightsText: setMultiscaleHeightsText,
+              percentile: multiscalePercentile,
+              setPercentile: setMultiscalePercentile,
+              onRun: handleRunMultiscaleEdges,
+              running: multiscaleRunning,
+              result: multiscaleResult,
+              error: multiscaleError,
+              showLayer: showMultiscaleLayer,
+              setShowLayer: setShowMultiscaleLayer,
+            }}
+          />
+          </Suspense>
+        </details>
+
         <details open={purposeMode === "target"} style={{ marginBottom: 4 }}>
           <summary style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
             🎯 근지표 표적탐지 (지뢰·불발탄·은닉 차량 등){purposeMode === "mineral" && " — 광물자원탐사에는 보통 불필요"}
@@ -1330,6 +1481,11 @@ export default function App() {
           stats={legendStats}
           hoverPoint={hoverPoint}
         />
+        {overlay?.cell_size_guideline_warning && (
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>
+            ⚠ {overlay.cell_size_guideline_warning}
+          </div>
+        )}
       </div>
     </div>
   );

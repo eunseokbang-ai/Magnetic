@@ -117,6 +117,24 @@ export function runTargetDetection(projectId, req) {
   return request(`/projects/${projectId}/target-detection`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function runMultiscaleEdges(projectId, req) {
+  return request(`/projects/${projectId}/multiscale-edges`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getPowerSpectrum(projectId, req) {
+  return request(`/projects/${projectId}/spectrum`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function uploadRepeatability(projectId, files, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  return uploadWithProgress(`/projects/${projectId}/upload/repeatability`, form, onProgress);
+}
+
+export function analyzeRepeatability(projectId) {
+  return request(`/projects/${projectId}/repeatability/analyze`, { method: "POST" });
+}
+
 export function getLineProfile(projectId, lineId, value) {
   return request(`/projects/${projectId}/line-profile?line_id=${lineId}&value=${value}`);
 }

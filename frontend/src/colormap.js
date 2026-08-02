@@ -43,6 +43,21 @@ const GRAY_STOPS = [
   [20, 20, 20], [255, 255, 255],
 ];
 
+// Cubehelix (Green, 2011; default params start=0.5, rotations=-1.5,
+// gamma=1.0) - a rainbow-like colormap constructed so lightness increases
+// monotonically along it by design, avoiding the "perceptual dead zones"
+// (uneven visual contrast that can hide real features) that the UAV
+// magnetics survey guidelines specifically call out in ordinary vendor
+// rainbow tables (see Kovesi, 2015, cited in those guidelines). Matches
+// matplotlib's built-in "cubehelix" colormap exactly, so the same name is
+// sent as the backend `cmap` request field.
+const CUBEHELIX_STOPS = [
+  [0, 0, 0], [21, 11, 29], [27, 29, 59], [23, 55, 77], [22, 83, 76],
+  [35, 106, 62], [67, 119, 49], [113, 123, 50], [160, 121, 73],
+  [196, 122, 116], [212, 131, 167], [209, 151, 211], [199, 179, 237],
+  [193, 207, 243], [202, 231, 240], [226, 246, 240], [255, 255, 255],
+];
+
 // Approximates the classic Geosoft Oasis Montaj default grid color table
 // (dark blue -> blue -> cyan -> green -> yellow -> orange -> red -> magenta
 // -> pink). Control points are unevenly spaced, unlike the other palettes
@@ -92,6 +107,7 @@ const COLORMAPS = {
   Spectral_r: SPECTRAL_R_STOPS,
   gray: GRAY_STOPS,
   geosoft_rainbow: GEOSOFT_RAINBOW_STOPS,
+  cubehelix: CUBEHELIX_STOPS,
 };
 
 export const COLORMAP_OPTIONS = [
@@ -103,6 +119,7 @@ export const COLORMAP_OPTIONS = [
   { value: "Spectral_r", label: "Spectral (발산)" },
   { value: "gray", label: "Grayscale" },
   { value: "geosoft_rainbow", label: "Geosoft Rainbow (물리탐사 표준)" },
+  { value: "cubehelix", label: "Cubehelix (지각 균일 레인보우, UAV 가이드라인 권장)" },
 ];
 
 function interpolateStops(stops, t) {

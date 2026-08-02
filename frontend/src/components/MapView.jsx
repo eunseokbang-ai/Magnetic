@@ -250,6 +250,47 @@ function EulerLayer({ solutions }) {
   return null;
 }
 
+// Multi-scale edge detection ("worming") results: THDR ridge points at
+// several upward-continuation heights, colored by height so a ridge that
+// persists across many heights (a steep, laterally-continuous contact)
+// visually stands apart from one that only shows up near the surface
+// (a shallow, localised source) - see processing/multiscale_edges.py.
+function MultiscaleEdgeLayer({ points }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const list = points || [];
+    if (list.length === 0) return;
+    const heights = list.map((p) => p.height_m);
+    const hmin = Math.min(...heights);
+    const hmax = Math.max(...heights);
+    const colorScale = makeColorScale("plasma", hmin, hmax);
+    for (const p of list) {
+      const marker = L.circleMarker([p.lat, p.lon], {
+        radius: 3,
+        color: "#111827",
+        weight: 0.5,
+        fillColor: colorScale(p.height_m),
+        fillOpacity: 0.85,
+      });
+      marker.bindTooltip(`상향연속 고도: ${p.height_m.toFixed(0)} m<br/>THDR: ${p.thdr_value.toFixed(2)}`, { sticky: true });
+      group.addLayer(marker);
+    }
+  }, [points]);
+
+  return null;
+}
+
 function TargetDetectionLayer({ targets }) {
   const map = useMap();
   const groupRef = useRef(null);
@@ -306,6 +347,7 @@ export default function MapView({
   onShapeDrawn,
   eulerSolutions,
   detectedTargets,
+  multiscaleEdgePoints,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -354,6 +396,7 @@ export default function MapView({
 
       {eulerSolutions && <EulerLayer solutions={eulerSolutions} />}
       {detectedTargets && <TargetDetectionLayer targets={detectedTargets} />}
+      {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
 
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
       <ScaleControl position="bottomright" imperial={false} />

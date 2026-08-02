@@ -79,6 +79,14 @@ class HeadingEffectCalibrationParams(BaseModel):
     quality_threshold_nt: float = Field(3.0, gt=0)
 
 
+class NoiseQcParams(BaseModel):
+    # Normalised 4th/8th difference noise QC channels (Denisov et al.,
+    # 2006), computed per line right after flight-path cleaning - see
+    # processing/noise_qc.py. Purely diagnostic (surfaced in the process
+    # summary/report), never modifies the data.
+    enabled: bool = True
+
+
 class CrossoverLevelingParams(BaseModel):
     # Off by default - tie lines aren't always flown, and this only does
     # anything useful when perpendicular calibration lines are present in
@@ -90,6 +98,17 @@ class CrossoverLevelingParams(BaseModel):
     # instead of treating the tie-line network as a perfect fixed
     # reference - see processing/crossover_leveling.py.
     iterative: bool = True
+
+
+class NotchFilterParams(BaseModel):
+    # Removes specific interference frequencies (e.g. UAV motor rotation
+    # ~45-60Hz, or a known cultural noise source) from the raw magnetometer
+    # signal before the main low-pass filter - see processing/filters.py:
+    # notch_filter and the power-spectrum diagnostic
+    # (processing/spectrum.py) used to find candidate frequencies. Empty
+    # list (default) = no-op.
+    frequencies_hz: list[float] = Field(default_factory=list)
+    quality_factor: float = Field(30.0, gt=0)
 
 
 FilterMethod = Literal["butterworth", "savgol", "moving_average"]
@@ -124,6 +143,8 @@ class ProcessParams(BaseModel):
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
     crossover_leveling: CrossoverLevelingParams = CrossoverLevelingParams()
+    noise_qc: NoiseQcParams = NoiseQcParams()
+    notch_filter: NotchFilterParams = NotchFilterParams()
 
 
 ValueField = Literal["tmi", "anomaly"]
@@ -294,6 +315,24 @@ class TargetDetectionRequest(BaseModel):
     fit_window_m: float = Field(8.0, gt=0)
     max_depth_m: float = Field(5.0, gt=0)
     min_fit_quality: float = Field(0.3, ge=0, le=1)
+
+
+class MultiscaleEdgeRequest(BaseModel):
+    # Multi-scale edge detection ("worming") - see
+    # processing/multiscale_edges.py. Traces THDR ridges at a series of
+    # upward-continued heights, a quick structural-mapping complement to
+    # Euler deconvolution recommended by the UAV magnetics guidelines.
+    value: ValueField = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    heights_m: list[float] = Field(default_factory=lambda: [0.0, 25.0, 50.0, 100.0, 200.0])
+    percentile: float = Field(80.0, gt=0, lt=100)
+
+
+class PowerSpectrumRequest(BaseModel):
+    line_id: int
+    value: Literal["mag_raw", "mag_filtered"] = "mag_raw"
 
 
 class ChatMessage(BaseModel):

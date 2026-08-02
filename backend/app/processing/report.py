@@ -25,6 +25,8 @@ def generate_report_markdown(
     inversion_summary: dict | None,
     euler_summary: dict | None,
     target_summary: dict | None = None,
+    repeatability_summary: dict | None = None,
+    multiscale_edges_summary: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# 드론 자력탐사 자료 처리 보고서")
@@ -134,6 +136,26 @@ def generate_report_markdown(
         )
     elif cl:
         lines.append(f"- 타이라인 보정: 미적용 ({cl.get('reason') or '해당 없음'})")
+
+    nq = process_summary.get("noise_qc")
+    if nq and nq.get("available"):
+        lines.append(
+            f"- **노이즈 QC (정규화 4th/8th difference)**: 전체 RMS 4th={_fmt(nq.get('overall_rms_4th_diff_nt'), 3)} nT, "
+            f"8th={_fmt(nq.get('overall_rms_8th_diff_nt'), 3)} nT (샘플링 {_fmt(nq.get('sample_rate_hz'), 1)} Hz, "
+            f"기준참고값 {_fmt(nq.get('reference_threshold_4th_diff_nt'), 3)} nT) - 이상 측선 {nq.get('n_lines_flagged')}개 플래그됨"
+        )
+    else:
+        lines.append("- 노이즈 QC (4th/8th difference): 미적용")
+
+    flc = process_summary.get("file_level_check")
+    if flc and flc.get("available"):
+        if flc.get("flagged_any"):
+            offenders = ", ".join(
+                f"파일#{f['source_file_index']} ({_fmt(f['deviation_nt'])} nT)" for f in flc["files"] if f["flagged"]
+            )
+            lines.append(f"- ⚠ **파일(타일) 간 레벨 불일치**: {offenders} - 베이스 위치 변경 등 확인 필요")
+        else:
+            lines.append(f"- 파일(타일) 간 레벨 불일치: 없음 ({flc.get('n_files')}개 파일 비교)")
     lines.append("")
 
     lines.append("## 4. 측선 판별 결과")
@@ -212,6 +234,28 @@ def generate_report_markdown(
                     f"{_fmt(t.get('moment_am2'))} | {t.get('size_class')} | {_fmt(t.get('peak_anomaly_nt'))} | "
                     f"{_fmt(t.get('fit_quality'))} |"
                 )
+        lines.append("")
+
+    if repeatability_summary and repeatability_summary.get("available"):
+        lines.append("## 10. 반복측선(Repeatability) 분석 결과")
+        lines.append("")
+        lines.append(
+            f"- 반복 그룹 수: {repeatability_summary.get('n_groups')}, 총 통과 횟수: {repeatability_summary.get('n_passes_total')}"
+        )
+        lines.append(
+            f"- 전체 노이즈 봉투: 1σ {_fmt(repeatability_summary.get('overall_noise_1sigma_nt'))} nT, "
+            f"2σ {_fmt(repeatability_summary.get('overall_noise_2sigma_nt'))} nT, "
+            f"3σ {_fmt(repeatability_summary.get('overall_noise_3sigma_nt'))} nT"
+        )
+        lines.append("")
+
+    if multiscale_edges_summary and multiscale_edges_summary.get("n_points"):
+        lines.append("## 11. 멀티스케일 엣지 검출(Worming) 결과")
+        lines.append("")
+        lines.append(
+            f"- 검출된 엣지 포인트 수: {multiscale_edges_summary.get('n_points')} "
+            f"(상향연속 고도: {multiscale_edges_summary.get('heights_m')})"
+        )
         lines.append("")
 
     return "\n".join(lines) + "\n"

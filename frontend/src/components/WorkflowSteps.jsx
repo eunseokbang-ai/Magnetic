@@ -637,6 +637,26 @@ export default function WorkflowSteps({
                   <br />
                 </>
               )}
+              {processSummary.noise_qc?.available && (
+                <>
+                  노이즈 QC (정규화 4th/8th difference): 전체 RMS {processSummary.noise_qc.overall_rms_4th_diff_nt?.toFixed(3)} /{" "}
+                  {processSummary.noise_qc.overall_rms_8th_diff_nt?.toFixed(3)} nT
+                  {processSummary.noise_qc.n_lines_flagged > 0 && (
+                    <span style={{ color: "#b45309" }}> — 이상 측선 {processSummary.noise_qc.n_lines_flagged}개 감지됨</span>
+                  )}
+                  <br />
+                </>
+              )}
+              {processSummary.file_level_check?.available && processSummary.file_level_check.flagged_any && (
+                <div style={{ color: "#dc2626", marginTop: 4 }}>
+                  ⚠ 파일(타일) 간 레벨 불일치 감지: 베이스 위치 변경 등을 확인하세요 (
+                  {processSummary.file_level_check.files
+                    .filter((f) => f.flagged)
+                    .map((f) => `파일#${f.source_file_index} ${f.deviation_nt?.toFixed(1)}nT`)
+                    .join(", ")}
+                  )
+                </div>
+              )}
               {processSummary.heading_correction?.applied ? (
                 <span>
                   헤딩 보정 오프셋: {processSummary.heading_correction.offset_nt?.toFixed(2)} nT (매칭 {processSummary.heading_correction.n_matched_pairs}쌍 중 조용한{" "}
@@ -714,9 +734,11 @@ export default function WorkflowSteps({
           {alongLineSmooth && (
             <Field
               label={
-                lineSpacingM
-                  ? `평활화 파장 (m) — 비워두면 추정 측선 간격(${lineSpacingM.toFixed(1)}m) 사용`
-                  : "평활화 파장 (m) — 비워두면 측선 간격 자동 추정값 사용"
+                <span title="UAV 자력탐사 가이드라인의 디코러게이션 규칙: 저역통과 파장은 타이라인 간격의 2배, 고역통과 파장은 측선 간격의 2배가 일반적입니다. 여기 자동값(측선 간격 1배)은 우리 프로그램의 그리딩 전 앤티앨리어싱 목적에 맞춘 값으로, 가이드라인 수치와 반드시 같을 필요는 없지만 참고용으로 함께 조정해볼 수 있습니다.">
+                  {lineSpacingM
+                    ? `평활화 파장 (m) — 비워두면 추정 측선 간격(${lineSpacingM.toFixed(1)}m) 사용 ⓘ`
+                    : "평활화 파장 (m) — 비워두면 측선 간격 자동 추정값 사용 ⓘ"}
+                </span>
               }
             >
               <input
@@ -883,7 +905,13 @@ export default function WorkflowSteps({
                   onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_angle_tolerance_deg: parseFloat(e.target.value) }))}
                 />
               </Field>
-              <Field label="파장 대역폭 배수 (측선 간격 기준, 클수록 더 넓은 파장대를 완화)">
+              <Field
+                label={
+                  <span title="UAV 자력탐사 가이드라인의 디코러게이션 규칙: 저역통과 파장은 타이라인 간격의 2배, 고역통과 파장은 측선 간격의 2배가 일반적입니다. 값을 키우면 더 넓은 파장대(가이드라인 규칙에 가까운 폭)를 완화합니다.">
+                    파장 대역폭 배수 (측선 간격 기준, 클수록 더 넓은 파장대를 완화) ⓘ
+                  </span>
+                }
+              >
                 <input
                   type="number"
                   step="0.1"

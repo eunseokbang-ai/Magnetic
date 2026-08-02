@@ -478,6 +478,14 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     n_invalid_coords_removed = sum(p.attrs.get("n_invalid_coords_removed", 0) for p in parts)
     source_formats = sorted({p.attrs.get("source_format", "generic") for p in parts})
 
+    # Tags each row with which uploaded file it came from (0-based upload
+    # order) - lets downstream processing flag a DC level offset specific
+    # to one file (e.g. base station moved between flights, see
+    # store.py's file-level-offset check) rather than only ever seeing the
+    # combined, already-mixed dataset.
+    for i, p in enumerate(parts):
+        p["source_file_index"] = i
+
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.sort_values("timestamp").reset_index(drop=True)
     n_before_dedup = len(combined)
