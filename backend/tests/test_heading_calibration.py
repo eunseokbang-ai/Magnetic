@@ -525,8 +525,16 @@ def test_pipeline_turn_calibration_quality_check_fails_when_contaminated():
     info = project.heading_calibration_info
     assert info["available"] is True
     assert info["calibration_source"] == "auto_turns"
-    assert info["applied"] is True  # still applied - quality_pass is informational, not a gate
+    # A calibration surface that fails its own held-out quality check is
+    # fit to noise/real gradient rather than a clean heading effect -
+    # applying it anyway would inject that noise into the survey data
+    # (confirmed on real survey data to roughly double the point-to-point
+    # anomaly jump and show up as along-track corrugation in the gridded
+    # output), so quality_pass gates whether the correction is applied at
+    # all, mirroring Geometrics' own Pass/Fail calibration-file gate.
+    assert info["applied"] is False
     assert info["quality_pass"] is False, info["quality_check"]
+    assert "reason" in info
 
 
 if __name__ == "__main__":

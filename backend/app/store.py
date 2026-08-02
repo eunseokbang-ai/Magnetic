@@ -458,6 +458,37 @@ class Project:
         )
         quality_pass = quality["available"] and quality["residual_std_nt"] <= hec.quality_threshold_nt
 
+        coverage = calibration_angular_coverage_deg(heading_map.theta_cal, heading_map.phi_cal)
+
+        # A calibration surface that fails its own held-out quality check
+        # (see cross_validate_heading_effect_map) is fit to noise/real
+        # spatial gradient rather than a clean heading effect - querying it
+        # would inject that noise into every survey sample it touches
+        # (point-to-point jumps as large as the underlying anomaly signal
+        # itself, confirmed on real survey data), showing up as along-track
+        # corrugation in the gridded output. Geometrics' own processing
+        # software gates compensation the same way (Pass/Fail on the
+        # calibration file before it can be used) - mirror that rather than
+        # silently applying a failed calibration anyway.
+        if not quality_pass:
+            return {
+                "enabled": True,
+                "available": True,
+                "applied": False,
+                "calibration_source": calibration_source,
+                "n_calibration_points": int(len(heading_map.theta_cal)),
+                "quality_check": quality,
+                "quality_pass": False,
+                "quality_threshold_nt": hec.quality_threshold_nt,
+                "theta_range_deg": coverage["theta_range_deg"],
+                "phi_range_deg": coverage["phi_range_deg"],
+                "reason": (
+                    "캘리브레이션 품질검증 실패로 보정을 적용하지 않았습니다 "
+                    f"(held-out 잔차 표준편차 {quality.get('residual_std_nt', float('nan')):.2f}nT > "
+                    f"허용기준 {hec.quality_threshold_nt}nT). 측선 자료 자체가 원래 상태로 유지됩니다."
+                ),
+            }
+
         theta_survey, phi_survey = magnetic_heading(
             df["compass_x"].to_numpy(), df["compass_y"].to_numpy(), df["compass_z"].to_numpy()
         )
@@ -469,7 +500,6 @@ class Project:
                 df.loc[corrected_mask, "mag_diurnal_corrected"] - deviation[corrected_mask]
             )
 
-        coverage = calibration_angular_coverage_deg(heading_map.theta_cal, heading_map.phi_cal)
         n = len(corrected_mask)
         pct_extrapolated = float(100.0 * (extrapolated & corrected_mask).sum() / n) if n else 0.0
         return {
