@@ -142,6 +142,8 @@ export default function WorkflowSteps({
   const lp = processParams.line_params;
   const dsp = processParams.despike_params;
   const updateDespike = (key, val) => setProcessParams((p) => ({ ...p, despike_params: { ...p.despike_params, [key]: val } }));
+  const swd = processParams.sway_detection;
+  const updateSway = (key, val) => setProcessParams((p) => ({ ...p, sway_detection: { ...p.sway_detection, [key]: val } }));
   const cl = processParams.crossover_leveling;
   const updateCrossover = (key, val) => setProcessParams((p) => ({ ...p, crossover_leveling: { ...p.crossover_leveling, [key]: val } }));
   const dp = processParams.diurnal_params;
@@ -361,6 +363,27 @@ export default function WorkflowSteps({
             </>
           )}
 
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={swd.enabled} onChange={(e) => updateSway("enabled", e.target.checked)} />
+            <span
+              title="드론에 매달린 자력계가 흔들리거나 회전하면 헤딩 오차가 생겨 측선 줄무늬(코러게이션)의 주원인이 됩니다. 원본 파일에 자이로/가속도 컬럼이 있을 때만 동작하며, 없으면 자동으로 건너뜁니다."
+            >
+              IMU 흔들림(스웨이) 검출 — 자이로/가속도 데이터로 센서가 흔들린 구간을 자동 제외 (지원 포맷에서만 동작)
+            </span>
+          </label>
+          {swd.enabled && (
+            <Field label="탐지 민감도 (robust z-score 배수) — 작을수록 더 많이 흔들림으로 판정">
+              <input
+                type="number"
+                step="0.5"
+                min="0.1"
+                style={inputStyle}
+                value={swd.threshold_k}
+                onChange={(e) => updateSway("threshold_k", parseFloat(e.target.value))}
+              />
+            </Field>
+          )}
+
           <Field label="측선 방향 허용오차 (deg)">
             <input type="number" style={inputStyle} value={lp.heading_tolerance_deg} onChange={(e) => updateLine("heading_tolerance_deg", parseFloat(e.target.value))} />
           </Field>
@@ -475,6 +498,19 @@ export default function WorkflowSteps({
               {processSummary.despike?.enabled && (
                 <>
                   스파이크 제거: {processSummary.despike.n_spikes_removed}개 ({processSummary.despike.pct_spikes_removed?.toFixed(2)}%)
+                  <br />
+                </>
+              )}
+              {processSummary.sway_detection?.enabled && processSummary.sway_detection?.available && (
+                <>
+                  IMU 흔들림 검출: {processSummary.sway_detection.n_points_excluded}개 포인트 제외 ({processSummary.sway_detection.pct_points_flagged?.toFixed(2)}%, 신호:{" "}
+                  {processSummary.sway_detection.signal_used})
+                  <br />
+                </>
+              )}
+              {processSummary.sway_detection?.enabled && processSummary.sway_detection?.available === false && (
+                <>
+                  <span style={{ color: "#9ca3af" }}>IMU 흔들림 검출: 원본 파일에 자이로/가속도 데이터 없음 (건너뜀)</span>
                   <br />
                 </>
               )}

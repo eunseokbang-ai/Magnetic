@@ -39,6 +39,16 @@ class DespikeParams(BaseModel):
     adaptive_expand_samples: int = Field(4, ge=0, le=50)
 
 
+class SwayDetectionParams(BaseModel):
+    # Flags samples where the IMU (gyroscope/accelerometer) shows the
+    # sensor was swinging/rotating abnormally, and excludes them the same
+    # way turn/takeoff-landing samples already are - see processing/sway.py.
+    # A no-op when the source file has no gyro/accel columns (only the
+    # generic/Geometrics MagArrow schema carries them).
+    enabled: bool = True
+    threshold_k: float = Field(4.0, gt=0)  # robust-z multiples before a sample counts as high-sway
+
+
 class CrossoverLevelingParams(BaseModel):
     # Off by default - tie lines aren't always flown, and this only does
     # anything useful when perpendicular calibration lines are present in
@@ -78,6 +88,7 @@ class ProcessParams(BaseModel):
     # Korea-domestic UTM 51N/52N. None (default) = generic auto UTM.
     korea_projection: Optional[Literal["korea_utm", "korea2010", "utm"]] = None
     despike_params: DespikeParams = DespikeParams()
+    sway_detection: SwayDetectionParams = SwayDetectionParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()

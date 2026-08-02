@@ -124,6 +124,29 @@ def test_sensys_r3_asc_format():
     assert np.isclose(df["mag_raw"].iloc[0], 50669.42)
 
 
+def test_generic_format_extracts_gyro_accel_when_present():
+    header = "Date,Time,Latitude,Longitude,Mag,GyroscopeX,GyroscopeY,GyroscopeZ,AccelerometerX,AccelerometerY,AccelerometerZ"
+    rows = [header]
+    for i in range(20):
+        rows.append(f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{50000 + i},0.1,-0.2,0.3,-0.01,0.02,1.0")
+    df = load_drone_csv(_buf("\n".join(rows)))
+    assert len(df) == 20
+    expected_gyro = np.sqrt(0.1**2 + 0.2**2 + 0.3**2)
+    expected_accel = np.sqrt(0.01**2 + 0.02**2)
+    assert np.allclose(df["gyro_mag"], expected_gyro)
+    assert np.allclose(df["accel_horiz_g"], expected_accel)
+
+
+def test_generic_format_without_gyro_accel_columns_is_nan():
+    # test_generic_still_works's fixture has no Gyroscope*/Accelerometer* columns
+    rows = ["Date,Time,Latitude,Longitude,Mag"]
+    for i in range(20):
+        rows.append(f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{50000 + i}")
+    df = load_drone_csv(_buf("\n".join(rows)))
+    assert df["gyro_mag"].isna().all()
+    assert df["accel_horiz_g"].isna().all()
+
+
 def test_unrecognized_generic_missing_columns_raises():
     text = "foo,bar\n1,2\n"
     with pytest.raises(DroneLoadError):

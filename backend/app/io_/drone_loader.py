@@ -27,6 +27,14 @@ import pandas as pd
 REQUIRED_COLUMNS = ["Date", "Time", "Latitude", "Longitude", "Mag"]
 SPARSE_NUMERIC_COLUMNS = ["Altitude", "HeightOverEllipsoid", "Hdop", "SpeedOverGround"]
 
+# Optional IMU columns (only present in the generic/Geometrics MagArrow
+# schema) used by processing.sway to flag samples taken while the
+# suspended sensor was swinging/rotating rather than hanging steady -
+# every other format parser leaves these as NaN, which detect_sway
+# treats as "no IMU data available" and skips.
+_GYRO_COLUMNS = ["GyroscopeX", "GyroscopeY", "GyroscopeZ"]
+_ACCEL_HORIZ_COLUMNS = ["AccelerometerX", "AccelerometerY"]
+
 # MicroInfinity Mag's MagField_Jn columns are in microtesla; internally
 # every other loader/downstream step works in nT.
 _UT_TO_NT = 1000.0
@@ -96,6 +104,19 @@ def _parse_generic(text: str) -> pd.DataFrame:
         df["MagValid"] = pd.to_numeric(df["MagValid"], errors="coerce")
         df = df[(df["MagValid"].isna()) | (df["MagValid"] != 0)]
 
+    gyro_mag = np.nan
+    if all(c in df.columns for c in _GYRO_COLUMNS):
+        gx, gy, gz = (pd.to_numeric(df[c], errors="coerce") for c in _GYRO_COLUMNS)
+        gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)
+
+    # Horizontal-only (X/Y) accelerometer magnitude: Z is dominated by the
+    # ~1g gravity component regardless of swing, so including it would
+    # mostly just add a large, unrelated offset to the sway signal.
+    accel_horiz = np.nan
+    if all(c in df.columns for c in _ACCEL_HORIZ_COLUMNS):
+        ax, ay = (pd.to_numeric(df[c], errors="coerce") for c in _ACCEL_HORIZ_COLUMNS)
+        accel_horiz = np.sqrt(ax**2 + ay**2)
+
     return pd.DataFrame(
         {
             "timestamp": df["timestamp"],
@@ -105,6 +126,8 @@ def _parse_generic(text: str) -> pd.DataFrame:
             "altitude_msl_m": df["Altitude"] if "Altitude" in df.columns else np.nan,
             "geoid_separation_m": df["HeightOverEllipsoid"] if "HeightOverEllipsoid" in df.columns else np.nan,
             "speed_over_ground": df["SpeedOverGround"] if "SpeedOverGround" in df.columns else np.nan,
+            "gyro_mag": gyro_mag,
+            "accel_horiz_g": accel_horiz,
         }
     )
 
@@ -324,7 +347,7 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
     reconstruction. See load_drone_csv for the ellipsoidal-height note.
     """
     df = raw.copy()
-    for col in ["lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground"]:
+    for col in ["lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground", "gyro_mag", "accel_horiz_g"]:
         if col not in df.columns:
             df[col] = np.nan
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -375,6 +398,8 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
             "geoid_separation_m": geoid_sep,
             "altitude_ellipsoidal_m": altitude_ellipsoidal,
             "speed_over_ground": df["speed_over_ground"].astype(float).values,
+            "gyro_mag": df["gyro_mag"].astype(float).values,
+            "accel_horiz_g": df["accel_horiz_g"].astype(float).values,
         }
     )
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
@@ -390,8 +415,10 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
     is auto-detected from the file header - see _detect_format.
 
     Returns columns: point_id, timestamp, lat, lon, mag_raw, altitude_msl_m,
-    geoid_separation_m, altitude_ellipsoidal_m, speed_over_ground (may be
-    NaN if not present in source). Result carries the detected format name
+    geoid_separation_m, altitude_ellipsoidal_m, speed_over_ground, gyro_mag,
+    accel_horiz_g (may be NaN if not present in source - gyro_mag/
+    accel_horiz_g are only populated for the generic/Geometrics MagArrow
+    schema, see processing.sway). Result carries the detected format name
     in `.attrs["source_format"]`.
 
     Note: despite its name, the generic source's `HeightOverEllipsoid`

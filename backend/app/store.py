@@ -62,6 +62,7 @@ from .processing.geology_sample import GeologySampleError, sample_geotiff_at_poi
 from .processing.gps_lag import apply_gps_mag_lag
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
+from .processing.sway import detect_sway
 from .processing.render import (
     grid_to_geotiff_bytes,
     grid_to_geotiff_bytes_colored,
@@ -143,6 +144,7 @@ class Project:
     declination_deg: float | None = None
     diurnal_info: dict | None = None
     despike_info: dict | None = None
+    sway_info: dict | None = None
     crossover_info: dict | None = None
     gps_lag_info: dict | None = None
     inversion_summary_cache: dict | None = None
@@ -251,6 +253,26 @@ class Project:
         df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
+
+        sp = params.sway_detection
+        if sp.enabled:
+            sway_mask, self.sway_info = detect_sway(
+                df["gyro_mag"].to_numpy(), df["accel_horiz_g"].to_numpy(), threshold_k=sp.threshold_k
+            )
+            if self.sway_info["available"]:
+                # Only downgrade points that detect_lines already accepted
+                # onto a line - a swinging sample during a turn is already
+                # excluded, and re-tagging it wouldn't change anything but
+                # would make n_points_excluded double-count.
+                flagged_active = sway_mask & (df["line_id"].to_numpy() >= 0)
+                df.loc[flagged_active, "exclusion_reason"] = "high_sway"
+                df.loc[flagged_active, "line_id"] = -1
+                self.sway_info["n_points_excluded"] = int(flagged_active.sum())
+            else:
+                self.sway_info["n_points_excluded"] = 0
+        else:
+            self.sway_info = {"enabled": False, "available": False, "n_points_excluded": 0}
+
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
         diurnal_result = apply_diurnal_correction(
@@ -345,6 +367,7 @@ class Project:
             "declination_deg": self.declination_deg,
             "diurnal": self.diurnal_info,
             "despike": self.despike_info,
+            "sway_detection": self.sway_info,
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,

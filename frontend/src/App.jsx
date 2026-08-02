@@ -77,6 +77,10 @@ const DEFAULT_PARAMS = {
     adaptive_gradient_threshold: 5.0,
     adaptive_expand_samples: 4,
   },
+  sway_detection: {
+    enabled: true,
+    threshold_k: 4.0,
+  },
   line_params: {
     heading_lag_seconds: 1.0,
     heading_tolerance_deg: 20.0,

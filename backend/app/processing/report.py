@@ -79,6 +79,17 @@ def generate_report_markdown(
     else:
         lines.append("- 스파이크 제거: 미적용")
 
+    sw = process_summary.get("sway_detection")
+    if sw and sw.get("enabled") and sw.get("available"):
+        lines.append(
+            f"- **IMU 흔들림(스웨이) 검출**: {sw.get('n_points_excluded')}개 포인트 제외 "
+            f"({_fmt(sw.get('pct_points_flagged'))}%, 신호: {sw.get('signal_used')})"
+        )
+    elif sw and sw.get("enabled"):
+        lines.append("- IMU 흔들림(스웨이) 검출: 사용 설정됨이나 원본 파일에 자이로/가속도 데이터 없음 (미적용)")
+    else:
+        lines.append("- IMU 흔들림(스웨이) 검출: 미적용")
+
     diurnal = process_summary.get("diurnal")
     if diurnal:
         overlap_note = "정상 (비행-베이스 시간 겹침)" if diurnal.get("has_overlap") else "⚠ 베이스와 비행 시간이 겹치지 않음"
