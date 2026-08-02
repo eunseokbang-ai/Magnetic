@@ -265,6 +265,27 @@ def cross_track_coordinate(x: np.ndarray, y: np.ndarray, dominant_azimuth_deg: f
     return np.asarray(x) * perp[0] + np.asarray(y) * perp[1]
 
 
+def group_turn_segments(df: pd.DataFrame, max_gap_seconds: float = 1.0) -> np.ndarray:
+    """Groups contiguous runs of turn/off-azimuth points (already tagged
+    via detect_lines' exclusion_reason column) into individual turn
+    events. Each turn typically covers a small spatial footprint while
+    sweeping a wide range of headings - closely matching a dedicated
+    heading-effect calibration flight's clover-leaf pattern (see
+    processing/heading_calibration.py's docstring; the manufacturer's own
+    calibration guide notes "the best calibration data is usually located
+    where the drone makes a turn"). Returns a group id array the same
+    length as df (-1 for non-turn points), split on both a state change
+    (turn vs. not) and a time gap exceeding max_gap_seconds so two turns
+    separated by a flight-log gap aren't merged into one."""
+    is_turn = df["exclusion_reason"].isin(["off_azimuth_turn", "turn_buffer"]).to_numpy()
+    t = df["timestamp"]
+    big_gap = t.diff().dt.total_seconds().fillna(0) > max_gap_seconds
+    turn_series = pd.Series(is_turn, index=df.index)
+    state_change = turn_series.ne(turn_series.shift()).fillna(True)
+    group_id = (state_change | big_gap).cumsum().to_numpy()
+    return np.where(is_turn, group_id, -1)
+
+
 def estimate_line_spacing_m(df: pd.DataFrame, dominant_azimuth_deg: float) -> float | None:
     """Median perpendicular distance between adjacent accepted lines, used
     to size the grid interpolation search radius and line-matching distance

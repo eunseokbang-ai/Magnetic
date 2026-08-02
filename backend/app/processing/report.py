@@ -81,15 +81,26 @@ def generate_report_markdown(
 
     hec = process_summary.get("heading_effect_calibration")
     if hec and hec.get("enabled") and hec.get("applied"):
+        source_label = "업로드된 캘리브레이션 비행" if hec.get("calibration_source") == "uploaded_file" else "측선 턴 구간 자동 추출"
+        q = hec.get("quality_check") or {}
+        quality_label = "PASS" if hec.get("quality_pass") else "FAIL (신뢰도 낮음)"
         lines.append(
-            f"- **헤딩효과 캘리브레이션 보정** (Zhang et al. 2022): 캘리브레이션 {hec.get('n_calibration_points')}개 포인트로 "
-            f"측선 {hec.get('n_survey_points_corrected')}개 포인트 보정 ({_fmt(hec.get('pct_survey_points_corrected'))}%, "
-            f"평균 보정량 {_fmt(hec.get('mean_abs_correction_nt'))} nT, 외삽 {hec.get('n_survey_points_extrapolated')}개)"
+            f"- **헤딩효과 캘리브레이션 보정** (Zhang et al. 2022, 자료 출처: {source_label}): "
+            f"캘리브레이션 {hec.get('n_calibration_points')}개 포인트로 측선 {hec.get('n_survey_points_corrected')}개 포인트 보정 "
+            f"({_fmt(hec.get('pct_survey_points_corrected'))}%, 평균 보정량 {_fmt(hec.get('mean_abs_correction_nt'))} nT, "
+            f"외삽 {hec.get('n_survey_points_extrapolated')}개)"
         )
+        if q.get("available"):
+            lines.append(
+                f"  - 캘리브레이션 품질 검증(교차검증): {quality_label} — 잔차 표준편차 {_fmt(q.get('residual_std_nt'))} nT "
+                f"(기준값 {_fmt(hec.get('quality_threshold_nt'))} nT, peak-to-peak {_fmt(q.get('residual_p2p_nt'))} nT)"
+            )
+        if hec.get("coverage_warning"):
+            lines.append(f"  - ⚠ {hec['coverage_warning']}")
     elif hec and hec.get("enabled") and hec.get("reason"):
         lines.append(f"- 헤딩효과 캘리브레이션 보정: 미적용 ({hec['reason']})")
     elif hec and hec.get("enabled"):
-        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용 (캘리브레이션 비행 자료 없음)")
+        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용 (캘리브레이션 자료 없음)")
     else:
         lines.append("- 헤딩효과 캘리브레이션 보정: 미적용")
 

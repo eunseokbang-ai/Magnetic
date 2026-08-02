@@ -53,6 +53,7 @@ from .processing.lines import (
     detect_lines,
     detect_tie_lines,
     estimate_line_spacing_m,
+    group_turn_segments,
     project_to_local_xy,
     resolve_korea_projection_epsg,
 )
@@ -62,7 +63,9 @@ from .processing.geology_sample import GeologySampleError, sample_geotiff_at_poi
 from .processing.gps_lag import apply_gps_mag_lag
 from .processing.heading_calibration import (
     HeadingCalibrationError,
+    build_turn_based_calibration,
     calibration_angular_coverage_deg,
+    cross_validate_heading_effect_map,
     fit_heading_effect_map,
     magnetic_heading,
 )
@@ -390,38 +393,70 @@ class Project:
     def _apply_heading_effect_calibration(self, df: pd.DataFrame, params: ProcessParams) -> dict:
         """Zhang et al. (2022) heading-effect compensation (see
         processing/heading_calibration.py): fits a DeltaB(theta, phi)
-        deviation surface from self.calibration_raw and subtracts it from
-        df["mag_diurnal_corrected"] in place, before IGRF/anomaly are
-        derived from it. A no-op (returns available=False) whenever no
-        calibration flight was uploaded or neither dataset has usable
-        compass data - callers don't need to check beforehand."""
-        if self.calibration_raw is None:
+        deviation surface and subtracts it from df["mag_diurnal_corrected"]
+        in place, before IGRF/anomaly are derived from it. A no-op
+        (returns available=False) whenever no calibration source (uploaded
+        flight or, failing that, the survey's own turn segments) is usable
+        - callers don't need to check beforehand.
+
+        The calibration source is a dedicated uploaded flight
+        (self.calibration_raw) if present, otherwise - when
+        auto_calibrate_from_turns is enabled - the survey's own turn
+        segments (see processing/lines.py:group_turn_segments), per the
+        manufacturer's own guidance that turns make good calibration data
+        when no dedicated flight was flown."""
+        hec = params.heading_effect_calibration
+        # compass_x/y/z are always present (possibly all-NaN) on anything
+        # that went through io_/drone_loader.py, but a hand-built
+        # DataFrame (as in some tests, or any future caller) may omit them
+        # entirely - treat a missing column the same as an all-NaN one
+        # rather than raising a KeyError.
+        if "compass_x" not in df.columns or df["compass_x"].notna().sum() < 1:
             return {"enabled": True, "available": False, "applied": False}
 
-        cal = self.calibration_raw
-        if cal["compass_x"].notna().sum() < 30 or df["compass_x"].notna().sum() < 1:
-            return {
-                "enabled": True,
-                "available": False,
-                "applied": False,
-                "reason": "캘리브레이션 또는 측선 자료에 나침반(Compass) 데이터가 없습니다 (지원 포맷: Geometrics MagArrow 등).",
-            }
+        if self.calibration_raw is not None:
+            cal = self.calibration_raw
+            if "compass_x" not in cal.columns or cal["compass_x"].notna().sum() < 30:
+                return {
+                    "enabled": True,
+                    "available": False,
+                    "applied": False,
+                    "reason": "업로드된 캘리브레이션 자료에 나침반(Compass) 데이터가 부족합니다 (지원 포맷: Geometrics MagArrow 등).",
+                }
+            cal_diurnal = apply_diurnal_correction(
+                cal["timestamp"],
+                cal["mag_raw"].to_numpy(),
+                self.base_raw,
+                time_offset_seconds=params.diurnal_params.time_offset_seconds,
+                reference=params.diurnal_params.reference,
+            )
+            theta_cal, phi_cal = magnetic_heading(
+                cal["compass_x"].to_numpy(), cal["compass_y"].to_numpy(), cal["compass_z"].to_numpy()
+            )
+            try:
+                heading_map = fit_heading_effect_map(theta_cal, phi_cal, cal_diurnal.corrected)
+            except HeadingCalibrationError as exc:
+                return {"enabled": True, "available": False, "applied": False, "reason": str(exc)}
+            calibration_source = "uploaded_file"
+        elif hec.auto_calibrate_from_turns:
+            turn_group_id = group_turn_segments(df)
+            theta_turn, phi_turn = magnetic_heading(
+                df["compass_x"].to_numpy(), df["compass_y"].to_numpy(), df["compass_z"].to_numpy()
+            )
+            try:
+                heading_map = build_turn_based_calibration(
+                    theta_turn, phi_turn, df["mag_diurnal_corrected"].to_numpy(), turn_group_id
+                )
+            except HeadingCalibrationError as exc:
+                return {"enabled": True, "available": False, "applied": False, "reason": str(exc)}
+            calibration_source = "auto_turns"
+        else:
+            return {"enabled": True, "available": False, "applied": False}
 
-        cal_diurnal = apply_diurnal_correction(
-            cal["timestamp"],
-            cal["mag_raw"].to_numpy(),
-            self.base_raw,
-            time_offset_seconds=params.diurnal_params.time_offset_seconds,
-            reference=params.diurnal_params.reference,
+        quality = cross_validate_heading_effect_map(
+            heading_map.theta_cal, heading_map.phi_cal, heading_map.deviation_cal
         )
-        theta_cal, phi_cal = magnetic_heading(
-            cal["compass_x"].to_numpy(), cal["compass_y"].to_numpy(), cal["compass_z"].to_numpy()
-        )
-
-        try:
-            heading_map = fit_heading_effect_map(theta_cal, phi_cal, cal_diurnal.corrected)
-        except HeadingCalibrationError as exc:
-            return {"enabled": True, "available": False, "applied": False, "reason": str(exc)}
+        quality_pass = quality["available"] and quality["residual_std_nt"] <= hec.quality_threshold_nt
 
         theta_survey, phi_survey = magnetic_heading(
             df["compass_x"].to_numpy(), df["compass_y"].to_numpy(), df["compass_z"].to_numpy()
@@ -436,17 +471,29 @@ class Project:
 
         coverage = calibration_angular_coverage_deg(heading_map.theta_cal, heading_map.phi_cal)
         n = len(corrected_mask)
+        pct_extrapolated = float(100.0 * (extrapolated & corrected_mask).sum() / n) if n else 0.0
         return {
             "enabled": True,
             "available": True,
             "applied": bool(corrected_mask.any()),
+            "calibration_source": calibration_source,
             "n_calibration_points": int(len(heading_map.theta_cal)),
             "n_survey_points_corrected": int(corrected_mask.sum()),
             "n_survey_points_extrapolated": int((extrapolated & corrected_mask).sum()),
             "pct_survey_points_corrected": float(100.0 * corrected_mask.sum() / n) if n else 0.0,
+            "pct_survey_points_extrapolated": pct_extrapolated,
+            "coverage_warning": (
+                "캘리브레이션이 실제 비행에서 나타난 자세 범위의 일부만 포괄합니다 "
+                f"(측선 포인트의 {pct_extrapolated:.1f}%가 캘리브레이션 범위 밖 - 가장 가까운 값으로 대체 보정됨)."
+                if pct_extrapolated > 20.0
+                else None
+            ),
             "mean_abs_correction_nt": float(np.nanmean(np.abs(deviation[corrected_mask]))) if corrected_mask.any() else 0.0,
             "theta_range_deg": coverage["theta_range_deg"],
             "phi_range_deg": coverage["phi_range_deg"],
+            "quality_check": quality,
+            "quality_pass": quality_pass,
+            "quality_threshold_nt": hec.quality_threshold_nt,
         }
 
     def process_summary(self) -> dict:

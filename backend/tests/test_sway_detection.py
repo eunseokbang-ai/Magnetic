@@ -120,6 +120,9 @@ def _make_synthetic_project(sway_enabled: bool, inject_gyro_burst: bool) -> tupl
     df["altitude_ellipsoidal_m"] = 100.0
     df["speed_over_ground"] = np.nan
     df["accel_horiz_g"] = np.nan
+    df["compass_x"] = np.nan
+    df["compass_y"] = np.nan
+    df["compass_z"] = np.nan
 
     base_df = pd.DataFrame(
         {

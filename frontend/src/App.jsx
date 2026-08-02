@@ -83,6 +83,8 @@ const DEFAULT_PARAMS = {
   },
   heading_effect_calibration: {
     enabled: true,
+    auto_calibrate_from_turns: true,
+    quality_threshold_nt: 3.0,
   },
   line_params: {
     heading_lag_seconds: 1.0,

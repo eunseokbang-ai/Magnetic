@@ -59,6 +59,24 @@ class HeadingEffectCalibrationParams(BaseModel):
     # A no-op whenever no calibration flight has been uploaded, or the
     # source format has no Compass columns.
     enabled: bool = True
+    # When no dedicated calibration flight was uploaded, auto-build one
+    # from the survey's own turn segments instead (see
+    # processing/heading_calibration.py:build_turn_based_calibration) -
+    # per Geometrics' own MagArrow guidance, turns are usually the best
+    # calibration data available. Ignored once a dedicated calibration
+    # flight is uploaded (that always takes precedence).
+    auto_calibrate_from_turns: bool = True
+    # Held-out cross-validation residual standard deviation (nT) above
+    # which the calibration data is flagged as likely contaminated (real
+    # gradient, drone noise, ...) rather than pure heading effect - see
+    # processing/heading_calibration.py:cross_validate_heading_effect_map.
+    # Std rather than peak-to-peak: a single held-out point near a sparse
+    # region can spike p2p even for genuinely clean data, while std stays
+    # stable and separates clean (~1 nT observed) from contaminated
+    # (~10 nT observed) calibration data by a wide margin. The compensation
+    # is still applied either way; this only affects the reported
+    # quality_pass flag, so the user can judge whether to trust it.
+    quality_threshold_nt: float = Field(3.0, gt=0)
 
 
 class CrossoverLevelingParams(BaseModel):
