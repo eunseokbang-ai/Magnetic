@@ -682,6 +682,18 @@ export default function WorkflowSteps({
             ))}
           </div>
           {transformLoading && <div style={{ color: "#6b7280" }}>계산 중...</div>}
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={transformExtraParams.microlevel_pre_apply}
+              onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_pre_apply: e.target.checked }))}
+            />
+            <span
+              title="지금 마이크로레벨링 버튼을 눌러야만 적용되는 게 아니라, 이 체크박스를 켜두면 위 그리드(원본)를 포함한 다른 모든 파생그리드 계산 전에 먼저 마이크로레벨링(측선방향 줄무늬 완화)을 적용한 뒤 그 결과에 RTP/1VD/AS 등을 계산합니다. 미분 기반 변환일수록 줄무늬가 미리 지워진 상태에서 계산되어 결과가 더 매끈해집니다."
+            >
+              선택한 파생그리드 계산 전에 마이크로레벨링 먼저 적용 (원본 그리드 보기에도 적용)
+            </span>
+          </label>
           {activeTransform === "upward_continuation" && (
             <Field label="상방연속 고도 (m)">
               <input
@@ -705,7 +717,7 @@ export default function WorkflowSteps({
               </select>
             </Field>
           )}
-          {activeTransform === "microlevel" && (
+          {(activeTransform === "microlevel" || transformExtraParams.microlevel_pre_apply) && (
             <>
               <Field label={`보정 강도: ${transformExtraParams.microlevel_strength}`}>
                 <input

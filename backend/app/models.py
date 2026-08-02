@@ -133,6 +133,14 @@ class GridRequest(HillshadeParams, ContourParams):
     # estimated line spacing; see processing.gridding._along_line_lowpass.
     along_line_smooth: bool = True
     along_line_smooth_wavelength_m: Optional[float] = Field(None, gt=0)
+    # See TransformRequest.microlevel_pre_apply - applies here too so the
+    # plain "그리드(원본)" view can show the same pre-leveled surface that
+    # derived transforms are computed from, instead of only being
+    # reachable via the "마이크로레벨링" transform itself.
+    microlevel_pre_apply: bool = False
+    microlevel_strength: float = Field(0.8, ge=0, le=1)
+    microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
+    microlevel_wavelength_factor: float = Field(1.5, gt=1)
 
 
 class TransformRequest(HillshadeParams, ContourParams):
@@ -159,6 +167,13 @@ class TransformRequest(HillshadeParams, ContourParams):
     microlevel_strength: float = Field(0.8, ge=0, le=1)
     microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
     microlevel_wavelength_factor: float = Field(1.5, gt=1)
+    # Applies microleveling (using the three params above) to the base grid
+    # *before* computing whatever transform is requested (RTP/2VD/AS/etc.,
+    # or even "none"), instead of microleveling only being its own
+    # mutually-exclusive transform choice - lets line-parallel corrugation
+    # get cleaned up before a derivative-based transform amplifies it,
+    # rather than only after. No-op when transform="microlevel" itself.
+    microlevel_pre_apply: bool = False
 
 
 class PolygonExportRequest(BaseModel):

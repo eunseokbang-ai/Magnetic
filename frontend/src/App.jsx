@@ -58,6 +58,7 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_strength: 0.8,
   microlevel_angle_tolerance_deg: 15.0,
   microlevel_wavelength_factor: 1.5,
+  microlevel_pre_apply: false,
 };
 
 const DEFAULT_PARAMS = {
@@ -414,6 +415,10 @@ export default function App() {
         contour_interval_nt: contourInterval,
         contour_n_levels: contourNLevels,
         stretch,
+        microlevel_pre_apply: transformExtraParams.microlevel_pre_apply,
+        microlevel_strength: transformExtraParams.microlevel_strength,
+        microlevel_angle_tolerance_deg: transformExtraParams.microlevel_angle_tolerance_deg,
+        microlevel_wavelength_factor: transformExtraParams.microlevel_wavelength_factor,
       });
       setOverlay(resp);
       setActiveTransform("none");
@@ -492,6 +497,7 @@ export default function App() {
         hillshade_altitude_deg: hillshadeAltitude,
         hillshade_exaggeration: hillshadeExaggeration,
         stretch,
+        ...transformExtraParams,
       };
       const suffix = exportGeotiffColored ? "_colored" : "";
       if (activeTransform === "none") {

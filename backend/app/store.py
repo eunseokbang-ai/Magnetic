@@ -6,7 +6,7 @@ import json
 import threading
 import uuid
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -523,6 +523,7 @@ class Project:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._maybe_pre_level(grid, req)
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
         overlay = grid_to_png_overlay(
             grid.values,
@@ -565,6 +566,7 @@ class Project:
             req.microlevel_strength,
             req.microlevel_angle_tolerance_deg,
             req.microlevel_wavelength_factor,
+            req.microlevel_pre_apply,
         )
         if cache_key in self.transform_cache:
             return self.transform_cache[cache_key]
@@ -572,10 +574,38 @@ class Project:
         self.transform_cache[cache_key] = result
         return result
 
+    def _maybe_pre_level(self, grid: GridResult, req) -> GridResult:
+        """Apply microleveling to `grid` when req.microlevel_pre_apply is
+        set - shared by every GridRequest/TransformRequest call site so
+        "먼저 마이크로레벨링 적용" behaves identically whether the caller
+        ends up looking at the plain grid or a derived transform of it,
+        instead of microleveling only being reachable as its own
+        mutually-exclusive transform choice. No-op (returns grid
+        unchanged) when the flag isn't set."""
+        if not getattr(req, "microlevel_pre_apply", False):
+            return grid
+        if not self.line_spacing_m:
+            raise ProjectError("측선 간격을 추정할 수 없어 micro-leveling을 적용할 수 없습니다 (측선이 2개 이상 필요).")
+        leveled = apply_microleveling(
+            grid.values,
+            grid.cell_size_m,
+            self.dominant_azimuth_deg,
+            self.line_spacing_m,
+            strength=req.microlevel_strength,
+            angle_tolerance_deg=req.microlevel_angle_tolerance_deg,
+            wavelength_bandwidth_factor=req.microlevel_wavelength_factor,
+        )
+        return replace(grid, values=leveled)
+
     def _compute_transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
         transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
+        if transform != "microlevel":
+            # matters most for derivative-based transforms (RTP/1VD/tilt/
+            # etc.), which amplify whatever line-parallel corrugation is
+            # still present in the input grid.
+            grid = self._maybe_pre_level(grid, req)
         if transform == "rtp":
             return reduction_to_pole(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg), True
         if transform == "rte":
@@ -661,6 +691,7 @@ class Project:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._maybe_pre_level(grid, req)
         if req.colored:
             cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
             return grid_to_geotiff_bytes_colored(
@@ -694,6 +725,7 @@ class Project:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._maybe_pre_level(grid, req)
         return grid_to_xyz_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_transform_xyz(self, req: TransformRequest) -> bytes:
@@ -709,6 +741,7 @@ class Project:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._maybe_pre_level(grid, req)
         return grid_to_surfer_grd_bytes(grid.values, grid.easting, grid.northing)
 
     def export_transform_surfer_grd(self, req: TransformRequest) -> bytes:
