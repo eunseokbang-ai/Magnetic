@@ -480,9 +480,24 @@ class Project:
             return max(2.0 * cell_size_m, 0.6 * self.line_spacing_m)
         return 2.0 * cell_size_m
 
-    def _grid_for(self, value: str, cell_size_m: float, method: str = "spline", max_distance_m: float | None = None) -> GridResult:
+    def _grid_for(
+        self,
+        value: str,
+        cell_size_m: float,
+        method: str = "spline",
+        max_distance_m: float | None = None,
+        along_line_smooth: bool = True,
+        along_line_smooth_wavelength_m: float | None = None,
+    ) -> GridResult:
         resolved_max_distance = self._resolve_max_distance(cell_size_m, max_distance_m)
-        key = (value, cell_size_m, method, resolved_max_distance)
+        # None (auto) = the estimated cross-line spacing itself: cross-line
+        # interpolation cannot resolve anything finer than that anyway, so
+        # any along-line detail below it is fabricated anisotropy
+        # ("corrugation") rather than real resolvable structure - see
+        # processing.gridding._along_line_lowpass.
+        resolved_wavelength = along_line_smooth_wavelength_m if along_line_smooth_wavelength_m is not None else self.line_spacing_m
+        effective_wavelength = resolved_wavelength if along_line_smooth else None
+        key = (value, cell_size_m, method, resolved_max_distance, effective_wavelength)
         if key in self.grid_cache:
             return self.grid_cache[key]
         if self.processed is None:
@@ -497,12 +512,17 @@ class Project:
             cell_size_m,
             method=method,
             max_distance_m=resolved_max_distance,
+            line_id=df.loc[active, "line_id"].to_numpy(),
+            along_line_smooth_wavelength_m=effective_wavelength,
         )
         self.grid_cache[key] = result
         return result
 
     def get_grid_overlay(self, req: GridRequest) -> dict:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
         overlay = grid_to_png_overlay(
             grid.values,
@@ -531,11 +551,14 @@ class Project:
 
     def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
         resolved_max_distance = self._resolve_max_distance(req.cell_size_m, req.max_distance_m)
+        resolved_smooth_wavelength = req.along_line_smooth_wavelength_m if req.along_line_smooth_wavelength_m is not None else self.line_spacing_m
+        effective_smooth_wavelength = resolved_smooth_wavelength if req.along_line_smooth else None
         cache_key = (
             req.value,
             req.cell_size_m,
             req.method,
             resolved_max_distance,
+            effective_smooth_wavelength,
             req.transform,
             req.continuation_height_m,
             req.trend_order,
@@ -607,7 +630,10 @@ class Project:
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
     def get_transform_overlay(self, req: TransformRequest) -> dict:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         values, symmetric = self._transform_values(grid, req)
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
@@ -631,7 +657,10 @@ class Project:
         return overlay
 
     def export_grid_geotiff(self, req: GridRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         if req.colored:
             cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
             return grid_to_geotiff_bytes_colored(
@@ -644,7 +673,10 @@ class Project:
         return grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_transform_geotiff(self, req: TransformRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         values, symmetric = self._transform_values(grid, req)
         if req.colored:
             cmap = req.cmap or DEFAULT_CMAPS["derivative"]
@@ -658,20 +690,32 @@ class Project:
         return grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_grid_xyz(self, req: GridRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         return grid_to_xyz_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_transform_xyz(self, req: TransformRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         values, _symmetric = self._transform_values(grid, req)
         return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_grid_surfer_grd(self, req: GridRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         return grid_to_surfer_grd_bytes(grid.values, grid.easting, grid.northing)
 
     def export_transform_surfer_grd(self, req: TransformRequest) -> bytes:
-        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
         values, _symmetric = self._transform_values(grid, req)
         return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
 
@@ -715,6 +759,10 @@ class Project:
         return out.to_csv(index=False).encode("utf-8")
 
     def run_euler_deconvolution(self, req: EulerDeconvolutionRequest) -> dict:
+        # Defaults to along-line smoothing on (see _grid_for) - Euler
+        # solutions are as sensitive to corrugation-driven spurious
+        # gradients as any other derivative-based analysis, and this
+        # request type has no UI toggle of its own for it.
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
         solutions = _euler_deconvolution_solve(
             grid.values,
@@ -766,7 +814,13 @@ class Project:
                 "탐지 격자 크기(m)를 늘리거나, 폴리곤으로 관심 영역만 남기고 나머지 측선을 제외한 뒤 다시 시도하세요."
             )
 
-        grid = self._grid_for("anomaly", req.cell_size_m, req.method, req.max_distance_m)
+        # Along-line smoothing is deliberately off here: it low-passes at a
+        # wavelength matched to the (much larger) line spacing, which would
+        # blur out exactly the small, compact, near-surface anomalies
+        # (mines/ordnance/vehicles) this feature exists to find - unlike
+        # every other _grid_for caller, this one wants full native
+        # along-line resolution preserved.
+        grid = self._grid_for("anomaly", req.cell_size_m, req.method, req.max_distance_m, along_line_smooth=False)
 
         if req.amplitude_threshold_nt is not None:
             threshold_nt = req.amplitude_threshold_nt

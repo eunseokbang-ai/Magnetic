@@ -118,6 +118,8 @@ export default function App() {
   const [gridCellSize, setGridCellSize] = useState(10.0);
   const [gridMethod, setGridMethod] = useState("nearest");
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
+  const [alongLineSmooth, setAlongLineSmooth] = useState(true);
+  const [alongLineSmoothWavelength, setAlongLineSmoothWavelength] = useState(null);
   const [gridding, setGridding] = useState(false);
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
@@ -399,6 +401,8 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
         cmap: cmapName,
         vmin: manualRange.enabled ? manualRange.vmin : null,
         vmax: manualRange.enabled ? manualRange.vmax : null,
@@ -435,6 +439,8 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
         cmap: cmapName,
         vmin: manualRange.enabled ? manualRange.vmin : null,
         vmax: manualRange.enabled ? manualRange.vmax : null,
@@ -466,6 +472,8 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
         colored: exportGeotiffColored,
         cmap: cmapName,
         vmin: manualRange.enabled ? manualRange.vmin : null,
@@ -502,6 +510,8 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
         ...transformExtraParams,
       };
       if (activeTransform === "none") {
@@ -525,6 +535,8 @@ export default function App() {
         cell_size_m: gridCellSize,
         method: gridMethod,
         max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
         ...transformExtraParams,
       };
       if (activeTransform === "none") {
@@ -1019,6 +1031,11 @@ export default function App() {
           setGridMethod={setGridMethod}
           gridMaxDistance={gridMaxDistance}
           setGridMaxDistance={setGridMaxDistance}
+          alongLineSmooth={alongLineSmooth}
+          setAlongLineSmooth={setAlongLineSmooth}
+          alongLineSmoothWavelength={alongLineSmoothWavelength}
+          setAlongLineSmoothWavelength={setAlongLineSmoothWavelength}
+          lineSpacingM={processSummary?.line_spacing_m}
           gridOpacity={gridOpacity}
           setGridOpacity={setGridOpacity}
           hillshade={hillshade}

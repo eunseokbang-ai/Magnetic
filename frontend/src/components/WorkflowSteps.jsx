@@ -91,6 +91,11 @@ export default function WorkflowSteps({
   setGridMethod,
   gridMaxDistance,
   setGridMaxDistance,
+  alongLineSmooth,
+  setAlongLineSmooth,
+  alongLineSmoothWavelength,
+  setAlongLineSmoothWavelength,
+  lineSpacingM,
   gridOpacity,
   setGridOpacity,
   hillshade,
@@ -551,6 +556,31 @@ export default function WorkflowSteps({
           </Field>
           {processSummary?.line_spacing_m && (
             <div style={{ color: "#6b7280" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={alongLineSmooth} onChange={(e) => setAlongLineSmooth(e.target.checked)} />
+            <span
+              title="측선 방향 자료 간격(수 m)이 측선 사이 간격(보통 수십~수백 m)보다 훨씬 촘촘해서, 옆 측선과는 비교할 수 없는 미세한 변화까지 그리드에 그대로 반영되면 측선과 나란한 방향의 물결/주름 무늬(코러게이션)가 생깁니다. 측선 방향으로 이 정도 파장 이하의 세부 변화를 미리 눌러주면, 어떤 보간 방법을 쓰든 주름이 크게 줄어듭니다."
+            >
+              측선방향 평활화 — 측선/횡측선 간격 불일치로 인한 주름(코러게이션) 억제 (기본 켜짐)
+            </span>
+          </label>
+          {alongLineSmooth && (
+            <Field
+              label={
+                lineSpacingM
+                  ? `평활화 파장 (m) — 비워두면 추정 측선 간격(${lineSpacingM.toFixed(1)}m) 사용`
+                  : "평활화 파장 (m) — 비워두면 측선 간격 자동 추정값 사용"
+              }
+            >
+              <input
+                type="number"
+                style={inputStyle}
+                placeholder={lineSpacingM ? `자동: ${lineSpacingM.toFixed(1)}` : "자동"}
+                value={alongLineSmoothWavelength ?? ""}
+                onChange={(e) => setAlongLineSmoothWavelength(e.target.value === "" ? null : parseFloat(e.target.value))}
+              />
+            </Field>
           )}
           <Field label={`그리드 불투명도: ${Math.round(gridOpacity * 100)}%`}>
             <input

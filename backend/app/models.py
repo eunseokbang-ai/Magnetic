@@ -126,6 +126,13 @@ class GridRequest(HillshadeParams, ContourParams):
     vmax: Optional[float] = None
     stretch: StretchName = "linear"
     colored: bool = False  # GeoTIFF export only: bake in the on-screen colormap as an RGBA GeoTIFF instead of raw float values
+    # Along-line low-pass applied before gridding, to prevent flight-line-parallel
+    # "corrugation" ridges (along-line detail no cross-line interpolation can
+    # resolve anyway, given lines are typically 5-50x farther apart than the
+    # along-line sample spacing). Defaults to on, at a wavelength matched to the
+    # estimated line spacing; see processing.gridding._along_line_lowpass.
+    along_line_smooth: bool = True
+    along_line_smooth_wavelength_m: Optional[float] = Field(None, gt=0)
 
 
 class TransformRequest(HillshadeParams, ContourParams):
@@ -139,6 +146,11 @@ class TransformRequest(HillshadeParams, ContourParams):
     vmax: Optional[float] = None
     stretch: StretchName = "linear"
     colored: bool = False  # GeoTIFF export only: bake in the on-screen colormap as an RGBA GeoTIFF instead of raw float values
+    # See GridRequest.along_line_smooth - equally relevant here since every
+    # derived transform is computed from this same underlying grid, and
+    # derivative-based ones (RTP/1VD/tilt/etc.) amplify corrugation the most.
+    along_line_smooth: bool = True
+    along_line_smooth_wavelength_m: Optional[float] = Field(None, gt=0)
     # transform="upward_continuation" only: how far to continue the field upward.
     continuation_height_m: Optional[float] = Field(None, gt=0)
     # transform="detrend" only: order of the polynomial regional surface removed (1=plane, 2=quadratic, 3=cubic).

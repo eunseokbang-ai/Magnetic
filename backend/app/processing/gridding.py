@@ -34,6 +34,62 @@ class GridResult:
     region: tuple  # (west, east, south, north) in local meters
 
 
+def _along_line_lowpass(
+    x: np.ndarray, y: np.ndarray, values: np.ndarray, line_id: np.ndarray, wavelength_m: float
+) -> np.ndarray:
+    """Low-pass each flight line's values along its own along-line arc
+    length before gridding, at a cutoff wavelength tied to the *cross*-line
+    spacing (resolved by the caller).
+
+    Why this is needed: BlockReduce (see grid_points) already collapses
+    along-line point density down to roughly one value per grid cell, but
+    that alone does not fix the underlying anisotropy - each line's
+    block-reduced value sequence still carries real signal/noise detail at
+    wavelengths the *cross*-line direction has no way to resolve at all
+    (adjacent lines are typically 5-50x farther apart than the along-line
+    sample spacing). Whichever interpolation method is used then
+    reproduces that along-line-only detail faithfully while necessarily
+    smoothing heavily across lines - which is exactly what shows up as
+    fine ridges/corrugation running parallel to the flight lines in the
+    gridded surface, most visibly in derivative-based transforms
+    (RTP/1VD/tilt/etc.) that amplify high-wavenumber content. Smoothing
+    along-line detail down to the same wavelength the cross-line direction
+    can resolve removes that fabricated anisotropy before it ever reaches
+    the grid, instead of trying to filter it back out afterward.
+
+    Order-independent: each line's own principal direction is found via
+    PCA and used to project/sort points, rather than assuming the input
+    array order is already along-line-sequential.
+    """
+    out = values.copy()
+    for lid in np.unique(line_id):
+        mask = line_id == lid
+        n = int(mask.sum())
+        if n < 3:
+            continue
+        xi, yi, vi = x[mask], y[mask], values[mask]
+        pts = np.column_stack([xi, yi])
+        centered = pts - pts.mean(axis=0)
+        cov = np.cov(centered, rowvar=False)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        direction = eigvecs[:, int(np.argmax(eigvals))]
+        s = centered @ direction  # along-line position (arbitrary origin/sign)
+        order = np.argsort(s)
+        s_sorted = s[order]
+        v_sorted = vi[order]
+
+        half = wavelength_m / 2.0
+        csum = np.concatenate([[0.0], np.cumsum(v_sorted)])
+        lo = np.searchsorted(s_sorted, s_sorted - half, side="left")
+        hi = np.searchsorted(s_sorted, s_sorted + half, side="right")
+        smoothed_sorted = (csum[hi] - csum[lo]) / (hi - lo)
+
+        smoothed = np.empty_like(smoothed_sorted)
+        smoothed[order] = smoothed_sorted
+        out[np.flatnonzero(mask)] = smoothed
+    return out
+
+
 def grid_points(
     x: np.ndarray,
     y: np.ndarray,
@@ -41,6 +97,8 @@ def grid_points(
     cell_size_m: float,
     method: str = "nearest",
     max_distance_m: float | None = None,
+    line_id: np.ndarray | None = None,
+    along_line_smooth_wavelength_m: float | None = None,
 ) -> GridResult:
     """Block-mean reduce then interpolate scattered (x, y, values) onto a
     regular grid at cell_size_m spacing.
@@ -59,14 +117,25 @@ def grid_points(
     processing.lines.estimate_line_spacing_m) - a plain multiple of
     cell_size_m is usually far smaller than the gap between adjacent lines
     and leaves most of the survey block masked out. Defaults to 2 cells
-    when not provided, which only fills a narrow band along each line."""
+    when not provided, which only fills a narrow band along each line.
+
+    line_id + along_line_smooth_wavelength_m: if both are given, each
+    line's values are along-line low-passed (see _along_line_lowpass)
+    before block-reducing/interpolating, to prevent flight-line-parallel
+    corrugation - see that function's docstring for why this is necessary
+    regardless of which interpolation method is chosen below."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     values = np.asarray(values, dtype=float)
     finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(values)
     x, y, values = x[finite], y[finite], values[finite]
+    if line_id is not None:
+        line_id = np.asarray(line_id)[finite]
     if len(x) < 4:
         raise ValueError("그리딩을 위한 유효 포인트가 부족합니다 (최소 4개 필요).")
+
+    if line_id is not None and along_line_smooth_wavelength_m and along_line_smooth_wavelength_m > 0:
+        values = _along_line_lowpass(x, y, values, line_id, along_line_smooth_wavelength_m)
 
     region = vd.get_region((x, y))
     approx_nx = int(round((region[1] - region[0]) / cell_size_m)) + 1
