@@ -217,8 +217,8 @@ class Project:
         self.drone_raw = load_drone_csvs(buffers)
         return self.drone_summary()
 
-    def load_base(self, buffers: list) -> dict:
-        self.base_raw = load_base_csvs(buffers)
+    def load_base(self, buffers: list, filenames: list | None = None) -> dict:
+        self.base_raw = load_base_csvs(buffers, filenames)
         self.base_source = None
         return self.base_summary()
 
@@ -369,6 +369,7 @@ class Project:
             "time_range": [b["timestamp"].min().isoformat(), b["timestamp"].max().isoformat()],
             "mag_range": [float(b["mag"].min()), float(b["mag"].max())],
             "n_duplicate_timestamps_removed": b.attrs.get("n_duplicate_timestamps_removed", 0),
+            "date_fallback_used": b.attrs.get("date_fallback_used", False),
             "source": self.base_source,
         }
 

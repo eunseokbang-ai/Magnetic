@@ -241,7 +241,7 @@ export default function WorkflowSteps({
           )}
           <input
             type="file"
-            accept=".csv"
+            accept=".csv,.txt"
             multiple
             style={inputStyle}
             onChange={(e) => {
@@ -252,7 +252,11 @@ export default function WorkflowSteps({
               }
             }}
           />
-          <div style={{ color: "#6b7280" }}>여러 베이스 로그 파일을 함께 선택하면 하나로 합쳐 처리합니다.</div>
+          <div style={{ color: "#6b7280" }}>
+            여러 베이스 로그 파일을 함께 선택하면 하나로 합쳐 처리합니다. 쉼표구분 CSV(오전/오후 시각) 형식과, 파일명에
+            날짜(YYYYMMDD)가 포함된 "시 분 초 X Y Z F" 공백구분 1초간격 텍스트(예: cyg202607151s.txt) 형식을 모두
+            자동으로 인식합니다.
+          </div>
           <ProgressBar fraction={baseUploadProgress} />
           {baseFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{baseFileNames.join(", ")}</div>}
           {baseSummary && (
@@ -266,6 +270,15 @@ export default function WorkflowSteps({
                 <>
                   <br />
                   <span style={{ color: "#b45309" }}>품질검사로 제외됨: 중복 시각 {baseSummary.n_duplicate_timestamps_removed}개</span>
+                </>
+              )}
+              {baseSummary.date_fallback_used && (
+                <>
+                  <br />
+                  <span style={{ color: "#dc2626" }}>
+                    ⚠ 파일명에서 날짜(YYYYMMDD)를 찾지 못해 오늘 날짜를 임시로 사용했습니다 - 실제 측정일과 다르면
+                    드론 자료와 시간이 맞지 않아 일변화 보정이 실패합니다. 파일명에 날짜를 포함해 다시 올려주세요.
+                  </span>
                 </>
               )}
               {baseSummary.source?.type === "intermagnet" && (

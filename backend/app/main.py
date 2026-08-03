@@ -135,7 +135,8 @@ async def upload_drone(project_id: str, files: list[UploadFile] = File(...)):
 async def upload_base(project_id: str, files: list[UploadFile] = File(...)):
     project = store.get(project_id)
     buffers = [io.BytesIO(await f.read()) for f in files]
-    summary = project.load_base(buffers)
+    filenames = [f.filename for f in files]
+    summary = project.load_base(buffers, filenames)
     return summary
 
 
