@@ -1,5 +1,6 @@
 import { useState } from "react";
 import InfoIcon from "./InfoIcon";
+import IntermagnetPanel from "./IntermagnetPanel";
 
 const TRANSFORM_INFO = {
   none: "그리딩된 원본 자력 이상값을 그대로 표시합니다.",
@@ -82,6 +83,14 @@ export default function WorkflowSteps({
   baseUploadProgress,
   onShowBaseTimeseries,
   baseTimeseriesLoading,
+  onUploadIaga2002,
+  onFetchIntermagnet,
+  onApplyIntermagnet,
+  onCancelIntermagnetPreview,
+  intermagnetPreview,
+  intermagnetLoading,
+  intermagnetApplying,
+  intermagnetError,
   onUploadHeadingCalibration,
   headingCalibrationSummary,
   headingCalibrationUploadProgress,
@@ -216,6 +225,20 @@ export default function WorkflowSteps({
       <details style={sectionStyle} open>
         <summary style={summaryStyle}>2. 베이스(일변화) 자료 업로드</summary>
         <div style={bodyStyle}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 8px" }}>
+            <input
+              type="checkbox"
+              checked={dp.mode === "assume_constant"}
+              onChange={(e) => updateDiurnal("mode", e.target.checked ? "assume_constant" : "base_station")}
+            />
+            <span>베이스 자료 없이 진행 — 지구자기장이 일정하다고 가정 (일변화 보정 생략, 측정값을 그대로 사용)</span>
+          </label>
+          {dp.mode === "assume_constant" && (
+            <div style={{ color: "#b45309" }}>
+              ⚠ 태양풍 등에 의한 시간에 따른 자기장 변화(일변화)가 보정되지 않습니다. 짧은 조사(하루 이내)라면 영향이 작지만,
+              가능하면 아래 "INTERMAGNET 관측소 자료 사용"으로 인근 관측소 자료를 대신 활용하는 것을 권장합니다.
+            </div>
+          )}
           <input
             type="file"
             accept=".csv"
@@ -245,8 +268,35 @@ export default function WorkflowSteps({
                   <span style={{ color: "#b45309" }}>품질검사로 제외됨: 중복 시각 {baseSummary.n_duplicate_timestamps_removed}개</span>
                 </>
               )}
+              {baseSummary.source?.type === "intermagnet" && (
+                <>
+                  <br />
+                  <span style={{ color: "#2563eb" }}>
+                    출처: INTERMAGNET 관측소 {baseSummary.source.station_name} ({baseSummary.source.iaga_code})
+                  </span>
+                </>
+              )}
             </div>
           )}
+
+          {onUploadIaga2002 && (
+            <details style={{ marginTop: 6 }}>
+              <summary style={{ cursor: "pointer", color: "#374151" }}>
+                INTERMAGNET 관측소 자료 사용 (베이스 자료 대신 - 로컬 일변화는 반영 못하지만 태양풍에 의한 지역/전지구적 변화는 반영)
+              </summary>
+              <IntermagnetPanel
+                onUploadIaga2002={onUploadIaga2002}
+                onFetchIntermagnet={onFetchIntermagnet}
+                onApplyIntermagnet={onApplyIntermagnet}
+                onCancelPreview={onCancelIntermagnetPreview}
+                preview={intermagnetPreview}
+                loading={intermagnetLoading}
+                applying={intermagnetApplying}
+                error={intermagnetError}
+              />
+            </details>
+          )}
+
           {onShowBaseTimeseries && (
             <button
               type="button"
@@ -671,7 +721,11 @@ export default function WorkflowSteps({
             </>
           )}
 
-          <button style={buttonStyle} disabled={processing || !droneSummary || !baseSummary} onClick={onProcess}>
+          <button
+            style={buttonStyle}
+            disabled={processing || !droneSummary || (!baseSummary && dp.mode !== "assume_constant")}
+            onClick={onProcess}
+          >
             {processing ? "처리 중..." : "자료 처리 실행 (필터+측선판별+보정+IGRF)"}
           </button>
 
@@ -797,11 +851,15 @@ export default function WorkflowSteps({
                 processSummary.heading_correction?.reason && <span style={{ color: "#b45309" }}>헤딩 보정: {processSummary.heading_correction.reason}</span>
               )}
               <br />
-              {processSummary.diurnal && !processSummary.diurnal.has_overlap && (
-                <div style={{ color: "#dc2626", marginTop: 4 }}>
-                  ⚠ 베이스 자료와 드론 비행시간이 겹치지 않습니다. 베이스 시간범위: {processSummary.diurnal.base_time_range?.[0]} ~{" "}
-                  {processSummary.diurnal.base_time_range?.[1]}. 시간 오프셋을 조정하세요.
-                </div>
+              {processSummary.diurnal?.mode === "assume_constant" ? (
+                <div style={{ color: "#b45309", marginTop: 4 }}>⚠ {processSummary.diurnal.note}</div>
+              ) : (
+                processSummary.diurnal && !processSummary.diurnal.has_overlap && (
+                  <div style={{ color: "#dc2626", marginTop: 4 }}>
+                    ⚠ 베이스 자료와 드론 비행시간이 겹치지 않습니다. 베이스 시간범위: {processSummary.diurnal.base_time_range?.[0]} ~{" "}
+                    {processSummary.diurnal.base_time_range?.[1]}. 시간 오프셋을 조정하세요.
+                  </div>
+                )
               )}
             </div>
           )}

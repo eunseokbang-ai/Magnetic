@@ -32,6 +32,13 @@ from .models import (
 )
 from .processing.base_qc import process_base_station
 from .processing.manual_smooth import apply_manual_smoothing
+from .processing.intermagnet import (
+    IagaParseError,
+    IntermagnetFetchError,
+    fetch_iaga2002_text,
+    haversine_km,
+    parse_iaga2002,
+)
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
@@ -153,6 +160,12 @@ class Project:
     base_raw: pd.DataFrame | None = None
     base_processed: pd.DataFrame | None = None  # base_raw after trim+despike QC (base_qc.py) - see run_pipeline
     base_qc_info: dict | None = None
+    base_source: dict | None = None  # set when base_raw came from an INTERMAGNET observatory rather than a local upload
+    # A parsed-but-not-yet-applied INTERMAGNET observatory fetch/upload -
+    # see preview_intermagnet_text/fetch_intermagnet_preview and
+    # apply_intermagnet_preview. Kept server-side so "이 자료 사용" doesn't
+    # need to re-send the whole (potentially large) IAGA-2002 text.
+    intermagnet_preview: object = None
     processed: pd.DataFrame | None = None
     # processed, before any manual smoothing (set_manual_smoothing) is
     # applied - the pristine base that manual smoothing is re-derived from
@@ -206,6 +219,76 @@ class Project:
 
     def load_base(self, buffers: list) -> dict:
         self.base_raw = load_base_csvs(buffers)
+        self.base_source = None
+        return self.base_summary()
+
+    def _survey_centroid(self) -> tuple[float, float] | None:
+        if self.drone_raw is None or len(self.drone_raw) == 0:
+            return None
+        return float(self.drone_raw["lat"].mean()), float(self.drone_raw["lon"].mean())
+
+    def _preview_from_iaga(self, data) -> dict:
+        self.intermagnet_preview = data
+        centroid = self._survey_centroid()
+        distance_km = (
+            haversine_km(centroid[0], centroid[1], data.lat, data.lon)
+            if centroid is not None and data.lat is not None and data.lon is not None
+            else None
+        )
+        return {
+            "station_name": data.station_name,
+            "iaga_code": data.iaga_code,
+            "lat": data.lat,
+            "lon": data.lon,
+            "elevation_m": data.elevation_m,
+            "reported": data.reported,
+            "n_points": len(data.df),
+            "time_range": [data.df["timestamp"].min().isoformat(), data.df["timestamp"].max().isoformat()],
+            "distance_from_survey_km": distance_km,
+        }
+
+    def preview_intermagnet_text(self, text: str) -> dict:
+        """Parse a manually-downloaded IAGA-2002 file (from
+        https://intermagnet.org or any GIN) without touching the network at
+        all - the fallback path when fetch_intermagnet_preview can't reach
+        the data service from wherever this server is deployed."""
+        try:
+            data = parse_iaga2002(text)
+        except IagaParseError as exc:
+            raise ProjectError(str(exc)) from exc
+        return self._preview_from_iaga(data)
+
+    def fetch_intermagnet_preview(self, iaga_code: str, start_date, days: int) -> dict:
+        """Download and parse an INTERMAGNET observatory's IAGA-2002 data
+        directly. Requires this server's own outbound network to reach the
+        BGS GIN web service - see intermagnet.py::fetch_iaga2002_text for
+        what to do when that's blocked (e.g. a locked-down deployment
+        network) - use preview_intermagnet_text with a manually downloaded
+        file instead."""
+        try:
+            text = fetch_iaga2002_text(iaga_code, start_date, days)
+            data = parse_iaga2002(text)
+        except (IntermagnetFetchError, IagaParseError) as exc:
+            raise ProjectError(str(exc)) from exc
+        return self._preview_from_iaga(data)
+
+    def apply_intermagnet_preview(self) -> dict:
+        """Commit the most recently previewed observatory data as this
+        project's base (diurnal) station series - a separate confirm step
+        so the user sees the station name/location/distance before it's
+        used, rather than it being silently substituted."""
+        if self.intermagnet_preview is None:
+            raise ProjectError("먼저 INTERMAGNET 관측소 자료를 업로드하거나 다운로드하여 미리보기를 확인하세요.")
+        data = self.intermagnet_preview
+        self.base_raw = data.df
+        self.base_source = {
+            "type": "intermagnet",
+            "station_name": data.station_name,
+            "iaga_code": data.iaga_code,
+            "lat": data.lat,
+            "lon": data.lon,
+        }
+        self.intermagnet_preview = None
         return self.base_summary()
 
     def load_heading_calibration(self, buffers: list) -> dict:
@@ -286,6 +369,7 @@ class Project:
             "time_range": [b["timestamp"].min().isoformat(), b["timestamp"].max().isoformat()],
             "mag_range": [float(b["mag"].min()), float(b["mag"].max())],
             "n_duplicate_timestamps_removed": b.attrs.get("n_duplicate_timestamps_removed", 0),
+            "source": self.base_source,
         }
 
     def get_base_timeseries(self) -> dict:
@@ -313,8 +397,11 @@ class Project:
     def run_pipeline(self, params: ProcessParams) -> dict:
         if self.drone_raw is None:
             raise ProjectError("드론 자료를 먼저 업로드하세요.")
-        if self.base_raw is None:
-            raise ProjectError("베이스(일변화) 자료를 먼저 업로드하세요.")
+        if self.base_raw is None and params.diurnal_params.mode != "assume_constant":
+            raise ProjectError(
+                "베이스(일변화) 자료를 먼저 업로드하세요. 베이스 자료가 없다면 "
+                "일변화 보정 방식을 '베이스 자료 없음(지구자기장 일정 가정)'으로 설정하세요."
+            )
 
         df = self.drone_raw.copy()
 
@@ -403,42 +490,63 @@ class Project:
 
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
-        bqc = params.base_qc_params
-        base_qc_result = process_base_station(
-            self.base_raw,
-            trim_enabled=bqc.trim_enabled,
-            trim_window_seconds=bqc.trim_window_seconds,
-            trim_threshold_k=bqc.trim_threshold_k,
-            trim_confirm_seconds=bqc.trim_confirm_seconds,
-            trim_max_fraction=bqc.trim_max_fraction,
-            despike_enabled=bqc.despike_enabled,
-            despike_window_size=bqc.despike_window_size,
-            despike_threshold_k=bqc.despike_threshold_k,
-        )
-        self.base_processed = base_qc_result.corrected
-        self.base_qc_info = {
-            "n_points_raw": len(self.base_raw),
-            "n_points_corrected": len(base_qc_result.corrected),
-            "n_trimmed_start": base_qc_result.n_trimmed_start,
-            "n_trimmed_end": base_qc_result.n_trimmed_end,
-            "n_spikes_removed": base_qc_result.n_spikes_removed,
-        }
+        if params.diurnal_params.mode == "assume_constant" and self.base_raw is None:
+            # No base station was measured at all: assume the Earth's field
+            # was steady over the (short) survey window, so there is no
+            # diurnal (solar-driven) variation to remove - the drone's own
+            # filtered reading is used as-is. Mathematically identical to a
+            # base-station correction against a perfectly constant base
+            # value (the correction term collapses to zero everywhere).
+            self.base_processed = None
+            self.base_qc_info = None
+            df["mag_diurnal_corrected"] = df["mag_filtered"]
+            self.diurnal_info = {
+                "mode": "assume_constant",
+                "coverage_pct": None,
+                "has_overlap": False,
+                "base_reference_value": None,
+                "base_time_range": None,
+                "drone_time_range": [str(df["timestamp"].min()), str(df["timestamp"].max())],
+                "note": "베이스 자료 없이 지구자기장이 일정하다고 가정했습니다 - 일변화(태양풍에 의한 시간에 따른 자기장 변화) 보정이 적용되지 않았습니다.",
+            }
+        else:
+            bqc = params.base_qc_params
+            base_qc_result = process_base_station(
+                self.base_raw,
+                trim_enabled=bqc.trim_enabled,
+                trim_window_seconds=bqc.trim_window_seconds,
+                trim_threshold_k=bqc.trim_threshold_k,
+                trim_confirm_seconds=bqc.trim_confirm_seconds,
+                trim_max_fraction=bqc.trim_max_fraction,
+                despike_enabled=bqc.despike_enabled,
+                despike_window_size=bqc.despike_window_size,
+                despike_threshold_k=bqc.despike_threshold_k,
+            )
+            self.base_processed = base_qc_result.corrected
+            self.base_qc_info = {
+                "n_points_raw": len(self.base_raw),
+                "n_points_corrected": len(base_qc_result.corrected),
+                "n_trimmed_start": base_qc_result.n_trimmed_start,
+                "n_trimmed_end": base_qc_result.n_trimmed_end,
+                "n_spikes_removed": base_qc_result.n_spikes_removed,
+            }
 
-        diurnal_result = apply_diurnal_correction(
-            df["timestamp"],
-            df["mag_filtered"].to_numpy(),
-            self.base_processed,
-            time_offset_seconds=params.diurnal_params.time_offset_seconds,
-            reference=params.diurnal_params.reference,
-        )
-        df["mag_diurnal_corrected"] = diurnal_result.corrected
-        self.diurnal_info = {
-            "coverage_pct": diurnal_result.coverage_pct,
-            "has_overlap": diurnal_result.has_overlap,
-            "base_reference_value": diurnal_result.base_reference_value,
-            "base_time_range": [str(diurnal_result.base_time_range[0]), str(diurnal_result.base_time_range[1])],
-            "drone_time_range": [str(diurnal_result.drone_time_range[0]), str(diurnal_result.drone_time_range[1])],
-        }
+            diurnal_result = apply_diurnal_correction(
+                df["timestamp"],
+                df["mag_filtered"].to_numpy(),
+                self.base_processed,
+                time_offset_seconds=params.diurnal_params.time_offset_seconds,
+                reference=params.diurnal_params.reference,
+            )
+            df["mag_diurnal_corrected"] = diurnal_result.corrected
+            self.diurnal_info = {
+                "mode": "base_station",
+                "coverage_pct": diurnal_result.coverage_pct,
+                "has_overlap": diurnal_result.has_overlap,
+                "base_reference_value": diurnal_result.base_reference_value,
+                "base_time_range": [str(diurnal_result.base_time_range[0]), str(diurnal_result.base_time_range[1])],
+                "drone_time_range": [str(diurnal_result.drone_time_range[0]), str(diurnal_result.drone_time_range[1])],
+            }
 
         hec = params.heading_effect_calibration
         if hec.enabled:
@@ -596,18 +704,23 @@ class Project:
                     "applied": False,
                     "reason": "업로드된 캘리브레이션 자료에 나침반(Compass) 데이터가 부족합니다 (지원 포맷: Geometrics MagArrow 등).",
                 }
-            cal_diurnal = apply_diurnal_correction(
-                cal["timestamp"],
-                cal["mag_raw"].to_numpy(),
-                self.base_processed,
-                time_offset_seconds=params.diurnal_params.time_offset_seconds,
-                reference=params.diurnal_params.reference,
-            )
+            if self.base_processed is not None:
+                cal_diurnal_corrected = apply_diurnal_correction(
+                    cal["timestamp"],
+                    cal["mag_raw"].to_numpy(),
+                    self.base_processed,
+                    time_offset_seconds=params.diurnal_params.time_offset_seconds,
+                    reference=params.diurnal_params.reference,
+                ).corrected
+            else:
+                # No base station (assume_constant mode) - nothing to
+                # subtract, use the calibration flight's own reading as-is.
+                cal_diurnal_corrected = cal["mag_raw"].to_numpy()
             theta_cal, phi_cal = magnetic_heading(
                 cal["compass_x"].to_numpy(), cal["compass_y"].to_numpy(), cal["compass_z"].to_numpy()
             )
             try:
-                heading_map = fit_heading_effect_map(theta_cal, phi_cal, cal_diurnal.corrected)
+                heading_map = fit_heading_effect_map(theta_cal, phi_cal, cal_diurnal_corrected)
             except HeadingCalibrationError as exc:
                 return {"enabled": True, "available": False, "applied": False, "reason": str(exc)}
             calibration_source = "uploaded_file"

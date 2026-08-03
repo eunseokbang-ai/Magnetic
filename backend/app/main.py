@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import date
 
 import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
@@ -17,6 +18,7 @@ from .models import (
     InversionParams,
     InversionSectionRequest,
     InversionSliceRequest,
+    IntermagnetFetchRequest,
     ManualExcludeRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
@@ -135,6 +137,29 @@ async def upload_base(project_id: str, files: list[UploadFile] = File(...)):
     buffers = [io.BytesIO(await f.read()) for f in files]
     summary = project.load_base(buffers)
     return summary
+
+
+@app.post("/api/projects/{project_id}/base/iaga2002/upload")
+async def upload_iaga2002(project_id: str, file: UploadFile = File(...)):
+    """Preview (not yet apply) a manually-downloaded IAGA-2002 file as a
+    substitute base station - works with no outbound network access from
+    this server at all, unlike the /intermagnet/fetch endpoint below."""
+    project = store.get(project_id)
+    text = (await file.read()).decode("utf-8", errors="replace")
+    return project.preview_intermagnet_text(text)
+
+
+@app.post("/api/projects/{project_id}/base/intermagnet/fetch")
+def fetch_intermagnet(project_id: str, req: IntermagnetFetchRequest):
+    project = store.get(project_id)
+    start_date = date.fromisoformat(req.start_date)
+    return project.fetch_intermagnet_preview(req.iaga_code, start_date, req.days)
+
+
+@app.post("/api/projects/{project_id}/base/intermagnet/apply")
+def apply_intermagnet(project_id: str):
+    project = store.get(project_id)
+    return project.apply_intermagnet_preview()
 
 
 @app.post("/api/projects/{project_id}/upload/heading_calibration")

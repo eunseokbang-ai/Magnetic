@@ -79,6 +79,20 @@ export function uploadBase(projectId, files, onProgress) {
   return uploadWithProgress(`/projects/${projectId}/upload/base`, form, onProgress);
 }
 
+export function uploadIaga2002(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/base/iaga2002/upload`, { method: "POST", body: form });
+}
+
+export function fetchIntermagnet(projectId, req) {
+  return request(`/projects/${projectId}/base/intermagnet/fetch`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function applyIntermagnet(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/apply`, { method: "POST" });
+}
+
 export function uploadHeadingCalibration(projectId, files, onProgress) {
   const form = new FormData();
   for (const f of files) form.append("files", f);

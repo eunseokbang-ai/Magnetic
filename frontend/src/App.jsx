@@ -175,6 +175,10 @@ export default function App() {
   const [exportGeotiffColored, setExportGeotiffColored] = useState(false);
   const [droneUploadProgress, setDroneUploadProgress] = useState(null);
   const [baseUploadProgress, setBaseUploadProgress] = useState(null);
+  const [intermagnetPreview, setIntermagnetPreview] = useState(null);
+  const [intermagnetLoading, setIntermagnetLoading] = useState(false);
+  const [intermagnetApplying, setIntermagnetApplying] = useState(false);
+  const [intermagnetError, setIntermagnetError] = useState(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [showContours, setShowContours] = useState(false);
@@ -310,6 +314,53 @@ export default function App() {
     } finally {
       setBaseUploadProgress(null);
     }
+  };
+
+  const handleUploadIaga2002 = async (file) => {
+    try {
+      setIntermagnetError(null);
+      setIntermagnetLoading(true);
+      const id = await ensureProject();
+      const preview = await api.uploadIaga2002(id, file);
+      setIntermagnetPreview(preview);
+    } catch (e) {
+      setIntermagnetError(e.message || String(e));
+    } finally {
+      setIntermagnetLoading(false);
+    }
+  };
+
+  const handleFetchIntermagnet = async (req) => {
+    try {
+      setIntermagnetError(null);
+      setIntermagnetLoading(true);
+      const id = await ensureProject();
+      const preview = await api.fetchIntermagnet(id, req);
+      setIntermagnetPreview(preview);
+    } catch (e) {
+      setIntermagnetError(e.message || String(e));
+    } finally {
+      setIntermagnetLoading(false);
+    }
+  };
+
+  const handleApplyIntermagnet = async () => {
+    try {
+      setIntermagnetError(null);
+      setIntermagnetApplying(true);
+      const summary = await api.applyIntermagnet(projectId);
+      setBaseSummary(summary);
+      setIntermagnetPreview(null);
+    } catch (e) {
+      setIntermagnetError(e.message || String(e));
+    } finally {
+      setIntermagnetApplying(false);
+    }
+  };
+
+  const handleCancelIntermagnetPreview = () => {
+    setIntermagnetPreview(null);
+    setIntermagnetError(null);
   };
 
   const handleUploadHeadingCalibration = async (files) => {
@@ -1270,6 +1321,14 @@ export default function App() {
           baseUploadProgress={baseUploadProgress}
           onShowBaseTimeseries={handleShowBaseTimeseries}
           baseTimeseriesLoading={baseTimeseriesLoading}
+          onUploadIaga2002={handleUploadIaga2002}
+          onFetchIntermagnet={handleFetchIntermagnet}
+          onApplyIntermagnet={handleApplyIntermagnet}
+          onCancelIntermagnetPreview={handleCancelIntermagnetPreview}
+          intermagnetPreview={intermagnetPreview}
+          intermagnetLoading={intermagnetLoading}
+          intermagnetApplying={intermagnetApplying}
+          intermagnetError={intermagnetError}
           onUploadHeadingCalibration={handleUploadHeadingCalibration}
           headingCalibrationSummary={headingCalibrationSummary}
           headingCalibrationUploadProgress={headingCalibrationUploadProgress}

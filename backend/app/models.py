@@ -26,6 +26,14 @@ class LineParams(BaseModel):
 class DiurnalParams(BaseModel):
     time_offset_seconds: float = 0.0
     reference: str = "mean"  # "mean" | "first" | numeric string
+    # "base_station" (default) requires an uploaded/fetched base log and
+    # subtracts its interpolated, mean-referenced variation from the drone
+    # reading. "assume_constant" is for when no base station was measured
+    # at all: the Earth's field is assumed steady over the (short) survey
+    # window, so the diurnal correction step is skipped entirely and the
+    # drone's own filtered reading is used as-is (mag_diurnal_corrected =
+    # mag_filtered) - see store.py::run_pipeline.
+    mode: Literal["base_station", "assume_constant"] = "base_station"
 
 
 class BaseQCParams(BaseModel):
@@ -305,6 +313,17 @@ class ManualSmoothRequest(BaseModel):
     mode: Literal["point_ids", "polygon", "reset"]
     point_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
+
+
+class IntermagnetFetchRequest(BaseModel):
+    """Downloads IAGA-2002 data for a public INTERMAGNET observatory to use
+    as a stand-in base station when no local base was measured - see
+    processing/intermagnet.py. Requires this server's own outbound network
+    to reach the data service; if that's blocked, use the IAGA-2002 file
+    upload endpoint instead (same parser, no network access needed)."""
+    iaga_code: str
+    start_date: str  # "YYYY-MM-DD"
+    days: int = Field(2, ge=1, le=31)
 
 
 class InversionParams(BaseModel):
