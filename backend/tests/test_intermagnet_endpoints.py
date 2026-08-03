@@ -111,10 +111,21 @@ def test_upload_rejects_non_iaga_text(client):
     assert r.status_code != 200
 
 
+def test_fetch_rejects_malformed_start_date_with_clear_korean_message(client):
+    project_id = _new_project(client)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/fetch",
+        json={"iaga_code": "IRT", "start_date": "not-a-date", "days": 1},
+    )
+    assert r.status_code == 400, r.text
+    assert "시작일" in r.json()["detail"]
+
+
 if __name__ == "__main__":
     c = TestClient(app)
     test_upload_previews_without_committing_as_base(c)
     test_apply_commits_preview_as_base_and_unblocks_processing(c)
     test_apply_without_preview_fails_clearly(c)
     test_upload_rejects_non_iaga_text(c)
+    test_fetch_rejects_malformed_start_date_with_clear_korean_message(c)
     print("ALL CHECKS PASSED")

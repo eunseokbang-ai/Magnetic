@@ -51,9 +51,14 @@ def apply_manual_smoothing(
     `point_ids`, run per line_id in timestamp order (matching how the
     user sees/selects the stretch, on the time-series chart or on the
     map). Excluded/ramp rows (line_id < 0) are skipped - there is no
-    coherent "surrounding trend" to interpolate against there."""
+    coherent "surrounding trend" to interpolate against there.
+
+    Always returns a copy, even when point_ids is empty - callers (see
+    store.py::set_manual_smoothing) rely on the result never aliasing df,
+    since df is often a pristine snapshot (processed_base) that must stay
+    independent from the mutable self.processed it's assigned to."""
     if not point_ids:
-        return df
+        return df.copy()
     out = df.copy()
     for line_id, group in out.groupby("line_id"):
         if line_id < 0:

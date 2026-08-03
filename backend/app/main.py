@@ -152,7 +152,10 @@ async def upload_iaga2002(project_id: str, file: UploadFile = File(...)):
 @app.post("/api/projects/{project_id}/base/intermagnet/fetch")
 def fetch_intermagnet(project_id: str, req: IntermagnetFetchRequest):
     project = store.get(project_id)
-    start_date = date.fromisoformat(req.start_date)
+    try:
+        start_date = date.fromisoformat(req.start_date)
+    except ValueError:
+        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {req.start_date!r} (예: 2026-07-24)")
     return project.fetch_intermagnet_preview(req.iaga_code, start_date, req.days)
 
 

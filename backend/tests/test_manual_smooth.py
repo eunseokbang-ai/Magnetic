@@ -62,15 +62,22 @@ def test_apply_manual_smoothing_only_touches_flagged_line():
     assert np.allclose(out.loc[[0, 1, 2, 3, 7, 8, 9], "anomaly"], 10.0)
 
 
-def test_apply_manual_smoothing_empty_point_ids_is_noop():
+def test_apply_manual_smoothing_empty_point_ids_returns_independent_copy():
+    # Must be an independent copy, not the same object, even when there's
+    # nothing to smooth - store.py assigns the result to self.processed
+    # while df itself is often self.processed_base, a pristine snapshot
+    # that must never alias (and so accidentally mutate alongside) it.
     df = _make_df()
     out = apply_manual_smoothing(df, set())
-    assert out is df
+    assert out is not df
+    pd.testing.assert_frame_equal(out, df)
+    out.loc[0, "anomaly"] = 999.0
+    assert df.loc[0, "anomaly"] != 999.0
 
 
 if __name__ == "__main__":
     test_interpolate_flagged_runs_bridges_interior_run()
     test_interpolate_flagged_runs_edge_run_holds_flat()
     test_apply_manual_smoothing_only_touches_flagged_line()
-    test_apply_manual_smoothing_empty_point_ids_is_noop()
+    test_apply_manual_smoothing_empty_point_ids_returns_independent_copy()
     print("ALL CHECKS PASSED")
