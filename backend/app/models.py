@@ -326,6 +326,19 @@ class IntermagnetFetchRequest(BaseModel):
     days: int = Field(2, ge=1, le=31)
 
 
+class TileBboxRequest(BaseModel):
+    """A bounding box + zoom range to estimate or bulk-download offline
+    basemap tiles for - see processing/tile_cache.py. Used for both the
+    /tiles/estimate (dry run) and /tiles/download endpoints."""
+    source: Literal["osm", "esri"]
+    min_lat: float = Field(ge=-90, le=90)
+    min_lon: float = Field(ge=-180, le=180)
+    max_lat: float = Field(ge=-90, le=90)
+    max_lon: float = Field(ge=-180, le=180)
+    min_zoom: int = Field(ge=0, le=19)
+    max_zoom: int = Field(ge=0, le=19)
+
+
 class InversionParams(BaseModel):
     value: ValueField = "anomaly"
     # Any of these left as None (the default) is auto-estimated from the

@@ -161,6 +161,18 @@ export function applySmoothing(projectId, req) {
   return request(`/projects/${projectId}/smooth`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function estimateOfflineTiles(req) {
+  return request(`/tiles/estimate`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function downloadOfflineTiles(req) {
+  return request(`/tiles/download`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getOfflineTileStatus() {
+  return request(`/tiles/status`);
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);

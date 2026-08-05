@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { MapContainer, TileLayer, LayersControl, ImageOverlay, ScaleControl, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, LayersControl, ImageOverlay, ScaleControl, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -331,6 +331,19 @@ function TargetDetectionLayer({ targets }) {
   return null;
 }
 
+// Reports the current visible map bounds up to the parent (e.g. so the
+// offline tile download panel can offer "use the area I'm currently
+// looking at" instead of making the user type lat/lon by hand).
+function BoundsWatcher({ onBoundsChange }) {
+  const map = useMapEvents({
+    moveend: () => onBoundsChange && onBoundsChange(map.getBounds()),
+  });
+  useEffect(() => {
+    if (onBoundsChange) onBoundsChange(map.getBounds());
+  }, [map, onBoundsChange]);
+  return null;
+}
+
 export default function MapView({
   points,
   colorRange,
@@ -348,12 +361,14 @@ export default function MapView({
   eulerSolutions,
   detectedTargets,
   multiscaleEdgePoints,
+  onBoundsChange,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
 
   return (
     <MapContainer center={center} zoom={13} style={{ height: "100%", width: "100%" }} preferCanvas>
+      {onBoundsChange && <BoundsWatcher onBoundsChange={onBoundsChange} />}
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="OpenStreetMap">
           <TileLayer
@@ -369,6 +384,15 @@ export default function MapView({
         </LayersControl.BaseLayer>
         <LayersControl.BaseLayer name="Google 위성 (비공식 타일, ToS 주의)">
           <TileLayer attribution="&copy; Google" url="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}" />
+        </LayersControl.BaseLayer>
+        <LayersControl.BaseLayer name="OpenStreetMap (오프라인 캐시)">
+          <TileLayer
+            attribution="&copy; OpenStreetMap contributors (오프라인 캐시)"
+            url="/api/tiles/osm/{z}/{x}/{y}"
+          />
+        </LayersControl.BaseLayer>
+        <LayersControl.BaseLayer name="Esri 위성 (오프라인 캐시)">
+          <TileLayer attribution="Tiles &copy; Esri (오프라인 캐시)" url="/api/tiles/esri/{z}/{x}/{y}" />
         </LayersControl.BaseLayer>
       </LayersControl>
 

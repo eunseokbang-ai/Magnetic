@@ -11,6 +11,7 @@ import InversionPanel from "./components/InversionPanel";
 import InversionSectionView from "./components/InversionSectionView";
 import LineProfileView from "./components/LineProfileView";
 import BaseStationView from "./components/BaseStationView";
+import OfflineMapPanel from "./components/OfflineMapPanel";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
 // needs it, and most sessions never open it, so it's split into its own
@@ -179,6 +180,12 @@ export default function App() {
   const [intermagnetLoading, setIntermagnetLoading] = useState(false);
   const [intermagnetApplying, setIntermagnetApplying] = useState(false);
   const [intermagnetError, setIntermagnetError] = useState(null);
+  const [mapBounds, setMapBounds] = useState(null);
+  const [tileEstimate, setTileEstimate] = useState(null);
+  const [tileDownloadResult, setTileDownloadResult] = useState(null);
+  const [tileStatus, setTileStatus] = useState(null);
+  const [tileLoading, setTileLoading] = useState(false);
+  const [tileError, setTileError] = useState(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [showContours, setShowContours] = useState(false);
@@ -361,6 +368,43 @@ export default function App() {
   const handleCancelIntermagnetPreview = () => {
     setIntermagnetPreview(null);
     setIntermagnetError(null);
+  };
+
+  const handleMapBoundsChange = useCallback((bounds) => setMapBounds(bounds), []);
+
+  const handleEstimateTiles = async (req) => {
+    try {
+      setTileError(null);
+      setTileDownloadResult(null);
+      const resp = await api.estimateOfflineTiles(req);
+      setTileEstimate(resp);
+    } catch (e) {
+      setTileError(e.message || String(e));
+    }
+  };
+
+  const handleDownloadTiles = async (req) => {
+    try {
+      setTileError(null);
+      setTileLoading(true);
+      const resp = await api.downloadOfflineTiles(req);
+      setTileDownloadResult(resp);
+      const status = await api.getOfflineTileStatus();
+      setTileStatus(status);
+    } catch (e) {
+      setTileError(e.message || String(e));
+    } finally {
+      setTileLoading(false);
+    }
+  };
+
+  const handleRefreshTileStatus = async () => {
+    try {
+      const status = await api.getOfflineTileStatus();
+      setTileStatus(status);
+    } catch (e) {
+      setTileError(e.message || String(e));
+    }
   };
 
   const handleUploadHeadingCalibration = async (files) => {
@@ -1417,6 +1461,7 @@ export default function App() {
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
           detectedTargets={showDetectedTargets ? targetDetectionResult?.targets : null}
           multiscaleEdgePoints={showMultiscaleLayer ? multiscaleResult?.points : null}
+          onBoundsChange={handleMapBoundsChange}
         />
         {volumeData && (
           <Suspense
@@ -1656,6 +1701,19 @@ export default function App() {
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>15. AI 해석 도우미 (챗봇)</h2>
         <ChatPanel ready={!!processSummary} messages={chatMessages} onSend={handleSendChatMessage} sending={chatSending} error={chatError} />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>16. 오프라인 지도 (인터넷 없이 배경지도 사용)</h2>
+        <OfflineMapPanel
+          mapBounds={mapBounds}
+          onEstimate={handleEstimateTiles}
+          onDownload={handleDownloadTiles}
+          onRefreshStatus={handleRefreshTileStatus}
+          status={tileStatus}
+          estimate={tileEstimate}
+          downloadResult={tileDownloadResult}
+          loading={tileLoading}
+          error={tileError}
+        />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>
         <Legend

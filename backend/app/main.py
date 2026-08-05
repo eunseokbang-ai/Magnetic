@@ -28,8 +28,10 @@ from .models import (
     PowerSpectrumRequest,
     ProcessParams,
     TargetDetectionRequest,
+    TileBboxRequest,
     TransformRequest,
 )
+from .processing import tile_cache
 from .processing.colormaps import register_custom_colormaps
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .store import ProjectError, store
@@ -472,6 +474,56 @@ def chat(project_id: str, req: ChatRequest):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# Offline basemap tile cache - not project-scoped, since map imagery is
+# generic and reusable across projects/sessions (see processing/tile_cache.py).
+_TILE_MEDIA_TYPES = {"png": "image/png", "jpg": "image/jpeg"}
+
+
+@app.post("/api/tiles/estimate")
+def estimate_tiles(req: TileBboxRequest):
+    n_tiles = tile_cache.count_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
+    avg_kb_per_tile = 25 if req.source == "esri" else 15
+    return {
+        "n_tiles": n_tiles,
+        "estimated_mb": round(n_tiles * avg_kb_per_tile / 1024, 1),
+        "max_tiles": tile_cache.MAX_TILES_PER_REQUEST,
+        "exceeds_max": n_tiles > tile_cache.MAX_TILES_PER_REQUEST,
+    }
+
+
+@app.post("/api/tiles/download")
+def download_tiles(req: TileBboxRequest):
+    result = tile_cache.download_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
+    return {
+        "n_total": result.n_total,
+        "n_already_cached": result.n_already_cached,
+        "n_downloaded": result.n_downloaded,
+        "n_failed": result.n_failed,
+    }
+
+
+@app.get("/api/tiles/status")
+def tiles_status():
+    return tile_cache.cache_status()
+
+
+@app.get("/api/tiles/{source}/{z}/{x}/{y}")
+def get_tile(source: str, z: int, x: int, y: int):
+    if source not in tile_cache.TILE_SOURCES:
+        raise HTTPException(status_code=404, detail=f"지원하지 않는 지도 소스입니다: {source}")
+    content = tile_cache.get_cached_tile(source, z, x, y)
+    if content is None:
+        # Opportunistic: not cached yet, but if the internet happens to be
+        # reachable right now, fetch it live and cache it for next time -
+        # so simply browsing this layer while online gradually builds the
+        # offline cache too, not just the explicit bulk-download endpoint.
+        content = tile_cache.fetch_and_cache_tile(source, z, x, y)
+    if content is None:
+        raise HTTPException(status_code=404, detail="타일을 찾을 수 없습니다 (캐시에 없고 인터넷에서도 받아오지 못했습니다).")
+    media_type = _TILE_MEDIA_TYPES[tile_cache.TILE_SOURCES[source]["ext"]]
+    return Response(content=content, media_type=media_type)
 
 
 # When a production build exists (frontend/dist, produced by `npm run
