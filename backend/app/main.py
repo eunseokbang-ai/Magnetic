@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import io
+import pathlib
 from datetime import date
 
 import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
@@ -470,3 +472,17 @@ def chat(project_id: str, req: ChatRequest):
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+# When a production build exists (frontend/dist, produced by `npm run
+# build` - see the Windows launcher's run.bat), serve it from this same
+# process so the whole app runs as a single executable/port instead of
+# needing a separate `npm run dev` terminal. Mounted last and after every
+# /api/* route above so those always win; html=True serves index.html for
+# unmatched paths, which is what the client-side router needs. In local
+# dev (no dist/ built yet, frontend served by its own `vite` dev server
+# instead) this mount is simply skipped - the API-only behavior is
+# unchanged.
+_frontend_dist = pathlib.Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")
