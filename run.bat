@@ -111,12 +111,12 @@ echo        (처음 실행이거나 컴퓨터 성능에 따라 최대 1분 정�
 echo        이 창을 닫으면 프로그램이 종료됩니다.
 echo.
 
-where powershell >nul 2>nul
+where curl >nul 2>nul
 if errorlevel 1 (
-    REM PowerShell이 없는 극히 드문 환경을 위한 대비책 - 고정 지연 후 열기.
-    start "" cmd /c "timeout /t 10 /nobreak >nul & start http://127.0.0.1:8000/"
+    REM curl이 없는 구버전 Windows(1803 이전)를 위한 대비책 - 고정 지연 후 열기.
+    start "" cmd /c "timeout /t 15 /nobreak >nul & start http://127.0.0.1:8000/"
 ) else (
-    start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0wait_and_open.ps1"
+    start /min "" cmd /c "%~dp0wait_and_open.bat"
 )
 
 echo [4/4] 실행 중... (종료하려면 이 창을 닫거나 Ctrl+C)
