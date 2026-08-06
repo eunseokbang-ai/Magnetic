@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "./api";
 import { minMax } from "./arrayUtils";
 import MapView from "./components/MapView";
@@ -166,6 +166,8 @@ export default function App() {
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
   const [overlay, setOverlay] = useState(null);
+  const [inspectMode, setInspectMode] = useState(false);
+  const [inspectPoints, setInspectPoints] = useState([]);
   const [error, setError] = useState(null);
   const [cmapName, setCmapName] = useState("RdYlBu_r");
   const [manualRange, setManualRange] = useState({ enabled: false, vmin: null, vmax: null });
@@ -671,6 +673,28 @@ export default function App() {
       handleError(e);
     } finally {
       setGridding(false);
+    }
+  };
+
+  // Pinned points are only valid for the overlay they were read from - if a
+  // new grid/transform gets generated while some are still pinned, clear
+  // them rather than leaving stale values floating over the new surface.
+  useEffect(() => {
+    setInspectPoints([]);
+  }, [overlay]);
+
+  const toggleInspectMode = () => {
+    setInspectMode((v) => !v);
+    setInspectPoints([]);
+  };
+
+  const handleInspectClick = async (lat, lon) => {
+    if (!projectId) return;
+    try {
+      const resp = await api.sampleOverlayValue(projectId, lat, lon);
+      setInspectPoints((prev) => [...prev, resp]);
+    } catch (e) {
+      handleError(e);
     }
   };
 
@@ -1605,6 +1629,9 @@ export default function App() {
           setContourNLevels={setContourNLevels}
           onGrid={handleGrid}
           gridding={gridding}
+          overlay={overlay}
+          inspectMode={inspectMode}
+          onToggleInspectMode={toggleInspectMode}
           activeTransform={activeTransform}
           onTransform={handleTransform}
           transformLoading={transformLoading}
@@ -1655,6 +1682,9 @@ export default function App() {
           detectedTargets={showDetectedTargets ? targetDetectionResult?.targets : null}
           multiscaleEdgePoints={showMultiscaleLayer ? multiscaleResult?.points : null}
           onBoundsChange={handleMapBoundsChange}
+          inspectMode={inspectMode}
+          inspectPoints={inspectPoints}
+          onInspectClick={handleInspectClick}
         />
         {volumeData && (
           <Suspense

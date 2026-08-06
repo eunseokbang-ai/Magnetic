@@ -491,3 +491,8 @@ class ChatRequest(BaseModel):
 class InversionVolumeRequest(BaseModel):
     threshold: Optional[float] = None
     threshold_max: Optional[float] = None
+
+
+class OverlaySampleRequest(BaseModel):
+    lat: float
+    lon: float

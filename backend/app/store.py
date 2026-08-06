@@ -13,6 +13,7 @@ import pandas as pd
 import rasterio
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
+from scipy.interpolate import RegularGridInterpolator
 
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
@@ -225,6 +226,10 @@ class Project:
     inversion_field_intensity_nt: float | None = None
     inversion_obs_grid: GridResult | None = None
     inversion_value_field: str | None = None
+    last_overlay_values: np.ndarray | None = None
+    last_overlay_easting: np.ndarray | None = None
+    last_overlay_northing: np.ndarray | None = None
+    last_overlay_label: str | None = None
 
     def load_drone(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
@@ -1305,6 +1310,10 @@ class Project:
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
                 interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
             )
+        self.last_overlay_values = grid.values
+        self.last_overlay_easting = grid.easting
+        self.last_overlay_northing = grid.northing
+        self.last_overlay_label = req.value
         return overlay
 
     def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
@@ -1442,6 +1451,10 @@ class Project:
                 values, grid.easting, grid.northing, self.utm_epsg,
                 interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
             )
+        self.last_overlay_values = values
+        self.last_overlay_easting = grid.easting
+        self.last_overlay_northing = grid.northing
+        self.last_overlay_label = req.transform
         return overlay
 
     def export_grid_geotiff(self, req: GridRequest) -> bytes:
@@ -1785,6 +1798,34 @@ class Project:
                     geology[layer_name] = {"error": str(exc)}
             result["reference_layers"] = geology
 
+        return result
+
+    def sample_overlay_value(self, lat: float, lon: float) -> dict:
+        """Bilinearly-interpolated value from the most recently displayed
+        grid/derivative overlay at a clicked map point - matches what the
+        overlay's color at that exact pixel represents, unlike
+        sample_point() which reports the nearest raw survey point.
+        Powers the map's click-to-inspect tool."""
+        if self.last_overlay_values is None:
+            raise ProjectError("먼저 그리드를 생성하세요.")
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다.")
+        easting = self.last_overlay_easting
+        northing = self.last_overlay_northing
+        values = self.last_overlay_values
+        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+        x, y = transformer.transform(lon, lat)
+        result = {"lat": lat, "lon": lon, "value_nt": None, "in_bounds": False, "label": self.last_overlay_label}
+        if x < easting[0] or x > easting[-1] or y < northing[0] or y > northing[-1]:
+            return result
+        interp = RegularGridInterpolator(
+            (northing, easting), values, method="linear", bounds_error=False, fill_value=np.nan,
+        )
+        value = float(interp([[y, x]])[0])
+        if not np.isfinite(value):
+            return result
+        result["value_nt"] = value
+        result["in_bounds"] = True
         return result
 
     def save_project_bundle(self) -> bytes:

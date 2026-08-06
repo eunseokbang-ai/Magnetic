@@ -141,6 +141,9 @@ export default function WorkflowSteps({
   setContourNLevels,
   onGrid,
   gridding,
+  overlay,
+  inspectMode,
+  onToggleInspectMode,
   activeTransform,
   onTransform,
   transformLoading,
@@ -1040,6 +1043,18 @@ export default function WorkflowSteps({
           )}
           <button style={buttonStyle} disabled={gridding || !processSummary} onClick={() => onGrid()}>
             {gridding ? "그리딩 중..." : "그리드 생성"}
+          </button>
+          <button
+            style={{
+              ...buttonStyle,
+              background: inspectMode ? "#2563eb" : "white",
+              color: inspectMode ? "white" : "#2563eb",
+            }}
+            disabled={!overlay}
+            onClick={() => onToggleInspectMode()}
+            title="켜면 지도를 클릭할 때마다 그 지점의 값(nT)이 지도 위에 표시됩니다. 여러 지점을 계속 클릭해 동시에 비교할 수 있고, 이 버튼을 다시 누르면 전부 지워집니다."
+          >
+            {inspectMode ? "지점값 확인 중 (클릭하면 종료)" : "지점값 확인"}
           </button>
         </div>
       </details>

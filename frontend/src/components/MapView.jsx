@@ -331,6 +331,63 @@ function TargetDetectionLayer({ targets }) {
   return null;
 }
 
+// Click-to-inspect: while active, every map click samples the currently
+// displayed grid/derivative overlay at that exact point (bilinear
+// interpolation - see Project.sample_overlay_value) and pins the nT value
+// right there, so several points can be read and compared at once without
+// leaving the map. Points accumulate until the toggle button is switched
+// off, which clears them (see App.jsx's inspectPoints state).
+function InspectLayer({ active, points, onPointClick }) {
+  const map = useMapEvents({
+    click: (e) => {
+      if (!active) return;
+      onPointClick && onPointClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const container = map.getContainer();
+    container.style.cursor = active ? "crosshair" : "";
+    return () => {
+      container.style.cursor = "";
+    };
+  }, [active, map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    for (const p of points || []) {
+      const hasValue = p.in_bounds && p.value_nt != null;
+      const text = hasValue ? `${p.value_nt.toFixed(1)} nT` : "자료 없음";
+      const icon = L.divIcon({
+        className: "inspect-value-label",
+        html:
+          `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">` +
+          `<div style="background:${hasValue ? "#111827" : "#6b7280"};color:white;font-size:11px;font-weight:700;` +
+          `padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${text}</div>` +
+          `<div style="width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;` +
+          `border-top:5px solid ${hasValue ? "#111827" : "#6b7280"};"></div>` +
+          `</div>`,
+        iconSize: [0, 0],
+      });
+      group.addLayer(L.marker([p.lat, p.lon], { icon, interactive: false }));
+      group.addLayer(
+        L.circleMarker([p.lat, p.lon], { radius: 3, color: "#111827", weight: 1, fillColor: "#f59e0b", fillOpacity: 1 })
+      );
+    }
+  }, [points]);
+
+  return null;
+}
+
 // Reports the current visible map bounds up to the parent (e.g. so the
 // offline tile download panel can offer "use the area I'm currently
 // looking at" instead of making the user type lat/lon by hand).
@@ -362,6 +419,9 @@ export default function MapView({
   detectedTargets,
   multiscaleEdgePoints,
   onBoundsChange,
+  inspectMode,
+  inspectPoints,
+  onInspectClick,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -436,6 +496,7 @@ export default function MapView({
       {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
 
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
+      <InspectLayer active={inspectMode} points={inspectPoints} onPointClick={onInspectClick} />
       <ScaleControl position="bottomright" imperial={false} />
       <NorthArrow />
     </MapContainer>

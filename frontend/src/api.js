@@ -221,6 +221,10 @@ export function sendChatMessage(projectId, message, history) {
   return request(`/projects/${projectId}/chat`, { method: "POST", body: JSON.stringify({ message, history }) });
 }
 
+export function sampleOverlayValue(projectId, lat, lon) {
+  return request(`/projects/${projectId}/overlay/sample`, { method: "POST", body: JSON.stringify({ lat, lon }) });
+}
+
 export function uploadDem(projectId, file) {
   const form = new FormData();
   form.append("file", file);

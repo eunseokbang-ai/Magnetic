@@ -26,6 +26,7 @@ from .models import (
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
     NearestIntermagnetRequest,
+    OverlaySampleRequest,
     PolygonExportRequest,
     PowerSpectrumRequest,
     ProcessParams,
@@ -310,6 +311,12 @@ def grid(project_id: str, req: GridRequest):
 def transform(project_id: str, req: TransformRequest):
     project = store.get(project_id)
     return project.get_transform_overlay(req)
+
+
+@app.post("/api/projects/{project_id}/overlay/sample")
+def sample_overlay(project_id: str, req: OverlaySampleRequest):
+    project = store.get(project_id)
+    return project.sample_overlay_value(req.lat, req.lon)
 
 
 @app.post("/api/projects/{project_id}/grid/geotiff")
