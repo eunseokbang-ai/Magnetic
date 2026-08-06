@@ -95,6 +95,47 @@ def test_fetch_previews_nearest_stations_without_committing(client):
     assert r.status_code != 200
 
 
+def test_fetch_auto_detects_dates_from_uploaded_drone_survey(client):
+    # Omitting start_date/end_date entirely should auto-target the
+    # project's own survey flight date(s) - the sample fixture flies on
+    # 2026-07-24 only, which is also the date the mock station data is
+    # dated, so this must succeed identically to explicitly passing that
+    # date.
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+            json={"n_stations": 3},
+        )
+    assert r.status_code == 200, r.text
+    preview = r.json()
+    assert 1 <= len(preview["stations"]) <= 3
+
+
+def test_fetch_auto_mode_without_drone_data_fails_clearly(client):
+    project_id = _new_project(client)
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+            json={"n_stations": 3, "target_lat": 46.48, "target_lon": 106.27},
+        )
+    assert r.status_code == 400, r.text
+    assert "드론" in r.json()["detail"]
+
+
+def test_fetch_rejects_only_one_of_start_end_date(client):
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+        json={"start_date": "2026-07-24", "n_stations": 3},
+    )
+    assert r.status_code == 400, r.text
+    assert "모두" in r.json()["detail"]
+
+
 def test_apply_commits_nearest_preview_as_base_and_unblocks_processing(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
@@ -246,6 +287,9 @@ def test_fetch_accepts_explicit_target_override_without_drone_data(client):
 if __name__ == "__main__":
     c = TestClient(app)
     test_fetch_previews_nearest_stations_without_committing(c)
+    test_fetch_auto_detects_dates_from_uploaded_drone_survey(c)
+    test_fetch_auto_mode_without_drone_data_fails_clearly(c)
+    test_fetch_rejects_only_one_of_start_end_date(c)
     test_apply_commits_nearest_preview_as_base_and_unblocks_processing(c)
     test_comparison_available_after_fetch_before_apply(c)
     test_comparison_still_available_after_apply(c)

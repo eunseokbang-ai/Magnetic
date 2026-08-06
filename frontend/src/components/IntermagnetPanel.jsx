@@ -40,13 +40,30 @@ export default function IntermagnetPanel({
   nearestError,
   nearestHasResult,
   nearestComparisonLoading,
+  flightDates,
 }) {
   const [iagaCode, setIagaCode] = useState("");
+  const [dateMode, setDateMode] = useState("auto");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [nearestDateMode, setNearestDateMode] = useState("auto");
   const [nearestStartDate, setNearestStartDate] = useState("");
   const [nearestEndDate, setNearestEndDate] = useState("");
   const [nStations, setNStations] = useState(4);
+
+  const hasFlightDates = flightDates?.length > 0;
+  const dateModeToggle = (mode, setMode) => (
+    <div style={{ display: "flex", gap: 10, fontSize: 12 }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+        <input type="radio" checked={mode === "auto"} onChange={() => setMode("auto")} />
+        측선 자료 날짜 자동 사용 (권장)
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+        <input type="radio" checked={mode === "manual"} onChange={() => setMode("manual")} />
+        직접 기간 지정
+      </label>
+    </div>
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 8, fontSize: 12 }}>
@@ -74,26 +91,37 @@ export default function IntermagnetPanel({
             조사지역 평균 좌표 주변 동서남북 방향에서 가장 가까운 관측소들을 자동으로 찾아 자료를 받아온 뒤, 거리 가중
             평균(IDW)으로 결합하여 하나의 가상 베이스 자료로 만듭니다. 관측소 코드를 몰라도 됩니다.
           </div>
+          {dateModeToggle(nearestDateMode, setNearestDateMode)}
+          {nearestDateMode === "auto" ? (
+            <div style={{ color: hasFlightDates ? "#4b5563" : "#b45309" }}>
+              {hasFlightDates
+                ? `인식된 측선 날짜 (${flightDates.length}일): ${flightDates.join(", ")}`
+                : "드론 자료를 먼저 업로드하면 촬영 날짜를 자동으로 인식합니다 (또는 직접 기간을 지정하세요)."}
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ color: "#4b5563" }}>시작일</span>
+                <input
+                  type="date"
+                  style={{ ...inputStyle, width: 140 }}
+                  value={nearestStartDate}
+                  onChange={(e) => setNearestStartDate(e.target.value)}
+                />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ color: "#4b5563" }}>종료일</span>
+                <input
+                  type="date"
+                  style={{ ...inputStyle, width: 140 }}
+                  value={nearestEndDate}
+                  min={nearestStartDate || undefined}
+                  onChange={(e) => setNearestEndDate(e.target.value)}
+                />
+              </label>
+            </div>
+          )}
           <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }}>시작일</span>
-              <input
-                type="date"
-                style={{ ...inputStyle, width: 140 }}
-                value={nearestStartDate}
-                onChange={(e) => setNearestStartDate(e.target.value)}
-              />
-            </label>
-            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }}>종료일</span>
-              <input
-                type="date"
-                style={{ ...inputStyle, width: 140 }}
-                value={nearestEndDate}
-                min={nearestStartDate || undefined}
-                onChange={(e) => setNearestEndDate(e.target.value)}
-              />
-            </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <span style={{ color: "#4b5563" }}>관측소 수</span>
               <input
@@ -107,11 +135,10 @@ export default function IntermagnetPanel({
             </label>
             <button
               style={buttonStyle}
-              disabled={nearestLoading || !nearestStartDate || !nearestEndDate}
+              disabled={nearestLoading || (nearestDateMode === "manual" && (!nearestStartDate || !nearestEndDate))}
               onClick={() =>
                 onFetchNearestIntermagnet({
-                  start_date: nearestStartDate,
-                  end_date: nearestEndDate,
+                  ...(nearestDateMode === "manual" ? { start_date: nearestStartDate, end_date: nearestEndDate } : {}),
                   n_stations: nStations,
                 })
               }
@@ -120,7 +147,7 @@ export default function IntermagnetPanel({
             </button>
           </div>
           <div style={{ color: "#9ca3af" }}>
-            해당 기간 중 아직 게시되지 않은 최근 1~2일 자료나, 특정일에 결측된 자료는 나머지 기간의 자료로 추정하여
+            요청한 날짜 중 아직 게시되지 않은 자료나 특정일에 결측된 자료는, 그 전날과 다음날 자료로 추정하여
             채웁니다.
           </div>
 
@@ -222,30 +249,48 @@ export default function IntermagnetPanel({
             placeholder="IRT"
           />
         </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ color: "#4b5563" }}>시작일</span>
-          <input type="date" style={{ ...inputStyle, width: 140 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ color: "#4b5563" }}>종료일</span>
-          <input
-            type="date"
-            style={{ ...inputStyle, width: 140 }}
-            value={endDate}
-            min={startDate || undefined}
-            onChange={(e) => setEndDate(e.target.value)}
-          />
-        </label>
+      </div>
+      {dateModeToggle(dateMode, setDateMode)}
+      {dateMode === "auto" ? (
+        <div style={{ color: hasFlightDates ? "#4b5563" : "#b45309" }}>
+          {hasFlightDates
+            ? `인식된 측선 날짜 (${flightDates.length}일): ${flightDates.join(", ")}`
+            : "드론 자료를 먼저 업로드하면 촬영 날짜를 자동으로 인식합니다 (또는 직접 기간을 지정하세요)."}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ color: "#4b5563" }}>시작일</span>
+            <input type="date" style={{ ...inputStyle, width: 140 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ color: "#4b5563" }}>종료일</span>
+            <input
+              type="date"
+              style={{ ...inputStyle, width: 140 }}
+              value={endDate}
+              min={startDate || undefined}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </label>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6 }}>
         <button
           style={buttonStyle}
-          disabled={loading || !iagaCode || !startDate || !endDate}
-          onClick={() => onFetchIntermagnet({ iaga_code: iagaCode, start_date: startDate, end_date: endDate })}
+          disabled={loading || !iagaCode || (dateMode === "manual" && (!startDate || !endDate))}
+          onClick={() =>
+            onFetchIntermagnet({
+              iaga_code: iagaCode,
+              ...(dateMode === "manual" ? { start_date: startDate, end_date: endDate } : {}),
+            })
+          }
         >
           {loading ? "요청 중..." : "자동 다운로드 시도"}
         </button>
       </div>
       <div style={{ color: "#9ca3af" }}>
-        해당 기간 중 아직 게시되지 않은 최근 1~2일 자료나, 특정일에 결측된 자료는 나머지 기간의 자료로 추정하여 채웁니다.
+        요청한 날짜 중 아직 게시되지 않은 자료나 특정일에 결측된 자료는, 그 전날과 다음날 자료로 추정하여 채웁니다.
       </div>
 
       {error && (

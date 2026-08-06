@@ -326,14 +326,22 @@ class IntermagnetFetchRequest(BaseModel):
     as a stand-in base station when no local base was measured - see
     processing/intermagnet.py. Requires this server's own outbound network
     to reach the data service; if that's blocked, use the IAGA-2002 file
-    upload endpoint instead (same parser, no network access needed). Any
-    calendar day in [start_date, end_date] that comes back missing (e.g.
-    the most recent day or two, before definitive data is published) is
-    estimated from the rest of the downloaded range - see
-    processing/intermagnet.py::fill_missing_days."""
+    upload endpoint instead (same parser, no network access needed).
+
+    Leave start_date/end_date both unset to auto-target exactly the
+    project's own drone survey flight dates (see Project._survey_dates) -
+    the recommended default, since it downloads only the days actually
+    needed rather than every day across a survey's full min-to-max span
+    (which can be mostly empty padding for a survey flown on a few
+    separate days weeks apart). Set both to override with an explicit
+    inclusive date range instead (e.g. no drone data uploaded yet, or a
+    deliberately different period). Any requested date that comes back
+    missing (e.g. the most recent day or two, before definitive data is
+    published) is estimated from its own immediate day-before/day-after
+    neighbors - see processing/intermagnet.py::fetch_observatory_dates."""
     iaga_code: str
-    start_date: str  # "YYYY-MM-DD"
-    end_date: str  # "YYYY-MM-DD", inclusive
+    start_date: str | None = None  # "YYYY-MM-DD"; omit with end_date for survey-date auto-detect
+    end_date: str | None = None  # "YYYY-MM-DD", inclusive
 
 
 class NearestIntermagnetRequest(BaseModel):
@@ -343,11 +351,13 @@ class NearestIntermagnetRequest(BaseModel):
     weighting into one substitute base station series - see
     processing/intermagnet.py::select_nearest_observatories /
     estimate_base_from_observatories. Requires this server's own outbound
-    network to reach the data service. Any calendar day in [start_date,
-    end_date] missing from a selected station is estimated the same way
-    as IntermagnetFetchRequest."""
-    start_date: str  # "YYYY-MM-DD"
-    end_date: str  # "YYYY-MM-DD", inclusive
+    network to reach the data service.
+
+    start_date/end_date behave exactly as in IntermagnetFetchRequest -
+    leave both unset to auto-target the project's own survey flight
+    dates, or set both for an explicit override range."""
+    start_date: str | None = None  # "YYYY-MM-DD"; omit with end_date for survey-date auto-detect
+    end_date: str | None = None  # "YYYY-MM-DD", inclusive
     n_stations: int = Field(4, ge=1, le=8)
     target_lat: float | None = None
     target_lon: float | None = None

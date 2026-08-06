@@ -27,7 +27,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -360,11 +360,101 @@ def fill_missing_days(df: pd.DataFrame, start_date: date, end_date: date) -> tup
     return out, filled_dates
 
 
+def _day_coverage(df: pd.DataFrame, d: date) -> float:
+    """Fraction of a single calendar day's expected 1-minute samples that
+    are actually present in df."""
+    if df.empty:
+        return 0.0
+    grid = pd.date_range(d, periods=_MINUTES_PER_DAY, freq="1min")
+    series = df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
+    return float(series.notna().mean())
+
+
+_EMPTY_MAG_DF = pd.DataFrame({"timestamp": pd.Series(dtype="datetime64[ns]"), "mag": pd.Series(dtype="float64")})
+
+
+def fetch_observatory_dates(
+    iaga_code: str, dates: list[date], timeout_seconds: float = 15.0
+) -> tuple[IagaObservatoryData, list[str]]:
+    """Downloads exactly the calendar dates a survey actually needs - one
+    IAGA-2002 fetch per requested date - rather than the full inclusive
+    span between its earliest and latest flight date, which for a survey
+    flown on a handful of separate days weeks apart would mostly be empty
+    padding (see Project._survey_dates).
+
+    Any requested date that comes back missing or mostly missing is
+    estimated from its own immediate day-before/day-after neighbors alone
+    (fetched specially just for that one date's estimate, via
+    fill_missing_days scoped to that 3-day window) - never from unrelated
+    data elsewhere in the survey's date span. A date with neither real nor
+    estimable data is silently dropped from the result (matching
+    estimate_base_from_observatories's existing behavior for any gap).
+
+    Returns the observatory's data (station metadata taken from whichever
+    requested date's fetch succeeded first) restricted to just the
+    requested dates, plus the list of dates that had to be estimated."""
+    dates = sorted(set(dates))
+    day_data: dict[date, IagaObservatoryData | None] = {}
+
+    def _fetch_day(d: date) -> IagaObservatoryData | None:
+        if d in day_data:
+            return day_data[d]
+        try:
+            text = fetch_iaga2002_text(iaga_code, d, days=1, timeout_seconds=timeout_seconds)
+            day_data[d] = parse_iaga2002(text)
+        except (IntermagnetFetchError, IagaParseError):
+            day_data[d] = None
+        return day_data[d]
+
+    for d in dates:
+        _fetch_day(d)
+    header = next((v for v in day_data.values() if v is not None), None)
+
+    result_frames = []
+    estimated_dates: list[str] = []
+    for d in dates:
+        data = day_data[d]
+        df = data.df if data is not None else _EMPTY_MAG_DF
+        if _day_coverage(df, d) >= _MIN_DAY_COVERAGE:
+            result_frames.append(df)
+            continue
+
+        neighbor_frames = [df]
+        for neighbor in (d - timedelta(days=1), d + timedelta(days=1)):
+            neighbor_data = _fetch_day(neighbor)
+            if header is None and neighbor_data is not None:
+                header = neighbor_data
+            neighbor_frames.append(neighbor_data.df if neighbor_data is not None else _EMPTY_MAG_DF)
+
+        local_df = pd.concat(neighbor_frames, ignore_index=True)
+        filled, local_filled_dates = fill_missing_days(local_df, d - timedelta(days=1), d + timedelta(days=1))
+        day_result = filled[filled["timestamp"].dt.date == d]
+        if not day_result.empty:
+            result_frames.append(day_result)
+            # only count it as an estimate if fill_missing_days actually
+            # synthesized values for d - a below-threshold day that
+            # couldn't be improved (e.g. no usable neighbor either) still
+            # keeps whatever sparse real samples it had, unchanged
+            if str(d) in local_filled_dates:
+                estimated_dates.append(str(d))
+
+    if header is None:
+        raise IntermagnetFetchError(f"{iaga_code} 관측소의 요청한 날짜 자료를 하나도 받아오지 못했습니다.")
+
+    combined = pd.concat(result_frames, ignore_index=True) if result_frames else _EMPTY_MAG_DF
+    combined = (
+        combined.dropna(subset=["mag"]).drop_duplicates(subset="timestamp").sort_values("timestamp").reset_index(drop=True)
+    )
+    if combined.empty:
+        raise IntermagnetFetchError(f"{iaga_code} 관측소의 요청한 날짜 자료를 하나도 받아오지 못했습니다.")
+
+    return replace(header, df=combined), estimated_dates
+
+
 def select_nearest_observatories(
     target_lat: float,
     target_lon: float,
-    start_date: date,
-    end_date: date | None = None,
+    dates: list[date],
     n_stations: int = 4,
     max_candidates: int = 20,
     timeout_seconds: float = 15.0,
@@ -378,43 +468,48 @@ def select_nearest_observatories(
     stale) table of station coordinates, this narrows the full ~130-station
     roster to the max_candidates most plausible ones by a coarse
     country-centroid distance (see intermagnet_stations.py), then actually
-    fetches each candidate's real data for start_date (a single day, just
-    enough to read coordinates and rank candidates - cheap even with many
-    candidates) and reads its authoritative coordinates straight from that
-    file's own IAGA-2002 header - so the final selection and every
-    distance reported to the user is always based on real, current
-    observatory metadata, never a guess. Candidates with no data for
-    start_date (not every observatory publishes every day) are silently
-    skipped.
+    fetches each candidate's real data for a single day - just enough to
+    read coordinates and rank candidates, cheap even with many candidates
+    - and reads its authoritative coordinates straight from that file's
+    own IAGA-2002 header - so the final selection and every distance
+    reported to the user is always based on real, current observatory
+    metadata, never a guess. It tries dates[0] first and only falls
+    through to later dates in `dates` if literally none of the candidates
+    published anything that day (e.g. the survey's earliest date happens
+    to be one none of them have posted yet); candidates with no data for
+    whichever probe date succeeds are silently skipped.
 
-    Once the n_stations winners are picked, if end_date extends beyond
-    start_date each winner is re-fetched for the full [start_date,
-    end_date] range (only the selected few, not every candidate) and any
-    calendar day that comes back entirely or mostly missing - commonly the
-    most recent day or two, whose definitive data isn't published yet - is
-    filled in via fill_missing_days(). Returns both the station data and a
-    {iaga_code: [estimated ISO dates]} map so callers can disclose exactly
-    which days in the result are real measurements vs. best-effort
-    estimates.
+    Once the n_stations winners are picked, each is re-fetched for every
+    date in `dates` via fetch_observatory_dates() (only the selected few,
+    not every candidate) - dates is typically the survey's own distinct
+    flight dates (see Project._survey_dates), not a padded calendar
+    range, so a survey flown on a handful of separate days weeks apart
+    only ever downloads those exact days. Any requested date that comes
+    back missing is estimated from its own immediate neighbors - see
+    fetch_observatory_dates's docstring. Returns both the station data and
+    a {iaga_code: [estimated ISO dates]} map so callers can disclose
+    exactly which dates in the result are real measurements vs.
+    best-effort estimates.
 
-    This makes up to max_candidates + n_stations live outbound HTTPS
-    requests - see fetch_iaga2002_text's docstring on network
-    reachability."""
-    end_date = end_date or start_date
-    days = (end_date - start_date).days + 1
+    This makes up to max_candidates + a handful of requests per selected
+    station live outbound HTTPS requests - see fetch_iaga2002_text's
+    docstring on network reachability."""
     candidates = _candidates_by_rough_distance(target_lat, target_lon, max_candidates)
     probed: list[tuple[float, float, IagaObservatoryData]] = []
-    for entry in candidates:
-        try:
-            text = fetch_iaga2002_text(entry.iaga_code, start_date, days=1, timeout_seconds=timeout_seconds)
-            data = parse_iaga2002(text)
-        except (IntermagnetFetchError, IagaParseError):
-            continue
-        if data.lat is None or data.lon is None:
-            continue
-        d = haversine_km(target_lat, target_lon, data.lat, data.lon)
-        bearing = _bearing_deg(target_lat, target_lon, data.lat, data.lon)
-        probed.append((d, bearing, data))
+    for probe_date in dates:
+        for entry in candidates:
+            try:
+                text = fetch_iaga2002_text(entry.iaga_code, probe_date, days=1, timeout_seconds=timeout_seconds)
+                data = parse_iaga2002(text)
+            except (IntermagnetFetchError, IagaParseError):
+                continue
+            if data.lat is None or data.lon is None:
+                continue
+            d = haversine_km(target_lat, target_lon, data.lat, data.lon)
+            bearing = _bearing_deg(target_lat, target_lon, data.lat, data.lon)
+            probed.append((d, bearing, data))
+        if probed:
+            break  # found real coordinates for at least one candidate on this date - no need to try later dates too
 
     if not probed:
         raise IntermagnetFetchError(
@@ -427,20 +522,20 @@ def select_nearest_observatories(
 
     result_stations: list[IagaObservatoryData] = []
     estimated_dates_by_code: dict[str, list[str]] = {}
-    for _, _, data in selected:
-        station_data = data
-        if days > 1:
+    for _, _, probe_data in selected:
+        if len(dates) == 1:
+            station_data = probe_data  # already have exactly what's needed
+        else:
             try:
-                text = fetch_iaga2002_text(data.iaga_code, start_date, days=days, timeout_seconds=timeout_seconds)
-                station_data = parse_iaga2002(text)
-            except (IntermagnetFetchError, IagaParseError):
+                station_data, estimated_dates = fetch_observatory_dates(
+                    probe_data.iaga_code, dates, timeout_seconds=timeout_seconds
+                )
+            except IntermagnetFetchError:
                 # fall back to the single already-probed day rather than
                 # dropping a station that was reachable a moment ago
-                station_data = data
-        filled_df, filled_dates = fill_missing_days(station_data.df, start_date, end_date)
-        if filled_dates:
-            station_data = replace(station_data, df=filled_df)
-            estimated_dates_by_code[station_data.iaga_code] = filled_dates
+                station_data, estimated_dates = probe_data, []
+            if estimated_dates:
+                estimated_dates_by_code[station_data.iaga_code] = estimated_dates
         result_stations.append(station_data)
 
     return result_stations, estimated_dates_by_code

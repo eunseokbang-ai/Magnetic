@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import pathlib
-from datetime import date
+from datetime import date, timedelta
 
 import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
@@ -156,27 +156,48 @@ async def upload_iaga2002(project_id: str, file: UploadFile = File(...)):
     return project.preview_intermagnet_text(text)
 
 
-def _parse_date_range(start_str: str, end_str: str, max_days: int = 31) -> tuple[date, date]:
-    try:
-        start_date = date.fromisoformat(start_str)
-    except ValueError:
-        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {start_str!r} (예: 2026-07-24)")
-    try:
-        end_date = date.fromisoformat(end_str)
-    except ValueError:
-        raise ProjectError(f"올바르지 않은 종료일 형식입니다: {end_str!r} (예: 2026-07-24)")
-    if end_date < start_date:
-        raise ProjectError("종료일이 시작일보다 빠릅니다.")
-    if (end_date - start_date).days + 1 > max_days:
-        raise ProjectError(f"한 번에 조회할 수 있는 기간은 최대 {max_days}일입니다.")
-    return start_date, end_date
+def _resolve_requested_dates(project, start_str: str | None, end_str: str | None, max_days: int = 31) -> list[date]:
+    """Either an explicit [start_date, end_date] override, or (when both
+    are omitted) the project's own distinct drone survey flight dates -
+    see Project._survey_dates. Both drone timestamps and INTERMAGNET
+    publication times are GPS/UTC-based, so the survey's own calendar
+    dates line up directly with INTERMAGNET's without any timezone
+    conversion."""
+    if start_str and end_str:
+        try:
+            start_date = date.fromisoformat(start_str)
+        except ValueError:
+            raise ProjectError(f"올바르지 않은 시작일 형식입니다: {start_str!r} (예: 2026-07-24)")
+        try:
+            end_date = date.fromisoformat(end_str)
+        except ValueError:
+            raise ProjectError(f"올바르지 않은 종료일 형식입니다: {end_str!r} (예: 2026-07-24)")
+        if end_date < start_date:
+            raise ProjectError("종료일이 시작일보다 빠릅니다.")
+        n_days = (end_date - start_date).days + 1
+        if n_days > max_days:
+            raise ProjectError(f"한 번에 조회할 수 있는 기간은 최대 {max_days}일입니다.")
+        return [start_date + timedelta(days=i) for i in range(n_days)]
+
+    if start_str or end_str:
+        raise ProjectError("시작일과 종료일을 모두 입력하거나, 둘 다 비워 측선 자료의 촬영 날짜를 자동으로 사용하세요.")
+
+    dates = project._survey_dates()
+    if not dates:
+        raise ProjectError("드론 자료를 먼저 업로드하거나, 시작일·종료일을 직접 입력하세요.")
+    if len(dates) > max_days:
+        raise ProjectError(
+            f"측선 자료의 날짜 수가 너무 많습니다 (최대 {max_days}일, 현재 {len(dates)}일). "
+            "시작일·종료일을 직접 입력해 범위를 좁혀주세요."
+        )
+    return dates
 
 
 @app.post("/api/projects/{project_id}/base/intermagnet/fetch")
 def fetch_intermagnet(project_id: str, req: IntermagnetFetchRequest):
     project = store.get(project_id)
-    start_date, end_date = _parse_date_range(req.start_date, req.end_date)
-    return project.fetch_intermagnet_preview(req.iaga_code, start_date, end_date)
+    dates = _resolve_requested_dates(project, req.start_date, req.end_date)
+    return project.fetch_intermagnet_preview(req.iaga_code, dates)
 
 
 @app.post("/api/projects/{project_id}/base/intermagnet/apply")
@@ -188,10 +209,8 @@ def apply_intermagnet(project_id: str):
 @app.post("/api/projects/{project_id}/base/intermagnet/nearest/fetch")
 def fetch_nearest_intermagnet(project_id: str, req: NearestIntermagnetRequest):
     project = store.get(project_id)
-    start_date, end_date = _parse_date_range(req.start_date, req.end_date)
-    return project.fetch_nearest_intermagnet_preview(
-        start_date, end_date, req.n_stations, req.target_lat, req.target_lon
-    )
+    dates = _resolve_requested_dates(project, req.start_date, req.end_date)
+    return project.fetch_nearest_intermagnet_preview(dates, req.n_stations, req.target_lat, req.target_lon)
 
 
 @app.post("/api/projects/{project_id}/base/intermagnet/nearest/apply")

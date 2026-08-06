@@ -336,6 +336,7 @@ export default function WorkflowSteps({
                 nearestError={nearestIntermagnetError}
                 nearestHasResult={nearestIntermagnetHasResult}
                 nearestComparisonLoading={nearestIntermagnetComparisonLoading}
+                flightDates={droneSummary?.flight_dates}
               />
             </details>
           )}

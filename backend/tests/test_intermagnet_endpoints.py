@@ -5,6 +5,7 @@ test_intermagnet.py (not real observatory data)."""
 import io
 import pathlib
 import sys
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -131,6 +132,56 @@ def test_fetch_rejects_end_date_before_start_date(client):
     assert "종료일" in r.json()["detail"]
 
 
+def test_fetch_rejects_only_one_of_start_end_date(client):
+    project_id = _new_project(client)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/fetch",
+        json={"iaga_code": "IRT", "start_date": "2026-07-24"},
+    )
+    assert r.status_code == 400, r.text
+    assert "모두" in r.json()["detail"]
+
+
+def test_fetch_auto_mode_without_drone_data_fails_clearly(client):
+    project_id = _new_project(client)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/fetch",
+        json={"iaga_code": "IRT"},
+    )
+    assert r.status_code == 400, r.text
+    assert "드론" in r.json()["detail"]
+
+
+def _fake_requests_get_irt(url, params=None, timeout=None):
+    code = (params or {}).get("observatoryIagaCode")
+    resp = MagicMock()
+    if code == "IRT":
+        resp.status_code = 200
+        resp.text = _IAGA_TEXT
+    else:
+        resp.status_code = 404
+        resp.text = "not found"
+    return resp
+
+
+def test_fetch_auto_detects_dates_from_uploaded_drone_survey(client):
+    # Omitting start_date/end_date should auto-target the project's own
+    # survey flight date(s) - the sample fixture flies on 2026-07-24 only,
+    # which is also the date the mock IRT data is dated.
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_irt):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/fetch",
+            json={"iaga_code": "IRT"},
+        )
+    assert r.status_code == 200, r.text
+    preview = r.json()
+    assert preview["iaga_code"] == "IRT"
+    assert preview["n_points"] > 0
+
+
 if __name__ == "__main__":
     c = TestClient(app)
     test_upload_previews_without_committing_as_base(c)
@@ -139,4 +190,7 @@ if __name__ == "__main__":
     test_upload_rejects_non_iaga_text(c)
     test_fetch_rejects_malformed_start_date_with_clear_korean_message(c)
     test_fetch_rejects_end_date_before_start_date(c)
+    test_fetch_rejects_only_one_of_start_end_date(c)
+    test_fetch_auto_mode_without_drone_data_fails_clearly(c)
+    test_fetch_auto_detects_dates_from_uploaded_drone_survey(c)
     print("ALL CHECKS PASSED")

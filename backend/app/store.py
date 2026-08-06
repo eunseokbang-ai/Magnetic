@@ -37,8 +37,7 @@ from .processing.intermagnet import (
     IntermagnetFetchError,
     _bearing_deg,
     estimate_base_from_observatories,
-    fetch_iaga2002_text,
-    fill_missing_days,
+    fetch_observatory_dates,
     haversine_km,
     parse_iaga2002,
     select_nearest_observatories,
@@ -273,28 +272,26 @@ class Project:
             raise ProjectError(str(exc)) from exc
         return self._preview_from_iaga(data)
 
-    def fetch_intermagnet_preview(self, iaga_code: str, start_date, end_date) -> dict:
+    def fetch_intermagnet_preview(self, iaga_code: str, dates: list) -> dict:
         """Download and parse an INTERMAGNET observatory's IAGA-2002 data
-        directly for [start_date, end_date] (inclusive). Requires this
-        server's own outbound network to reach the BGS GIN web service -
-        see intermagnet.py::fetch_iaga2002_text for what to do when that's
+        for exactly the given calendar dates (typically the survey's own
+        distinct flight dates - see _survey_dates - not a padded
+        min-to-max range). Requires this server's own outbound network to
+        reach the BGS GIN web service - see
+        intermagnet.py::fetch_iaga2002_text for what to do when that's
         blocked (e.g. a locked-down deployment network) - use
         preview_intermagnet_text with a manually downloaded file instead.
 
-        Any calendar day in the range that comes back entirely or mostly
-        missing (definitive data for the most recent day or two often
-        isn't published yet, and any specific day may simply be absent) is
-        filled in via fill_missing_days() - see its docstring for how, and
-        estimated_dates in the returned preview for which ones."""
-        days = (end_date - start_date).days + 1
+        Any requested date that comes back entirely or mostly missing
+        (definitive data for the most recent day or two often isn't
+        published yet, and any specific day may simply be absent) is
+        estimated from its own immediate neighbors - see
+        processing/intermagnet.py::fetch_observatory_dates - and disclosed
+        via estimated_dates in the returned preview."""
         try:
-            text = fetch_iaga2002_text(iaga_code, start_date, days)
-            data = parse_iaga2002(text)
-        except (IntermagnetFetchError, IagaParseError) as exc:
+            data, estimated_dates = fetch_observatory_dates(iaga_code, dates)
+        except IntermagnetFetchError as exc:
             raise ProjectError(str(exc)) from exc
-        filled_df, estimated_dates = fill_missing_days(data.df, start_date, end_date)
-        if estimated_dates:
-            data = replace(data, df=filled_df)
         return self._preview_from_iaga(data, estimated_dates)
 
     def apply_intermagnet_preview(self) -> dict:
@@ -318,8 +315,7 @@ class Project:
 
     def fetch_nearest_intermagnet_preview(
         self,
-        start_date,
-        end_date=None,
+        dates: list,
         n_stations: int = 4,
         target_lat: float | None = None,
         target_lon: float | None = None,
@@ -332,11 +328,12 @@ class Project:
         estimate_base_from_observatories. Requires this server's own
         outbound network to reach the data service.
 
-        Any calendar day within [start_date, end_date] that comes back
-        entirely or mostly missing for a selected station is filled in via
-        fill_missing_days() - see select_nearest_observatories's docstring
-        and the per-station estimated_dates in the returned preview."""
-        end_date = end_date or start_date
+        `dates` is typically the survey's own distinct flight dates (see
+        _survey_dates), not a padded min-to-max range. Any requested date
+        that comes back entirely or mostly missing for a selected station
+        is estimated from its own immediate neighbors - see
+        select_nearest_observatories's docstring and the per-station
+        estimated_dates in the returned preview."""
         if target_lat is None or target_lon is None:
             centroid = self._survey_centroid()
             if centroid is None:
@@ -344,7 +341,7 @@ class Project:
             target_lat, target_lon = centroid
         try:
             stations, estimated_dates_by_code = select_nearest_observatories(
-                target_lat, target_lon, start_date, end_date=end_date, n_stations=n_stations
+                target_lat, target_lon, dates, n_stations=n_stations
             )
             combined = estimate_base_from_observatories(stations, target_lat, target_lon)
         except IntermagnetFetchError as exc:
@@ -506,7 +503,20 @@ class Project:
             "n_invalid_coords_removed": d.attrs.get("n_invalid_coords_removed", 0),
             "source_formats": d.attrs.get("source_formats", []),
             "median_speed_mps": _median_speed_mps(d),
+            "flight_dates": [dt.isoformat() for dt in self._survey_dates() or []],
         }
+
+    def _survey_dates(self) -> list | None:
+        """The distinct calendar dates the drone actually flew, straight
+        from its own (GPS-time) timestamps - used to auto-target exactly
+        the INTERMAGNET dates a survey needs (see
+        fetch_nearest_intermagnet_preview/fetch_intermagnet_preview)
+        instead of every day across the survey's full min-max span, which
+        can be mostly empty padding for a survey flown on a few separate
+        days weeks apart."""
+        if self.drone_raw is None or len(self.drone_raw) == 0:
+            return None
+        return sorted(set(self.drone_raw["timestamp"].dt.date))
 
     def base_summary(self) -> dict:
         if self.base_raw is None:

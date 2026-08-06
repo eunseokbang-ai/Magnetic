@@ -7,7 +7,7 @@ GIN service - see intermagnet.py's module docstring); only synthetic,
 format-accurate IAGA-2002 text is used, never real observatory data."""
 import pathlib
 import sys
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -22,6 +22,7 @@ from app.processing.intermagnet import (
     _bearing_deg,
     _pick_direction_diverse,
     estimate_base_from_observatories,
+    fetch_observatory_dates,
     fill_missing_days,
     select_nearest_observatories,
 )
@@ -108,7 +109,7 @@ def test_pick_direction_diverse_fills_remaining_slots_from_same_quadrant():
 def test_select_nearest_observatories_picks_real_station_near_target():
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, estimated_dates_by_code = select_nearest_observatories(
-            _TARGET_LAT, _TARGET_LON, date(2026, 7, 24), n_stations=4, max_candidates=60
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=60
         )
 
     assert 1 <= len(stations) <= 4
@@ -116,59 +117,43 @@ def test_select_nearest_observatories_picks_real_station_near_target():
     # CYG is essentially at the target - it must be the closest candidate
     # whenever it's within the probed shortlist.
     assert codes.issubset(set(_MOCK_STATIONS))
-    # a single-day request (no end_date) never triggers day-filling
+    # a single-date request never triggers day-filling
     assert estimated_dates_by_code == {}
 
 
-def test_select_nearest_observatories_fills_missing_days_when_end_date_given():
-    # Unlike _fake_requests_get's compact 5-point fixture (fine for the
-    # coordinate-probing stage), fill_missing_days needs enough coverage
-    # on the one day the station actually has to treat it as a valid
-    # template source - so this mock returns a full day (1440 one-minute
-    # points) for 2026-07-24, always, regardless of the requested
-    # start_date/days - simulating a station whose feed only actually has
-    # that one day published, out of the 3-day range requested here.
-    def _make_full_day_text(code: str, lat: float, lon: float, base_f: float) -> str:
-        lines = [
-            " Format                 IAGA-2002                                    |",
-            f" Station Name           {code} Test Station                          |",
-            f" IAGA CODE              {code}                                           |",
-            f" Geodetic Latitude      {lat:.3f}                                        |",
-            f" Geodetic Longitude     {lon:.3f}                                        |",
-            " Elevation              100                                           |",
-            " Reported                XYZF                                        |",
-            f"DATE       TIME         DOY     {code}X      {code}Y      {code}Z      {code}F   |",
-        ]
-        for i in range(24 * 60):
-            hh, mm = divmod(i, 60)
-            lines.append(
-                f"2026-07-24 {hh:02d}:{mm:02d}:00.000 205     20000.00  0.00      45000.00  {base_f + i * 0.01:.2f}"
-            )
-        return "\n".join(lines) + "\n"
+def test_select_nearest_observatories_falls_back_to_later_dates_for_probing():
+    # _fake_requests_get only ever returns data (for any station) when
+    # asked about 2026-07-24 - simulating a survey whose EARLIEST
+    # requested date (07-20 here) isn't published by any candidate at
+    # all. Probing must fall through to a later requested date rather
+    # than giving up outright just because the first one drew a blank.
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        stations, _ = select_nearest_observatories(
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 20), date(2026, 7, 24)], n_stations=2, max_candidates=60
+        )
 
-    def _fake_requests_get_full_day(url, params=None, timeout=None):
-        code = (params or {}).get("observatoryIagaCode")
-        resp = MagicMock()
-        if code in _MOCK_STATIONS:
-            lat, lon, base_f = _MOCK_STATIONS[code]
-            resp.status_code = 200
-            resp.text = _make_full_day_text(code, lat, lon, base_f)
-        else:
-            resp.status_code = 404
-            resp.text = "not found"
-        return resp
+    assert 1 <= len(stations) <= 2
+    codes = {s.iaga_code for s in stations}
+    assert codes.issubset(set(_MOCK_STATIONS))
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_full_day):
+
+def test_select_nearest_observatories_drops_a_date_with_no_data_anywhere_nearby():
+    # _fake_requests_get always returns data literally timestamped
+    # 2026-07-24 regardless of which date was requested, so a request for
+    # any OTHER date (and its neighbors) can never find real coverage for
+    # that date - it should simply be dropped from the result rather than
+    # erroring, while the date that does match stays.
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, estimated_dates_by_code = select_nearest_observatories(
-            _TARGET_LAT, _TARGET_LON, date(2026, 7, 23), end_date=date(2026, 7, 25), n_stations=2, max_candidates=60
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24), date(2026, 8, 15)], n_stations=2, max_candidates=60
         )
 
     assert 1 <= len(stations) <= 2
     for s in stations:
-        assert s.iaga_code in estimated_dates_by_code
-        assert set(estimated_dates_by_code[s.iaga_code]) == {"2026-07-23", "2026-07-25"}
         covered_days = {ts.date() for ts in s.df["timestamp"]}
-        assert {date(2026, 7, 23), date(2026, 7, 24), date(2026, 7, 25)}.issubset(covered_days)
+        assert date(2026, 7, 24) in covered_days
+        assert date(2026, 8, 15) not in covered_days
+        assert s.iaga_code not in estimated_dates_by_code
 
 
 def test_select_nearest_observatories_raises_clear_error_when_nothing_found():
@@ -178,7 +163,77 @@ def test_select_nearest_observatories_raises_clear_error_when_nothing_found():
 
     with patch("app.processing.intermagnet.requests.get", side_effect=_all_404):
         with pytest.raises(IntermagnetFetchError, match="관측소"):
-            select_nearest_observatories(_TARGET_LAT, _TARGET_LON, date(2026, 7, 24), n_stations=4, max_candidates=10)
+            select_nearest_observatories(_TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=10)
+
+
+def _make_day_text(code: str, lat: float, lon: float, base_f: float, day_str: str) -> str:
+    lines = [
+        " Format                 IAGA-2002                                    |",
+        f" Station Name           {code} Test Station                          |",
+        f" IAGA CODE              {code}                                           |",
+        f" Geodetic Latitude      {lat:.3f}                                        |",
+        f" Geodetic Longitude     {lon:.3f}                                        |",
+        " Elevation              100                                           |",
+        " Reported                XYZF                                        |",
+        f"DATE       TIME         DOY     {code}X      {code}Y      {code}Z      {code}F   |",
+    ]
+    for i in range(24 * 60):
+        hh, mm = divmod(i, 60)
+        lines.append(f"{day_str} {hh:02d}:{mm:02d}:00.000 205     20000.00  0.00      45000.00  {base_f:.2f}")
+    return "\n".join(lines) + "\n"
+
+
+def test_fetch_observatory_dates_estimates_sparse_missing_date_from_its_own_neighbors_only():
+    # Mimics a real survey flown on non-contiguous dates weeks apart
+    # (e.g. 7/16, 8/3, 8/4 with real data, 7/15 and 8/5 missing). Each
+    # available day carries a distinct, easily-identified level (base_f)
+    # so contamination from a FAR-away real day (e.g. 8/3's ~52000 level
+    # leaking into 7/15's estimate) would be obvious and fail the test -
+    # 7/15 must be estimated purely from 7/16 (~50000), and 8/5 purely
+    # from 8/4 (~51000), never from the distant cluster.
+    available = {
+        "2026-07-16": 50000.0,
+        "2026-08-03": 52000.0,
+        "2026-08-04": 51000.0,
+    }
+
+    def _fake_requests_get_by_date(url, params=None, timeout=None):
+        code = (params or {}).get("observatoryIagaCode")
+        req_day = (params or {}).get("dataStartDate", "")[:10]
+        resp = MagicMock()
+        if code == "CYG" and req_day in available:
+            resp.status_code = 200
+            resp.text = _make_day_text("CYG", 36.37, 126.80, available[req_day], req_day)
+        else:
+            resp.status_code = 404
+            resp.text = "not found"
+        return resp
+
+    requested = [date(2026, 7, 15), date(2026, 7, 16), date(2026, 8, 3), date(2026, 8, 4), date(2026, 8, 5)]
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_by_date):
+        data, estimated_dates = fetch_observatory_dates("CYG", requested)
+
+    assert set(estimated_dates) == {"2026-07-15", "2026-08-05"}
+    by_date = data.df.set_index(data.df["timestamp"].dt.date)["mag"]
+    assert by_date.loc[date(2026, 7, 16)].iloc[0] == pytest.approx(50000.0)
+    assert by_date.loc[date(2026, 8, 3)].iloc[0] == pytest.approx(52000.0)
+    assert by_date.loc[date(2026, 8, 4)].iloc[0] == pytest.approx(51000.0)
+    # estimated from 7/16 (its only real neighbor), not from the 8/3-8/4 cluster
+    assert by_date.loc[date(2026, 7, 15)].iloc[0] == pytest.approx(50000.0, abs=1.0)
+    # estimated from 8/4 (its only real neighbor), not from 7/16
+    assert by_date.loc[date(2026, 8, 5)].iloc[0] == pytest.approx(51000.0, abs=1.0)
+    covered_dates = set(data.df["timestamp"].dt.date)
+    assert covered_dates == set(requested)  # never contains scaffolding-only dates like 7/14 or 8/6
+
+
+def test_fetch_observatory_dates_drops_date_with_no_neighbor_data_either():
+    def _fake_requests_get_none(url, params=None, timeout=None):
+        resp = MagicMock(status_code=404, text="not found")
+        return resp
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_none):
+        with pytest.raises(IntermagnetFetchError):
+            fetch_observatory_dates("CYG", [date(2026, 7, 15)])
 
 
 def test_estimate_base_from_observatories_weights_toward_closer_station():
