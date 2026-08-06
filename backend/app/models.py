@@ -54,7 +54,9 @@ class BaseQCParams(BaseModel):
 
 
 class HeadingCorrectionParams(BaseModel):
-    enabled: bool = True
+    # Off by default - an optional correction the user opts into, not a
+    # baseline QC step every survey needs.
+    enabled: bool = False
     quiet_percentile: float = Field(40.0, ge=1, le=100)
     max_match_distance_m: Optional[float] = None
 
@@ -76,8 +78,10 @@ class SwayDetectionParams(BaseModel):
     # sensor was swinging/rotating abnormally, and excludes them the same
     # way turn/takeoff-landing samples already are - see processing/sway.py.
     # A no-op when the source file has no gyro/accel columns (only the
-    # generic/Geometrics MagArrow schema carries them).
-    enabled: bool = True
+    # generic/Geometrics MagArrow schema carries them). Off by default - an
+    # optional correction the user opts into, not a baseline QC step every
+    # survey needs.
+    enabled: bool = False
     threshold_k: float = Field(4.0, gt=0)  # robust-z multiples before a sample counts as high-sway
 
 
@@ -89,8 +93,10 @@ class HeadingEffectCalibrationParams(BaseModel):
     # then subtracts it from the survey data - recovering samples that
     # sway detection (processing/sway.py) would otherwise just exclude.
     # A no-op whenever no calibration flight has been uploaded, or the
-    # source format has no Compass columns.
-    enabled: bool = True
+    # source format has no Compass columns. Off by default - an optional
+    # correction the user opts into, not a baseline QC step every survey
+    # needs.
+    enabled: bool = False
     # When no dedicated calibration flight was uploaded, auto-build one
     # from the survey's own turn segments instead (see
     # processing/heading_calibration.py:build_turn_based_calibration) -

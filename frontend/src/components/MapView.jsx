@@ -411,6 +411,7 @@ export default function MapView({
               minZoom={l.min_zoom}
               maxNativeZoom={l.max_zoom}
               opacity={l.opacity}
+              pane="overlayPane"
             />
           ) : (
             <ImageOverlay key={l.id} url={l.image_data_url} bounds={l.bounds} opacity={l.opacity} />

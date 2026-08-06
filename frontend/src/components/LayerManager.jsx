@@ -23,11 +23,28 @@ export default function LayerManager({
   onRegisterTileFolder,
   tileFolderRegistering,
   tileFolderError,
+  onPickTileFolder,
 }) {
   const [fileName, setFileName] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [folderLabel, setFolderLabel] = useState("");
   const [folderScheme, setFolderScheme] = useState("auto");
+  const [picking, setPicking] = useState(false);
+  const [pickError, setPickError] = useState(null);
+
+  const handlePickFolder = async () => {
+    if (!onPickTileFolder) return;
+    try {
+      setPickError(null);
+      setPicking(true);
+      const picked = await onPickTileFolder();
+      if (picked) setFolderPath(picked);
+    } catch (e) {
+      setPickError(e.message || String(e));
+    } finally {
+      setPicking(false);
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -58,14 +75,28 @@ export default function LayerManager({
             하위 폴더 구조)를 아래에 경로로 지정하면, 업로드 없이 그 폴더를 직접 읽어 즉시 배경 레이어로 표시합니다
             (이 프로그램과 같은 컴퓨터에 폴더가 있어야 합니다).
           </div>
-          <input
-            type="text"
-            placeholder="타일 폴더 전체 경로 (예: D:\survey\ortho_tiles)"
-            style={inputStyle}
-            value={folderPath}
-            onChange={(e) => setFolderPath(e.target.value)}
-            disabled={tileFolderRegistering}
-          />
+          <div style={{ display: "flex", gap: 4 }}>
+            <input
+              type="text"
+              placeholder="타일 폴더 전체 경로 (예: D:\survey\ortho_tiles)"
+              style={{ ...inputStyle, flex: 1 }}
+              value={folderPath}
+              onChange={(e) => setFolderPath(e.target.value)}
+              disabled={tileFolderRegistering}
+            />
+            {onPickTileFolder && (
+              <button
+                type="button"
+                style={{ ...buttonStyle, padding: "4px 10px" }}
+                onClick={handlePickFolder}
+                disabled={tileFolderRegistering || picking}
+                title="폴더 선택 창 열기 (이 프로그램을 실행 중인 컴퓨터의 화면에 뜹니다)"
+              >
+                📁
+              </button>
+            )}
+          </div>
+          {pickError && <div style={{ fontSize: 12, color: "#dc2626" }}>{pickError}</div>}
           <input
             type="text"
             placeholder="레이어 이름 (선택, 비우면 폴더명 사용)"

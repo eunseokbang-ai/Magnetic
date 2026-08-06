@@ -910,7 +910,16 @@ class Project:
             raw_value = value + (mag_original - mag_filtered)
         mag_original is the sensor reading captured before despike/notch
         mutate mag_raw in place (see run_pipeline); mag_filtered is what
-        those steps plus the lowpass/Savitzky-Golay filter produced."""
+        those steps plus the lowpass/Savitzky-Golay filter produced.
+
+        raw_value's `value` term is deliberately taken from
+        processed_base (the pre-manual-smoothing snapshot), not the
+        possibly-smoothed self.processed - manual smoothing is a separate,
+        later edit from filtering, and letting it leak into the "before
+        filtering" reference trace would distort that comparison (and,
+        once a stretch is smoothed, make the reference trace mirror the
+        smoothing edit instead of showing the true original signal it's
+        meant to show)."""
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         df = self.processed
@@ -924,13 +933,15 @@ class Project:
         col = "anomaly" if value == "anomaly" else "tmi"
         active = self._active_mask()
         filter_delta = line_df["mag_original"] - line_df["mag_filtered"]
+        pre_smooth_df = self.processed_base if self.processed_base is not None else self.processed
+        pre_smooth_value = pre_smooth_df.loc[line_df.index, col]
 
         return {
             "line_id": line_id,
             "point_id": line_df["point_id"].tolist(),
             "distance_m": distance_m.tolist(),
             "value": line_df[col].tolist(),
-            "raw_value": (line_df[col] + filter_delta).tolist(),
+            "raw_value": (pre_smooth_value + filter_delta).tolist(),
             "lat": line_df["lat"].tolist(),
             "lon": line_df["lon"].tolist(),
             "excluded": (~active.reindex(line_df.index)).tolist(),
@@ -1026,7 +1037,15 @@ class Project:
         self.processed = apply_manual_smoothing(base_df, self.manual_smooth_point_ids)
         self.grid_cache = {}
         self.transform_cache = {}
-        return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
+        return {
+            **self.process_summary(),
+            "exclusion": self.get_exclusion_state(),
+            # Full current set (not just this call's delta) - lets the
+            # frontend keep an undo history of complete states without
+            # needing to separately track which points each past polygon/
+            # point_ids call actually matched.
+            "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
+        }
 
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
         if max_distance_m is not None:

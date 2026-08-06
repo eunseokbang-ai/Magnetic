@@ -1,26 +1,55 @@
 """User-driven distortion removal: the user marks a stretch of a survey
 line (by point_id, e.g. from a drag-select on the time-series chart, or a
 polygon drawn over a house/building on the map) where a ground structure
-is visibly distorting the magnetic signal, and this module removes that
-distortion by linearly interpolating across the marked stretch between
-the last good value before it and the first good value after it - the
-same "bridge across the gap" idea used for despiking a single point,
-just applied to a user-chosen run of points instead of an automatically
-detected spike.
+is visibly distorting the magnetic signal (typically a dipole-shaped
+bump/dip), and this module removes that distortion by linearly
+interpolating across the marked stretch between a robust "background
+level" estimated just before it and just after it - the same "bridge
+across the gap" idea used for despiking a single point, just applied to a
+user-chosen run of points instead of an automatically detected spike.
+
+The background level on each side is the median of a small window of
+unflagged samples immediately adjacent to the run, not just the single
+boundary sample - a dipole's tails often still slightly perturb the very
+last point right at the edge of what the user selected, so anchoring to
+one noisy sample instead of a short, more stable window can leave a
+visible kink or residual offset instead of a clean match to the true
+background.
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
+# Number of unflagged samples averaged (via median) on each side of a
+# flagged run to estimate the local background level - see module
+# docstring for why a window instead of just the single boundary sample.
+_BACKGROUND_WINDOW = 5
 
-def _interpolate_flagged_runs(values: np.ndarray, flagged: np.ndarray) -> np.ndarray:
+
+def _local_background(values: np.ndarray, flagged: np.ndarray, start: int, step: int, window: int) -> float | None:
+    """Median of up to `window` unflagged samples starting at `start` and
+    walking in `step` direction (+1 = forward, -1 = backward). Returns
+    None if `start` is out of bounds or no unflagged samples are found in
+    that direction (e.g. the flagged run touches the very edge of a short
+    line)."""
+    collected = []
+    n = len(values)
+    k = start
+    while 0 <= k < n and len(collected) < window:
+        if not flagged[k]:
+            collected.append(values[k])
+        k += step
+    return float(np.median(collected)) if collected else None
+
+
+def _interpolate_flagged_runs(values: np.ndarray, flagged: np.ndarray, background_window: int = _BACKGROUND_WINDOW) -> np.ndarray:
     """Replace each contiguous run of flagged samples with a straight line
-    between the last unflagged sample before the run and the first
-    unflagged sample after it. A run touching one end of the array (no
-    anchor on that side) is held flat at the anchor that does exist; a
-    run spanning the entire array is left unchanged (nothing to anchor
-    to)."""
+    between the local background level just before the run and just after
+    it (see _local_background). A run touching one end of the array (no
+    background estimate on that side) is held flat at the estimate that
+    does exist; a run spanning the entire array is left unchanged (nothing
+    to anchor to)."""
     out = values.copy()
     n = len(values)
     i = 0
@@ -31,13 +60,14 @@ def _interpolate_flagged_runs(values: np.ndarray, flagged: np.ndarray) -> np.nda
         j = i
         while j < n and flagged[j]:
             j += 1
-        left, right = i - 1, j
-        if left >= 0 and right < n:
-            out[i:j] = np.linspace(values[left], values[right], j - i + 2)[1:-1]
-        elif left >= 0:
-            out[i:j] = values[left]
-        elif right < n:
-            out[i:j] = values[right]
+        left_bg = _local_background(values, flagged, i - 1, -1, background_window) if i - 1 >= 0 else None
+        right_bg = _local_background(values, flagged, j, 1, background_window) if j < n else None
+        if left_bg is not None and right_bg is not None:
+            out[i:j] = np.linspace(left_bg, right_bg, j - i + 2)[1:-1]
+        elif left_bg is not None:
+            out[i:j] = left_bg
+        elif right_bg is not None:
+            out[i:j] = right_bg
         i = j
     return out
 

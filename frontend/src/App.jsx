@@ -95,11 +95,11 @@ const DEFAULT_PARAMS = {
     despike_threshold_k: 5.0,
   },
   sway_detection: {
-    enabled: true,
+    enabled: false,
     threshold_k: 4.0,
   },
   heading_effect_calibration: {
-    enabled: true,
+    enabled: false,
     auto_calibrate_from_turns: true,
     quality_threshold_nt: 3.0,
   },
@@ -117,7 +117,7 @@ const DEFAULT_PARAMS = {
     reference: "mean",
   },
   heading_correction: {
-    enabled: true,
+    enabled: false,
     quiet_percentile: 40.0,
     max_match_distance_m: null,
   },
@@ -160,6 +160,7 @@ export default function App() {
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
+  const [saveFilename, setSaveFilename] = useState("magnetic_project");
   const [exportingReport, setExportingReport] = useState(false);
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
@@ -211,6 +212,12 @@ export default function App() {
   const [baseTimeseries, setBaseTimeseries] = useState(null);
   const [baseTimeseriesLoading, setBaseTimeseriesLoading] = useState(false);
   const [smoothDrawMode, setSmoothDrawMode] = useState(false);
+  // Undo history for manual smoothing: each entry is the FULL set of
+  // smoothed point_ids right after that apply call (not just the delta),
+  // so undo can restore an exact prior state via reset + a single
+  // point_ids call, regardless of whether entries came from the map
+  // polygon tool or the time-series drag-select.
+  const [smoothHistory, setSmoothHistory] = useState([]);
 
   const [demStatus, setDemStatus] = useState(null);
   const [demUploading, setDemUploading] = useState(false);
@@ -447,7 +454,8 @@ export default function App() {
     try {
       setError(null);
       setSavingProject(true);
-      await api.saveProject(projectId, "magnetic_project.zip");
+      const base = saveFilename.trim().replace(/\.zip$/i, "") || "magnetic_project";
+      await api.saveProject(projectId, `${base}.zip`);
     } catch (e) {
       handleError(e);
     } finally {
@@ -795,21 +803,36 @@ export default function App() {
   // parked vehicle...) by interpolating anomaly/tmi across the selected
   // points - see backend set_manual_smoothing. Always recomputed fresh
   // from the pristine post-pipeline snapshot server-side, so this is safe
-  // to call repeatedly without compounding smoothing on smoothing. Any
-  // existing grid/overlay is stale afterwards (anomaly/tmi values
-  // changed, not just exclusion flags), so it's cleared like a re-process.
+  // to call repeatedly without compounding smoothing on smoothing.
+  //
+  // If a grid/overlay was already being shown, regenerate it with the
+  // same settings instead of just clearing it - otherwise the map simply
+  // goes blank after applying smoothing, with nothing visually confirming
+  // whether the edit actually worked (the underlying point values do
+  // update either way; this only affects the gridded raster view).
+  const _afterSmoothingApplied = async (summary) => {
+    setProcessSummary(summary);
+    await refreshPoints(projectId, valueField);
+    if (lineProfileData) {
+      const refreshed = await api.getLineProfile(projectId, lineProfileData.line_id, valueField);
+      setLineProfileData(refreshed);
+    }
+    if (overlay) {
+      await handleGrid();
+    } else {
+      setOverlay(null);
+    }
+  };
+
   const handleApplySmoothing = async (pointIds) => {
     try {
       setError(null);
       setSmoothing(true);
       const summary = await api.applySmoothing(projectId, { mode: "point_ids", point_ids: pointIds });
-      setProcessSummary(summary);
-      setOverlay(null);
-      await refreshPoints(projectId, valueField);
-      if (lineProfileData) {
-        const refreshed = await api.getLineProfile(projectId, lineProfileData.line_id, valueField);
-        setLineProfileData(refreshed);
+      if (Array.isArray(summary.manual_smooth_point_ids)) {
+        setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
       }
+      await _afterSmoothingApplied(summary);
     } catch (e) {
       handleError(e);
     } finally {
@@ -822,9 +845,51 @@ export default function App() {
       setError(null);
       setSmoothing(true);
       const summary = await api.applySmoothing(projectId, { mode: "polygon", polygon: latlngCoords });
-      setProcessSummary(summary);
-      setOverlay(null);
-      await refreshPoints(projectId, valueField);
+      if (Array.isArray(summary.manual_smooth_point_ids)) {
+        setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
+      }
+      await _afterSmoothingApplied(summary);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSmoothing(false);
+    }
+  };
+
+  // Undoes only the most recent smoothing action, restoring whatever the
+  // full smoothed-point set looked like right before it - reset (clear
+  // manual_smooth_point_ids to empty) then, if any earlier actions
+  // remain, re-apply their combined result in one point_ids call, since
+  // the backend only ever unions point_ids into the set and has no
+  // "shrink to exactly this" mode on its own.
+  const handleUndoSmoothing = async () => {
+    if (smoothHistory.length === 0) return;
+    try {
+      setError(null);
+      setSmoothing(true);
+      const newHistory = smoothHistory.slice(0, -1);
+      const target = newHistory.length > 0 ? newHistory[newHistory.length - 1] : [];
+      let summary = await api.applySmoothing(projectId, { mode: "reset" });
+      if (target.length > 0) {
+        summary = await api.applySmoothing(projectId, { mode: "point_ids", point_ids: target });
+      }
+      setSmoothHistory(newHistory);
+      await _afterSmoothingApplied(summary);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setSmoothing(false);
+    }
+  };
+
+  const handleResetAllSmoothing = async () => {
+    if (smoothHistory.length === 0) return;
+    try {
+      setError(null);
+      setSmoothing(true);
+      const summary = await api.applySmoothing(projectId, { mode: "reset" });
+      setSmoothHistory([]);
+      await _afterSmoothingApplied(summary);
     } catch (e) {
       handleError(e);
     } finally {
@@ -911,6 +976,11 @@ export default function App() {
     } finally {
       setTileFolderRegistering(false);
     }
+  };
+
+  const handlePickTileFolder = async () => {
+    const resp = await api.pickLocalTileFolder();
+    return resp.path;
   };
 
   const handleMoveOverlay = (id, direction) => {
@@ -1318,6 +1388,22 @@ export default function App() {
           inversionSummary={inversionSummary}
           eulerResult={eulerResult}
         />
+        <input
+          type="text"
+          value={saveFilename}
+          onChange={(e) => setSaveFilename(e.target.value)}
+          placeholder="저장할 파일명 (확장자 제외, 여러 프로젝트는 다른 이름으로 저장)"
+          title="여러 프로젝트를 구분해 저장/불러오려면 프로젝트마다 다른 파일명을 지정하세요"
+          style={{
+            width: "100%",
+            marginBottom: 6,
+            padding: "5px 8px",
+            fontSize: 12,
+            borderRadius: 6,
+            border: "1px solid #d1d5db",
+            boxSizing: "border-box",
+          }}
+        />
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           <button
             style={{
@@ -1559,6 +1645,9 @@ export default function App() {
             setSmoothDrawMode((v) => !v);
           }}
           smoothing={smoothing}
+          nSmoothedActions={smoothHistory.length}
+          onUndoSmoothing={handleUndoSmoothing}
+          onResetAllSmoothing={handleResetAllSmoothing}
           onResetManual={handleResetManual}
           nManualIncluded={processSummary?.n_manual_included}
           nManualExcluded={processSummary?.n_manual_excluded}
@@ -1599,6 +1688,7 @@ export default function App() {
           onRegisterTileFolder={handleRegisterLocalTileFolder}
           tileFolderRegistering={tileFolderRegistering}
           tileFolderError={tileFolderError}
+          onPickTileFolder={handlePickTileFolder}
         />
 
         <details open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>

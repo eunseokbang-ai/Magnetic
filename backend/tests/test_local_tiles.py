@@ -8,7 +8,9 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.main import app
 from app.processing import local_tiles
 
 
@@ -164,6 +166,35 @@ def test_get_tile_returns_none_for_missing_file(tmp_path):
 def test_get_tile_returns_none_for_unknown_layer_id():
     content, _ = local_tiles.get_tile("no-such-layer", 10, 0, 0)
     assert content is None
+
+
+def test_pick_folder_dialog_raises_clear_error_without_tkinter(monkeypatch):
+    # This sandbox has no tkinter (headless, no display) - exercises the
+    # exact fallback path a cloud/headless deployment would hit, since a
+    # dialog can't be shown there either way.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "tkinter":
+            raise ImportError("no tkinter")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    with pytest.raises(local_tiles.LocalTileError, match="tkinter"):
+        local_tiles.pick_folder_dialog()
+
+
+def test_pick_folder_endpoint_returns_clear_error_without_tkinter():
+    # Same headless-environment situation as the unit test above, but
+    # exercised through the actual /api/local-tiles/pick-folder route to
+    # confirm LocalTileError (a ValueError subclass) is turned into a
+    # proper 400 with the Korean message by main.py's generic handler.
+    client = TestClient(app)
+    r = client.post("/api/local-tiles/pick-folder")
+    assert r.status_code == 400, r.text
+    assert "tkinter" in r.json()["detail"]
 
 
 def test_unregister_removes_layer(tmp_path):

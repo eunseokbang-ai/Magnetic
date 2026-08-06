@@ -173,3 +173,39 @@ def get_tile(layer_id: str, z: int, x: int, y: int) -> tuple[bytes | None, str]:
     if not tile_path.is_file():
         return None, "application/octet-stream"
     return tile_path.read_bytes(), _EXT_MEDIA_TYPES[layer.ext]
+
+
+def pick_folder_dialog(title: str = "타일 폴더 선택") -> str:
+    """Opens a native OS folder-picker dialog and returns the chosen
+    absolute path (empty string if the user cancels).
+
+    This only makes sense because the app is meant to run locally
+    alongside the user's own files (see run.bat) - the dialog pops up on
+    whatever machine is running this backend process, which for that setup
+    is always the user's own screen. It would be meaningless (or worse,
+    silently open on a remote/headless machine nobody is looking at) for a
+    server shared over a network, but this app has no such deployment mode
+    today. Browsers deliberately don't expose real filesystem paths from
+    their own folder pickers, which is why this has to happen server-side
+    with tkinter instead of client-side.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError as exc:
+        raise LocalTileError("이 서버 환경에서는 폴더 선택 창을 지원하지 않습니다 (tkinter 미설치) - 경로를 직접 입력하세요.") from exc
+
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            path = filedialog.askdirectory(title=title)
+        finally:
+            root.destroy()
+    except Exception as exc:
+        raise LocalTileError(
+            "폴더 선택 창을 열 수 없습니다 (화면이 없는 서버 환경일 수 있습니다) - 경로를 직접 입력하세요."
+        ) from exc
+
+    return path or ""

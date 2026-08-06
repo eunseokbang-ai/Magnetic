@@ -25,6 +25,9 @@ export default function LineEditor({
   smoothDrawMode,
   onToggleSmoothDrawMode,
   smoothing,
+  nSmoothedActions,
+  onUndoSmoothing,
+  onResetAllSmoothing,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
@@ -199,6 +202,46 @@ export default function LineEditor({
           >
             {smoothing ? "스무딩 적용 중..." : smoothDrawMode ? "지도에서 왜곡 영역 그리기 (종료하려면 다시 클릭)" : "지도에서 왜곡 영역 그려 스무딩"}
           </button>
+          {(onUndoSmoothing || onResetAllSmoothing) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+              <span style={{ color: "#6b7280" }}>
+                {nSmoothedActions > 0 ? `스무딩 적용 ${nSmoothedActions}회` : "적용된 스무딩 없음"}
+              </span>
+              <button
+                onClick={onUndoSmoothing}
+                disabled={smoothing || !nSmoothedActions}
+                style={{
+                  marginLeft: "auto",
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  cursor: nSmoothedActions ? "pointer" : "default",
+                  opacity: nSmoothedActions && !smoothing ? 1 : 0.5,
+                }}
+                title="가장 최근에 적용한 스무딩 1건만 취소합니다"
+              >
+                ↩ 실행취소
+              </button>
+              <button
+                onClick={onResetAllSmoothing}
+                disabled={smoothing || !nSmoothedActions}
+                style={{
+                  padding: "4px 8px",
+                  fontSize: 12,
+                  borderRadius: 6,
+                  border: "1px solid #d1d5db",
+                  background: "white",
+                  cursor: nSmoothedActions ? "pointer" : "default",
+                  opacity: nSmoothedActions && !smoothing ? 1 : 0.5,
+                }}
+                title="지금까지 적용한 스무딩을 모두 취소하고 원본 값으로 되돌립니다"
+              >
+                전체 되돌리기
+              </button>
+            </div>
+          )}
         </>
       )}
 

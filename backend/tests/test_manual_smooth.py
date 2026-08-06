@@ -25,8 +25,25 @@ def test_interpolate_flagged_runs_bridges_interior_run():
 def test_interpolate_flagged_runs_edge_run_holds_flat():
     values = np.array([99.0, 99.0, 0.0, 1.0, 2.0])
     flagged = np.array([True, True, False, False, False])
-    out = _interpolate_flagged_runs(values, flagged)
+    out = _interpolate_flagged_runs(values, flagged, background_window=1)
     assert np.allclose(out[:2], [0.0, 0.0])
+
+
+def test_interpolate_flagged_runs_median_window_ignores_single_noisy_boundary():
+    # The sample right next to the flagged run is itself slightly elevated
+    # (e.g. the dipole's tail bleeding just outside what the user marked) -
+    # a single-anchor bridge would anchor to that noisy value, but the
+    # window-median should see past it to the genuinely flat background.
+    values = np.array([10.0, 10.0, 10.0, 10.0, 25.0, 40.0, 100.0, 100.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    flagged = np.array([False, False, False, False, False, True, True, True, False, False, False, False, False])
+
+    out_single_anchor = _interpolate_flagged_runs(values, flagged, background_window=1)
+    # old single-anchor behaviour: bridges from the noisy 25.0, so the
+    # smoothed run isn't flat at the true 10.0 background.
+    assert not np.allclose(out_single_anchor[5:8], 10.0, atol=1.0)
+
+    out_median_window = _interpolate_flagged_runs(values, flagged, background_window=5)
+    assert np.allclose(out_median_window[5:8], 10.0, atol=1e-6)
 
 
 def _make_df():

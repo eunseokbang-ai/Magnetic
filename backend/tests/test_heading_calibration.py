@@ -458,12 +458,13 @@ def _make_turn_injected_project(contaminate_turns: bool = False, enabled: bool =
     params.line_params.turn_buffer_m = 2.0
     params.line_params.max_gap_seconds = 5.0
     params.sway_detection.enabled = False
-    # heading_correction (default on) estimates and removes its own
+    # heading_correction, if enabled, estimates and removes its own
     # heading-group-dependent offset from reverse-flown line pairs - an
     # independent correction that would otherwise confound this test's
     # controlled comparison of the heading-effect-calibration feature
     # specifically, since it too responds to (differently-derived)
-    # heading-correlated variation.
+    # heading-correlated variation. Explicitly off here even though it's
+    # off by default too, to keep the test's intent self-documenting.
     params.heading_correction.enabled = False
     params.heading_effect_calibration.enabled = enabled
     params.heading_effect_calibration.auto_calibrate_from_turns = True

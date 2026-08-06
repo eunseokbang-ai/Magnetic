@@ -547,6 +547,12 @@ def register_local_tile_folder(req: LocalTileFolderRequest):
     }
 
 
+@app.post("/api/local-tiles/pick-folder")
+def pick_local_tile_folder():
+    path = local_tiles.pick_folder_dialog()
+    return {"path": path}
+
+
 @app.delete("/api/local-tiles/{layer_id}")
 def unregister_local_tile_folder(layer_id: str):
     local_tiles.unregister_local_tile_folder(layer_id)

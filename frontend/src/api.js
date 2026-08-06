@@ -181,6 +181,10 @@ export function unregisterLocalTileFolder(layerId) {
   return request(`/local-tiles/${layerId}`, { method: "DELETE" });
 }
 
+export function pickLocalTileFolder() {
+  return request(`/local-tiles/pick-folder`, { method: "POST" });
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);
