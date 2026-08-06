@@ -81,7 +81,7 @@ def test_fetch_previews_nearest_stations_without_committing(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code == 200, r.text
     preview = r.json()
@@ -102,7 +102,7 @@ def test_apply_commits_nearest_preview_as_base_and_unblocks_processing(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code == 200, r.text
 
@@ -124,7 +124,7 @@ def test_comparison_available_after_fetch_before_apply(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code == 200, r.text
 
@@ -147,7 +147,7 @@ def test_comparison_still_available_after_apply(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code == 200, r.text
 
@@ -190,7 +190,7 @@ def test_csv_export_returns_combined_series(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code == 200, r.text
 
@@ -207,10 +207,20 @@ def test_fetch_rejects_malformed_start_date_with_clear_korean_message(client):
     project_id = _new_project(client)
     r = client.post(
         f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-        json={"start_date": "not-a-date", "days": 1, "n_stations": 3},
+        json={"start_date": "not-a-date", "end_date": "2026-07-24", "n_stations": 3},
     )
     assert r.status_code == 400, r.text
     assert "시작일" in r.json()["detail"]
+
+
+def test_fetch_rejects_end_date_before_start_date(client):
+    project_id = _new_project(client)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+        json={"start_date": "2026-07-24", "end_date": "2026-07-20", "n_stations": 3},
+    )
+    assert r.status_code == 400, r.text
+    assert "종료일" in r.json()["detail"]
 
 
 def test_fetch_without_drone_data_or_explicit_target_fails_clearly(client):
@@ -218,7 +228,7 @@ def test_fetch_without_drone_data_or_explicit_target_fails_clearly(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
         )
     assert r.status_code != 200
 
@@ -228,7 +238,7 @@ def test_fetch_accepts_explicit_target_override_without_drone_data(client):
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
-            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3, "target_lat": 46.48, "target_lon": 106.27},
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3, "target_lat": 46.48, "target_lon": 106.27},
         )
     assert r.status_code == 200, r.text
 
@@ -244,6 +254,7 @@ if __name__ == "__main__":
     test_csv_export_without_preview_fails_clearly(c)
     test_csv_export_returns_combined_series(c)
     test_fetch_rejects_malformed_start_date_with_clear_korean_message(c)
+    test_fetch_rejects_end_date_before_start_date(c)
     test_fetch_without_drone_data_or_explicit_target_fails_clearly(c)
     test_fetch_accepts_explicit_target_override_without_drone_data(c)
     print("ALL CHECKS PASSED")

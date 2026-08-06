@@ -38,6 +38,7 @@ from .processing.intermagnet import (
     _bearing_deg,
     estimate_base_from_observatories,
     fetch_iaga2002_text,
+    fill_missing_days,
     haversine_km,
     parse_iaga2002,
     select_nearest_observatories,
@@ -240,7 +241,7 @@ class Project:
             return None
         return float(self.drone_raw["lat"].mean()), float(self.drone_raw["lon"].mean())
 
-    def _preview_from_iaga(self, data) -> dict:
+    def _preview_from_iaga(self, data, estimated_dates: list | None = None) -> dict:
         self.intermagnet_preview = data
         centroid = self._survey_centroid()
         distance_km = (
@@ -258,6 +259,7 @@ class Project:
             "n_points": len(data.df),
             "time_range": [data.df["timestamp"].min().isoformat(), data.df["timestamp"].max().isoformat()],
             "distance_from_survey_km": distance_km,
+            "estimated_dates": estimated_dates or [],
         }
 
     def preview_intermagnet_text(self, text: str) -> dict:
@@ -271,19 +273,29 @@ class Project:
             raise ProjectError(str(exc)) from exc
         return self._preview_from_iaga(data)
 
-    def fetch_intermagnet_preview(self, iaga_code: str, start_date, days: int) -> dict:
+    def fetch_intermagnet_preview(self, iaga_code: str, start_date, end_date) -> dict:
         """Download and parse an INTERMAGNET observatory's IAGA-2002 data
-        directly. Requires this server's own outbound network to reach the
-        BGS GIN web service - see intermagnet.py::fetch_iaga2002_text for
-        what to do when that's blocked (e.g. a locked-down deployment
-        network) - use preview_intermagnet_text with a manually downloaded
-        file instead."""
+        directly for [start_date, end_date] (inclusive). Requires this
+        server's own outbound network to reach the BGS GIN web service -
+        see intermagnet.py::fetch_iaga2002_text for what to do when that's
+        blocked (e.g. a locked-down deployment network) - use
+        preview_intermagnet_text with a manually downloaded file instead.
+
+        Any calendar day in the range that comes back entirely or mostly
+        missing (definitive data for the most recent day or two often
+        isn't published yet, and any specific day may simply be absent) is
+        filled in via fill_missing_days() - see its docstring for how, and
+        estimated_dates in the returned preview for which ones."""
+        days = (end_date - start_date).days + 1
         try:
             text = fetch_iaga2002_text(iaga_code, start_date, days)
             data = parse_iaga2002(text)
         except (IntermagnetFetchError, IagaParseError) as exc:
             raise ProjectError(str(exc)) from exc
-        return self._preview_from_iaga(data)
+        filled_df, estimated_dates = fill_missing_days(data.df, start_date, end_date)
+        if estimated_dates:
+            data = replace(data, df=filled_df)
+        return self._preview_from_iaga(data, estimated_dates)
 
     def apply_intermagnet_preview(self) -> dict:
         """Commit the most recently previewed observatory data as this
@@ -307,7 +319,7 @@ class Project:
     def fetch_nearest_intermagnet_preview(
         self,
         start_date,
-        days: int = 1,
+        end_date=None,
         n_stations: int = 4,
         target_lat: float | None = None,
         target_lon: float | None = None,
@@ -318,14 +330,22 @@ class Project:
         their data into one substitute base station series - see
         processing/intermagnet.py::select_nearest_observatories /
         estimate_base_from_observatories. Requires this server's own
-        outbound network to reach the data service."""
+        outbound network to reach the data service.
+
+        Any calendar day within [start_date, end_date] that comes back
+        entirely or mostly missing for a selected station is filled in via
+        fill_missing_days() - see select_nearest_observatories's docstring
+        and the per-station estimated_dates in the returned preview."""
+        end_date = end_date or start_date
         if target_lat is None or target_lon is None:
             centroid = self._survey_centroid()
             if centroid is None:
                 raise ProjectError("대상 좌표가 없습니다 - 드론 자료를 먼저 업로드하거나 좌표를 직접 입력하세요.")
             target_lat, target_lon = centroid
         try:
-            stations = select_nearest_observatories(target_lat, target_lon, start_date, n_stations=n_stations)
+            stations, estimated_dates_by_code = select_nearest_observatories(
+                target_lat, target_lon, start_date, end_date=end_date, n_stations=n_stations
+            )
             combined = estimate_base_from_observatories(stations, target_lat, target_lon)
         except IntermagnetFetchError as exc:
             raise ProjectError(str(exc)) from exc
@@ -335,6 +355,7 @@ class Project:
             "target_lon": target_lon,
             "stations": stations,
             "df": combined,
+            "estimated_dates_by_code": estimated_dates_by_code,
         }
         self.intermagnet_nearest_preview = result
         self.intermagnet_nearest_last_result = result
@@ -349,6 +370,7 @@ class Project:
                     "lon": s.lon,
                     "distance_km": haversine_km(target_lat, target_lon, s.lat, s.lon),
                     "bearing_deg": _bearing_deg(target_lat, target_lon, s.lat, s.lon),
+                    "estimated_dates": estimated_dates_by_code.get(s.iaga_code, []),
                 }
                 for s in stations
             ],
@@ -385,6 +407,7 @@ class Project:
         result = self.intermagnet_nearest_last_result
         target_lat, target_lon = result["target_lat"], result["target_lon"]
         combined = result["df"]
+        estimated_dates_by_code = result.get("estimated_dates_by_code", {})
         return {
             "combined": {
                 "timestamp": combined["timestamp"].astype(str).tolist(),
@@ -398,6 +421,7 @@ class Project:
                     "bearing_deg": _bearing_deg(target_lat, target_lon, s.lat, s.lon),
                     "timestamp": s.df["timestamp"].astype(str).tolist(),
                     "mag": s.df["mag"].tolist(),
+                    "estimated_dates": estimated_dates_by_code.get(s.iaga_code, []),
                 }
                 for s in result["stations"]
             ],

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 import numpy as np
@@ -278,14 +278,97 @@ def _pick_direction_diverse(
     return selected
 
 
+_MINUTES_PER_DAY = 24 * 60
+_MIN_DAY_COVERAGE = 0.5  # below this fraction of samples present, treat the whole day as missing rather than gap-interpolate it
+
+
+def fill_missing_days(df: pd.DataFrame, start_date: date, end_date: date) -> tuple[pd.DataFrame, list[str]]:
+    """Estimates any calendar day within [start_date, end_date] that's
+    entirely or mostly missing from an observatory's downloaded data - a
+    common gap for BGS GIN feeds, since the most recent day or two often
+    isn't published yet (definitive/adjusted data lags real time), and any
+    single day here or there may simply be absent for other reasons.
+
+    The estimate is a "typical day" template: for each minute-of-day, the
+    median value across whichever OTHER days in this same request DO have
+    data. That template is then anchored (shifted by a constant offset) to
+    match the closest real data available for the missing day - its own
+    sparse samples if it has any, otherwise the nearest good day's own
+    offset from the template - so the filled-in day doesn't jump away from
+    real neighboring values. This is a best-effort fallback for an
+    unattended pipeline, not a scientific reconstruction of what the field
+    actually did that day; callers should disclose which dates were
+    estimated this way (the second return value) rather than silently
+    treating them as measured.
+
+    Interior gaps of a few minutes within an otherwise-present day are
+    left to the existing small-gap linear interpolation (see
+    estimate_base_from_observatories) - only whole/mostly-missing days are
+    templated here."""
+    if df.empty:
+        return df, []
+
+    grid = pd.date_range(start_date, pd.Timestamp(end_date) + pd.Timedelta(days=1), freq="1min", inclusive="left")
+    series = df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
+    values = series.to_numpy(dtype=float)
+
+    day_of = grid.normalize()
+    minute_of_day = (grid.hour * 60 + grid.minute).to_numpy()
+    valid = ~np.isnan(values)
+
+    unique_days = [pd.Timestamp(d) for d in pd.unique(day_of)]
+    coverage = {d: valid[day_of == d].mean() if (day_of == d).any() else 0.0 for d in unique_days}
+    good_days = [d for d, c in coverage.items() if c >= _MIN_DAY_COVERAGE]
+    bad_days = [d for d in unique_days if d not in good_days]
+    if not good_days or not bad_days:
+        return df, []
+
+    good_mask = day_of.isin(good_days) & valid
+    template = np.full(_MINUTES_PER_DAY, np.nan)
+    for m in range(_MINUTES_PER_DAY):
+        sel = good_mask & (minute_of_day == m)
+        if sel.any():
+            template[m] = np.nanmedian(values[sel])
+    template = pd.Series(template).interpolate(limit_direction="both").to_numpy()
+
+    filled = values.copy()
+    filled_dates: list[str] = []
+    for d in bad_days:
+        day_mask = day_of == d
+        day_values = values[day_mask]
+        day_minutes = minute_of_day[day_mask]
+        day_template = template[day_minutes]
+        day_valid = valid[day_mask]
+        if day_valid.any():
+            offset = np.nanmedian(day_values[day_valid] - day_template[day_valid])
+        else:
+            nearest_day = min(good_days, key=lambda gd: abs((gd - d).days))
+            nearest_mask = day_of == nearest_day
+            nearest_values = values[nearest_mask]
+            nearest_template = template[minute_of_day[nearest_mask]]
+            nearest_valid = valid[nearest_mask]
+            offset = np.nanmedian(nearest_values[nearest_valid] - nearest_template[nearest_valid])
+
+        day_filled = day_values.copy()
+        to_fill = ~day_valid
+        day_filled[to_fill] = day_template[to_fill] + offset
+        filled[day_mask] = day_filled
+        filled_dates.append(str(d.date()))
+
+    out_series = pd.Series(filled, index=grid).interpolate(limit=5, limit_area="inside")
+    out = pd.DataFrame({"timestamp": out_series.index, "mag": out_series.to_numpy()}).dropna(subset=["mag"]).reset_index(drop=True)
+    return out, filled_dates
+
+
 def select_nearest_observatories(
     target_lat: float,
     target_lon: float,
     start_date: date,
+    end_date: date | None = None,
     n_stations: int = 4,
     max_candidates: int = 20,
     timeout_seconds: float = 15.0,
-) -> list[IagaObservatoryData]:
+) -> tuple[list[IagaObservatoryData], dict[str, list[str]]]:
     """Finds up to n_stations INTERMAGNET observatories spread around
     (target_lat, target_lon), for combining into a substitute base series
     when no local base station was measured at all (see
@@ -295,15 +378,30 @@ def select_nearest_observatories(
     stale) table of station coordinates, this narrows the full ~130-station
     roster to the max_candidates most plausible ones by a coarse
     country-centroid distance (see intermagnet_stations.py), then actually
-    fetches each candidate's real data for start_date and reads its
-    authoritative coordinates straight from that file's own IAGA-2002
-    header - so the final selection and every distance reported to the
-    user is always based on real, current observatory metadata, never a
-    guess. Candidates with no data for start_date (not every observatory
-    publishes every day) are silently skipped.
+    fetches each candidate's real data for start_date (a single day, just
+    enough to read coordinates and rank candidates - cheap even with many
+    candidates) and reads its authoritative coordinates straight from that
+    file's own IAGA-2002 header - so the final selection and every
+    distance reported to the user is always based on real, current
+    observatory metadata, never a guess. Candidates with no data for
+    start_date (not every observatory publishes every day) are silently
+    skipped.
 
-    This makes up to max_candidates live outbound HTTPS requests - see
-    fetch_iaga2002_text's docstring on network reachability."""
+    Once the n_stations winners are picked, if end_date extends beyond
+    start_date each winner is re-fetched for the full [start_date,
+    end_date] range (only the selected few, not every candidate) and any
+    calendar day that comes back entirely or mostly missing - commonly the
+    most recent day or two, whose definitive data isn't published yet - is
+    filled in via fill_missing_days(). Returns both the station data and a
+    {iaga_code: [estimated ISO dates]} map so callers can disclose exactly
+    which days in the result are real measurements vs. best-effort
+    estimates.
+
+    This makes up to max_candidates + n_stations live outbound HTTPS
+    requests - see fetch_iaga2002_text's docstring on network
+    reachability."""
+    end_date = end_date or start_date
+    days = (end_date - start_date).days + 1
     candidates = _candidates_by_rough_distance(target_lat, target_lon, max_candidates)
     probed: list[tuple[float, float, IagaObservatoryData]] = []
     for entry in candidates:
@@ -326,7 +424,26 @@ def select_nearest_observatories(
 
     selected = _pick_direction_diverse(probed, n_stations)
     selected.sort(key=lambda t: t[0])
-    return [data for _, _, data in selected]
+
+    result_stations: list[IagaObservatoryData] = []
+    estimated_dates_by_code: dict[str, list[str]] = {}
+    for _, _, data in selected:
+        station_data = data
+        if days > 1:
+            try:
+                text = fetch_iaga2002_text(data.iaga_code, start_date, days=days, timeout_seconds=timeout_seconds)
+                station_data = parse_iaga2002(text)
+            except (IntermagnetFetchError, IagaParseError):
+                # fall back to the single already-probed day rather than
+                # dropping a station that was reachable a moment ago
+                station_data = data
+        filled_df, filled_dates = fill_missing_days(station_data.df, start_date, end_date)
+        if filled_dates:
+            station_data = replace(station_data, df=filled_df)
+            estimated_dates_by_code[station_data.iaga_code] = filled_dates
+        result_stations.append(station_data)
+
+    return result_stations, estimated_dates_by_code
 
 
 def estimate_base_from_observatories(

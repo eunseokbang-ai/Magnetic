@@ -156,14 +156,27 @@ async def upload_iaga2002(project_id: str, file: UploadFile = File(...)):
     return project.preview_intermagnet_text(text)
 
 
+def _parse_date_range(start_str: str, end_str: str, max_days: int = 31) -> tuple[date, date]:
+    try:
+        start_date = date.fromisoformat(start_str)
+    except ValueError:
+        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {start_str!r} (예: 2026-07-24)")
+    try:
+        end_date = date.fromisoformat(end_str)
+    except ValueError:
+        raise ProjectError(f"올바르지 않은 종료일 형식입니다: {end_str!r} (예: 2026-07-24)")
+    if end_date < start_date:
+        raise ProjectError("종료일이 시작일보다 빠릅니다.")
+    if (end_date - start_date).days + 1 > max_days:
+        raise ProjectError(f"한 번에 조회할 수 있는 기간은 최대 {max_days}일입니다.")
+    return start_date, end_date
+
+
 @app.post("/api/projects/{project_id}/base/intermagnet/fetch")
 def fetch_intermagnet(project_id: str, req: IntermagnetFetchRequest):
     project = store.get(project_id)
-    try:
-        start_date = date.fromisoformat(req.start_date)
-    except ValueError:
-        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {req.start_date!r} (예: 2026-07-24)")
-    return project.fetch_intermagnet_preview(req.iaga_code, start_date, req.days)
+    start_date, end_date = _parse_date_range(req.start_date, req.end_date)
+    return project.fetch_intermagnet_preview(req.iaga_code, start_date, end_date)
 
 
 @app.post("/api/projects/{project_id}/base/intermagnet/apply")
@@ -175,12 +188,9 @@ def apply_intermagnet(project_id: str):
 @app.post("/api/projects/{project_id}/base/intermagnet/nearest/fetch")
 def fetch_nearest_intermagnet(project_id: str, req: NearestIntermagnetRequest):
     project = store.get(project_id)
-    try:
-        start_date = date.fromisoformat(req.start_date)
-    except ValueError:
-        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {req.start_date!r} (예: 2026-07-24)")
+    start_date, end_date = _parse_date_range(req.start_date, req.end_date)
     return project.fetch_nearest_intermagnet_preview(
-        start_date, req.days, req.n_stations, req.target_lat, req.target_lon
+        start_date, end_date, req.n_stations, req.target_lat, req.target_lon
     )
 
 

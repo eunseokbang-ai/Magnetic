@@ -43,9 +43,9 @@ export default function IntermagnetPanel({
 }) {
   const [iagaCode, setIagaCode] = useState("");
   const [startDate, setStartDate] = useState("");
-  const [days, setDays] = useState(2);
+  const [endDate, setEndDate] = useState("");
   const [nearestStartDate, setNearestStartDate] = useState("");
-  const [nearestDays, setNearestDays] = useState(1);
+  const [nearestEndDate, setNearestEndDate] = useState("");
   const [nStations, setNStations] = useState(4);
 
   return (
@@ -85,14 +85,13 @@ export default function IntermagnetPanel({
               />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }}>일수</span>
+              <span style={{ color: "#4b5563" }}>종료일</span>
               <input
-                type="number"
-                min="1"
-                max="31"
-                style={{ ...inputStyle, width: 60 }}
-                value={nearestDays}
-                onChange={(e) => setNearestDays(parseInt(e.target.value, 10) || 1)}
+                type="date"
+                style={{ ...inputStyle, width: 140 }}
+                value={nearestEndDate}
+                min={nearestStartDate || undefined}
+                onChange={(e) => setNearestEndDate(e.target.value)}
               />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -108,13 +107,21 @@ export default function IntermagnetPanel({
             </label>
             <button
               style={buttonStyle}
-              disabled={nearestLoading || !nearestStartDate}
+              disabled={nearestLoading || !nearestStartDate || !nearestEndDate}
               onClick={() =>
-                onFetchNearestIntermagnet({ start_date: nearestStartDate, days: nearestDays, n_stations: nStations })
+                onFetchNearestIntermagnet({
+                  start_date: nearestStartDate,
+                  end_date: nearestEndDate,
+                  n_stations: nStations,
+                })
               }
             >
               {nearestLoading ? "탐색 중..." : "주변 관측소 탐색"}
             </button>
+          </div>
+          <div style={{ color: "#9ca3af" }}>
+            해당 기간 중 아직 게시되지 않은 최근 1~2일 자료나, 특정일에 결측된 자료는 나머지 기간의 자료로 추정하여
+            채웁니다.
           </div>
 
           {nearestHasResult && onShowNearestComparison && (
@@ -146,6 +153,9 @@ export default function IntermagnetPanel({
                 {nearestPreview.stations?.map((s) => (
                   <li key={s.iaga_code}>
                     {s.station_name} ({s.iaga_code}) — {s.distance_km?.toFixed(0)} km, 방위각 {s.bearing_deg?.toFixed(0)}°
+                    {s.estimated_dates?.length > 0 && (
+                      <span style={{ color: "#b45309" }}> — 추정된 날짜: {s.estimated_dates.join(", ")}</span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -217,23 +227,25 @@ export default function IntermagnetPanel({
           <input type="date" style={{ ...inputStyle, width: 140 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ color: "#4b5563" }}>일수</span>
+          <span style={{ color: "#4b5563" }}>종료일</span>
           <input
-            type="number"
-            min="1"
-            max="31"
-            style={{ ...inputStyle, width: 60 }}
-            value={days}
-            onChange={(e) => setDays(parseInt(e.target.value, 10) || 1)}
+            type="date"
+            style={{ ...inputStyle, width: 140 }}
+            value={endDate}
+            min={startDate || undefined}
+            onChange={(e) => setEndDate(e.target.value)}
           />
         </label>
         <button
           style={buttonStyle}
-          disabled={loading || !iagaCode || !startDate}
-          onClick={() => onFetchIntermagnet({ iaga_code: iagaCode, start_date: startDate, days })}
+          disabled={loading || !iagaCode || !startDate || !endDate}
+          onClick={() => onFetchIntermagnet({ iaga_code: iagaCode, start_date: startDate, end_date: endDate })}
         >
           {loading ? "요청 중..." : "자동 다운로드 시도"}
         </button>
+      </div>
+      <div style={{ color: "#9ca3af" }}>
+        해당 기간 중 아직 게시되지 않은 최근 1~2일 자료나, 특정일에 결측된 자료는 나머지 기간의 자료로 추정하여 채웁니다.
       </div>
 
       {error && (
@@ -254,6 +266,9 @@ export default function IntermagnetPanel({
           <div>
             자료 {preview.n_points}개, 기간: {preview.time_range?.[0]} ~ {preview.time_range?.[1]}
           </div>
+          {preview.estimated_dates?.length > 0 && (
+            <div style={{ color: "#b45309" }}>추정된 날짜: {preview.estimated_dates.join(", ")}</div>
+          )}
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             <button
               style={{ ...buttonStyle, background: "#2563eb", color: "white" }}

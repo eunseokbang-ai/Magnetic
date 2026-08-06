@@ -82,6 +82,7 @@ export default function NearestIntermagnetComparisonView({ data, onClose }) {
           {stations.map((s, i) => (
             <span key={s.iaga_code} style={{ color: STATION_COLORS[i % STATION_COLORS.length] }}>
               ━━ {s.station_name} ({s.iaga_code}) — {s.distance_km?.toFixed(0)}km
+              {s.estimated_dates?.length > 0 && ` (추정: ${s.estimated_dates.join(", ")})`}
             </span>
           ))}
         </div>

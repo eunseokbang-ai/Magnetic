@@ -326,10 +326,14 @@ class IntermagnetFetchRequest(BaseModel):
     as a stand-in base station when no local base was measured - see
     processing/intermagnet.py. Requires this server's own outbound network
     to reach the data service; if that's blocked, use the IAGA-2002 file
-    upload endpoint instead (same parser, no network access needed)."""
+    upload endpoint instead (same parser, no network access needed). Any
+    calendar day in [start_date, end_date] that comes back missing (e.g.
+    the most recent day or two, before definitive data is published) is
+    estimated from the rest of the downloaded range - see
+    processing/intermagnet.py::fill_missing_days."""
     iaga_code: str
     start_date: str  # "YYYY-MM-DD"
-    days: int = Field(2, ge=1, le=31)
+    end_date: str  # "YYYY-MM-DD", inclusive
 
 
 class NearestIntermagnetRequest(BaseModel):
@@ -339,9 +343,11 @@ class NearestIntermagnetRequest(BaseModel):
     weighting into one substitute base station series - see
     processing/intermagnet.py::select_nearest_observatories /
     estimate_base_from_observatories. Requires this server's own outbound
-    network to reach the data service."""
+    network to reach the data service. Any calendar day in [start_date,
+    end_date] missing from a selected station is estimated the same way
+    as IntermagnetFetchRequest."""
     start_date: str  # "YYYY-MM-DD"
-    days: int = Field(1, ge=1, le=31)
+    end_date: str  # "YYYY-MM-DD", inclusive
     n_stations: int = Field(4, ge=1, le=8)
     target_lat: float | None = None
     target_lon: float | None = None

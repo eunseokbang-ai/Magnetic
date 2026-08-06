@@ -115,10 +115,20 @@ def test_fetch_rejects_malformed_start_date_with_clear_korean_message(client):
     project_id = _new_project(client)
     r = client.post(
         f"/api/projects/{project_id}/base/intermagnet/fetch",
-        json={"iaga_code": "IRT", "start_date": "not-a-date", "days": 1},
+        json={"iaga_code": "IRT", "start_date": "not-a-date", "end_date": "2026-07-24"},
     )
     assert r.status_code == 400, r.text
     assert "시작일" in r.json()["detail"]
+
+
+def test_fetch_rejects_end_date_before_start_date(client):
+    project_id = _new_project(client)
+    r = client.post(
+        f"/api/projects/{project_id}/base/intermagnet/fetch",
+        json={"iaga_code": "IRT", "start_date": "2026-07-24", "end_date": "2026-07-20"},
+    )
+    assert r.status_code == 400, r.text
+    assert "종료일" in r.json()["detail"]
 
 
 if __name__ == "__main__":
@@ -128,4 +138,5 @@ if __name__ == "__main__":
     test_apply_without_preview_fails_clearly(c)
     test_upload_rejects_non_iaga_text(c)
     test_fetch_rejects_malformed_start_date_with_clear_korean_message(c)
+    test_fetch_rejects_end_date_before_start_date(c)
     print("ALL CHECKS PASSED")
