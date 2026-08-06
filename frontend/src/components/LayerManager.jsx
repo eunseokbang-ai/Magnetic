@@ -1,9 +1,33 @@
 import { useState } from "react";
 
 const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const buttonStyle = {
+  padding: "6px 10px",
+  fontSize: 12,
+  borderRadius: 6,
+  border: "1px solid #2563eb",
+  background: "white",
+  color: "#2563eb",
+  cursor: "pointer",
+};
 
-export default function LayerManager({ layers, onUpload, onToggleVisible, onSetOpacity, onMove, onRemove, uploading, error }) {
+export default function LayerManager({
+  layers,
+  onUpload,
+  onToggleVisible,
+  onSetOpacity,
+  onMove,
+  onRemove,
+  uploading,
+  error,
+  onRegisterTileFolder,
+  tileFolderRegistering,
+  tileFolderError,
+}) {
   const [fileName, setFileName] = useState("");
+  const [folderPath, setFolderPath] = useState("");
+  const [folderLabel, setFolderLabel] = useState("");
+  const [folderScheme, setFolderScheme] = useState("auto");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -25,6 +49,50 @@ export default function LayerManager({ layers, onUpload, onToggleVisible, onSetO
       />
       {fileName && uploading && <div style={{ fontSize: 12, color: "#6b7280" }}>{fileName} 업로드/렌더링 중...</div>}
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
+
+      {onRegisterTileFolder && (
+        <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12, color: "#374151" }}>
+            <b>대용량 정사영상 (수십 GB급)</b>은 직접 업로드하면 렌더링이 매우 오래 걸립니다. 대신 QGIS의 "래스터 → 타일
+            생성(XYZ)" 또는 GDAL의 <code>gdal2tiles.py</code>로 미리 타일링한 폴더(0, 1, 2... 확대단계 숫자 이름의
+            하위 폴더 구조)를 아래에 경로로 지정하면, 업로드 없이 그 폴더를 직접 읽어 즉시 배경 레이어로 표시합니다
+            (이 프로그램과 같은 컴퓨터에 폴더가 있어야 합니다).
+          </div>
+          <input
+            type="text"
+            placeholder="타일 폴더 전체 경로 (예: D:\survey\ortho_tiles)"
+            style={inputStyle}
+            value={folderPath}
+            onChange={(e) => setFolderPath(e.target.value)}
+            disabled={tileFolderRegistering}
+          />
+          <input
+            type="text"
+            placeholder="레이어 이름 (선택, 비우면 폴더명 사용)"
+            style={inputStyle}
+            value={folderLabel}
+            onChange={(e) => setFolderLabel(e.target.value)}
+            disabled={tileFolderRegistering}
+          />
+          <select style={inputStyle} value={folderScheme} onChange={(e) => setFolderScheme(e.target.value)} disabled={tileFolderRegistering}>
+            <option value="auto">타일 행 순서 자동 감지 (권장)</option>
+            <option value="xyz">XYZ (행 0 = 북쪽)</option>
+            <option value="tms">TMS (행 0 = 남쪽, GDAL 기본 출력)</option>
+          </select>
+          <button
+            style={buttonStyle}
+            disabled={!folderPath.trim() || tileFolderRegistering}
+            onClick={async () => {
+              await onRegisterTileFolder(folderPath.trim(), folderLabel.trim() || null, folderScheme);
+              setFolderPath("");
+              setFolderLabel("");
+            }}
+          >
+            {tileFolderRegistering ? "연동 중..." : "폴더 연동"}
+          </button>
+          {tileFolderError && <div style={{ fontSize: 12, color: "#dc2626" }}>{tileFolderError}</div>}
+        </div>
+      )}
 
       {layers.length === 0 ? (
         <div style={{ fontSize: 12, color: "#9ca3af" }}>추가된 레이어가 없습니다.</div>

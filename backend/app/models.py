@@ -339,6 +339,18 @@ class TileBboxRequest(BaseModel):
     max_zoom: int = Field(ge=0, le=19)
 
 
+class LocalTileFolderRequest(BaseModel):
+    """Points the backend at a local folder containing an already-tiled
+    {z}/{x}/{y}.<ext> raster pyramid (e.g. produced by QGIS or GDAL's
+    gdal2tiles.py) so it can be served as a map layer directly from disk -
+    see processing/local_tiles.py. Used for very large orthophotos where
+    uploading+re-rendering the raw GeoTIFF (see /overlay-images) is
+    impractical."""
+    path: str
+    label: Optional[str] = None
+    scheme: Literal["auto", "xyz", "tms"] = "auto"
+
+
 class InversionParams(BaseModel):
     value: ValueField = "anomaly"
     # Any of these left as None (the default) is auto-estimated from the

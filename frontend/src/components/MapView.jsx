@@ -398,12 +398,24 @@ export default function MapView({
 
       <FitBounds points={points} />
 
-      {/* user-uploaded reference layers (e.g. GeoTIFF geology maps), bottom to top */}
+      {/* user-uploaded reference layers (e.g. GeoTIFF geology maps, or a
+          pre-tiled local folder for large orthophotos), bottom to top */}
       {(overlayLayers || [])
         .filter((l) => l.visible)
-        .map((l) => (
-          <ImageOverlay key={l.id} url={l.image_data_url} bounds={l.bounds} opacity={l.opacity} />
-        ))}
+        .map((l) =>
+          l.type === "tiles" ? (
+            <TileLayer
+              key={l.id}
+              url={`/api/local-tiles/${l.tile_layer_id}/{z}/{x}/{y}`}
+              bounds={l.bounds}
+              minZoom={l.min_zoom}
+              maxNativeZoom={l.max_zoom}
+              opacity={l.opacity}
+            />
+          ) : (
+            <ImageOverlay key={l.id} url={l.image_data_url} bounds={l.bounds} opacity={l.opacity} />
+          )
+        )}
 
       {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}

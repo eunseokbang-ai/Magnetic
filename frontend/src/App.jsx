@@ -196,6 +196,8 @@ export default function App() {
   const [overlayLayers, setOverlayLayers] = useState([]);
   const [overlayUploading, setOverlayUploading] = useState(false);
   const [overlayError, setOverlayError] = useState(null);
+  const [tileFolderRegistering, setTileFolderRegistering] = useState(false);
+  const [tileFolderError, setTileFolderError] = useState(null);
   const [transformExtraParams, setTransformExtraParams] = useState(DEFAULT_TRANSFORM_EXTRA_PARAMS);
   const [exportingXyz, setExportingXyz] = useState(false);
   const [exportingGrd, setExportingGrd] = useState(false);
@@ -876,11 +878,39 @@ export default function App() {
   const handleRemoveOverlay = (id) => {
     setOverlayLayers((prev) => {
       const layer = prev.find((l) => l.id === id);
-      if (layer && projectId) {
+      if (layer?.type === "tiles") {
+        api.unregisterLocalTileFolder(layer.tile_layer_id).catch(() => {});
+      } else if (layer && projectId) {
         api.deleteReferenceLayer(projectId, layer.name).catch(() => {});
       }
       return prev.filter((l) => l.id !== id);
     });
+  };
+
+  const handleRegisterLocalTileFolder = async (path, label, scheme) => {
+    try {
+      setTileFolderError(null);
+      setTileFolderRegistering(true);
+      const resp = await api.registerLocalTileFolder({ path, label, scheme });
+      setOverlayLayers((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          name: resp.label,
+          type: "tiles",
+          tile_layer_id: resp.id,
+          bounds: resp.bounds,
+          min_zoom: resp.min_zoom,
+          max_zoom: resp.max_zoom,
+          opacity: 1,
+          visible: true,
+        },
+      ]);
+    } catch (e) {
+      setTileFolderError(e.message || String(e));
+    } finally {
+      setTileFolderRegistering(false);
+    }
   };
 
   const handleMoveOverlay = (id, direction) => {
@@ -1566,6 +1596,9 @@ export default function App() {
           onRemove={handleRemoveOverlay}
           uploading={overlayUploading}
           error={overlayError}
+          onRegisterTileFolder={handleRegisterLocalTileFolder}
+          tileFolderRegistering={tileFolderRegistering}
+          tileFolderError={tileFolderError}
         />
 
         <details open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>

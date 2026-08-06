@@ -173,6 +173,14 @@ export function getOfflineTileStatus() {
   return request(`/tiles/status`);
 }
 
+export function registerLocalTileFolder(req) {
+  return request(`/local-tiles/register`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function unregisterLocalTileFolder(layerId) {
+  return request(`/local-tiles/${layerId}`, { method: "DELETE" });
+}
+
 export function uploadOverlayImage(file) {
   const form = new FormData();
   form.append("file", file);

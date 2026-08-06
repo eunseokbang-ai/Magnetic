@@ -21,6 +21,7 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     IntermagnetFetchRequest,
+    LocalTileFolderRequest,
     ManualExcludeRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
@@ -31,7 +32,7 @@ from .models import (
     TileBboxRequest,
     TransformRequest,
 )
-from .processing import tile_cache
+from .processing import local_tiles, tile_cache
 from .processing.colormaps import register_custom_colormaps
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .store import ProjectError, store
@@ -523,6 +524,40 @@ def get_tile(source: str, z: int, x: int, y: int):
     if content is None:
         raise HTTPException(status_code=404, detail="타일을 찾을 수 없습니다 (캐시에 없고 인터넷에서도 받아오지 못했습니다).")
     media_type = _TILE_MEDIA_TYPES[tile_cache.TILE_SOURCES[source]["ext"]]
+    return Response(content=content, media_type=media_type)
+
+
+# Serves an already-tiled raster pyramid straight off local disk (e.g. a
+# very large orthophoto tiled once with QGIS/gdal2tiles.py) - not
+# project-scoped, same rationale as the offline tile cache above. See
+# processing/local_tiles.py for why this exists instead of just uploading
+# the raw GeoTIFF through /overlay-images.
+@app.post("/api/local-tiles/register")
+def register_local_tile_folder(req: LocalTileFolderRequest):
+    scheme_override = None if req.scheme == "auto" else req.scheme
+    layer = local_tiles.register_local_tile_folder(req.path, req.label, scheme_override)
+    south, west, north, east = layer.bounds
+    return {
+        "id": layer.id,
+        "label": layer.label,
+        "min_zoom": layer.min_zoom,
+        "max_zoom": layer.max_zoom,
+        "scheme": layer.scheme,
+        "bounds": [[south, west], [north, east]],
+    }
+
+
+@app.delete("/api/local-tiles/{layer_id}")
+def unregister_local_tile_folder(layer_id: str):
+    local_tiles.unregister_local_tile_folder(layer_id)
+    return {"status": "ok"}
+
+
+@app.get("/api/local-tiles/{layer_id}/{z}/{x}/{y}")
+def get_local_tile(layer_id: str, z: int, x: int, y: int):
+    content, media_type = local_tiles.get_tile(layer_id, z, x, y)
+    if content is None:
+        raise HTTPException(status_code=404, detail="타일을 찾을 수 없습니다 (등록되지 않은 레이어이거나 해당 좌표에 타일 파일이 없습니다).")
     return Response(content=content, media_type=media_type)
 
 
