@@ -101,6 +101,10 @@ export function applyNearestIntermagnet(projectId) {
   return request(`/projects/${projectId}/base/intermagnet/nearest/apply`, { method: "POST" });
 }
 
+export function getNearestIntermagnetComparison(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/comparison`);
+}
+
 export function uploadHeadingCalibration(projectId, files, onProgress) {
   const form = new FormData();
   for (const f of files) form.append("files", f);

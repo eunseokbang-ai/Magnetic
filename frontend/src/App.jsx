@@ -11,6 +11,7 @@ import InversionPanel from "./components/InversionPanel";
 import InversionSectionView from "./components/InversionSectionView";
 import LineProfileView from "./components/LineProfileView";
 import BaseStationView from "./components/BaseStationView";
+import NearestIntermagnetComparisonView from "./components/NearestIntermagnetComparisonView";
 import OfflineMapPanel from "./components/OfflineMapPanel";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
@@ -185,6 +186,12 @@ export default function App() {
   const [nearestIntermagnetLoading, setNearestIntermagnetLoading] = useState(false);
   const [nearestIntermagnetApplying, setNearestIntermagnetApplying] = useState(false);
   const [nearestIntermagnetError, setNearestIntermagnetError] = useState(null);
+  // Tracks whether a nearest-observatory fetch has ever succeeded, so the
+  // comparison button stays enabled even after apply clears the preview
+  // above (the backend keeps the underlying station data around regardless).
+  const [nearestIntermagnetHasResult, setNearestIntermagnetHasResult] = useState(false);
+  const [nearestIntermagnetComparison, setNearestIntermagnetComparison] = useState(null);
+  const [nearestIntermagnetComparisonLoading, setNearestIntermagnetComparisonLoading] = useState(false);
   const [mapBounds, setMapBounds] = useState(null);
   const [tileEstimate, setTileEstimate] = useState(null);
   const [tileDownloadResult, setTileDownloadResult] = useState(null);
@@ -390,6 +397,7 @@ export default function App() {
       const id = await ensureProject();
       const preview = await api.fetchNearestIntermagnet(id, req);
       setNearestIntermagnetPreview(preview);
+      setNearestIntermagnetHasResult(true);
     } catch (e) {
       setNearestIntermagnetError(e.message || String(e));
     } finally {
@@ -421,6 +429,19 @@ export default function App() {
       await api.exportNearestIntermagnetCsv(projectId, "intermagnet_nearest_estimate.csv");
     } catch (e) {
       setNearestIntermagnetError(e.message || String(e));
+    }
+  };
+
+  const handleShowNearestIntermagnetComparison = async () => {
+    try {
+      setNearestIntermagnetError(null);
+      setNearestIntermagnetComparisonLoading(true);
+      const comparison = await api.getNearestIntermagnetComparison(projectId);
+      setNearestIntermagnetComparison(comparison);
+    } catch (e) {
+      setNearestIntermagnetError(e.message || String(e));
+    } finally {
+      setNearestIntermagnetComparisonLoading(false);
     }
   };
 
@@ -1538,10 +1559,13 @@ export default function App() {
           onApplyNearestIntermagnet={handleApplyNearestIntermagnet}
           onCancelNearestIntermagnetPreview={handleCancelNearestIntermagnetPreview}
           onExportNearestIntermagnetCsv={handleExportNearestIntermagnetCsv}
+          onShowNearestIntermagnetComparison={handleShowNearestIntermagnetComparison}
           nearestIntermagnetPreview={nearestIntermagnetPreview}
           nearestIntermagnetLoading={nearestIntermagnetLoading}
           nearestIntermagnetApplying={nearestIntermagnetApplying}
           nearestIntermagnetError={nearestIntermagnetError}
+          nearestIntermagnetHasResult={nearestIntermagnetHasResult}
+          nearestIntermagnetComparisonLoading={nearestIntermagnetComparisonLoading}
           onUploadHeadingCalibration={handleUploadHeadingCalibration}
           headingCalibrationSummary={headingCalibrationSummary}
           headingCalibrationUploadProgress={headingCalibrationUploadProgress}
@@ -1674,6 +1698,12 @@ export default function App() {
         )}
         {!volumeData && !sectionResult && !lineProfileData && baseTimeseries && (
           <BaseStationView data={baseTimeseries} onClose={() => setBaseTimeseries(null)} />
+        )}
+        {!volumeData && !sectionResult && !lineProfileData && !baseTimeseries && nearestIntermagnetComparison && (
+          <NearestIntermagnetComparisonView
+            data={nearestIntermagnetComparison}
+            onClose={() => setNearestIntermagnetComparison(null)}
+          />
         )}
       </div>
 

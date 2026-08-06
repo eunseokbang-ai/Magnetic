@@ -33,10 +33,13 @@ export default function IntermagnetPanel({
   onApplyNearestIntermagnet,
   onCancelNearestPreview,
   onExportNearestCsv,
+  onShowNearestComparison,
   nearestPreview,
   nearestLoading,
   nearestApplying,
   nearestError,
+  nearestHasResult,
+  nearestComparisonLoading,
 }) {
   const [iagaCode, setIagaCode] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -113,6 +116,12 @@ export default function IntermagnetPanel({
               {nearestLoading ? "탐색 중..." : "주변 관측소 탐색"}
             </button>
           </div>
+
+          {nearestHasResult && onShowNearestComparison && (
+            <button style={buttonStyle} disabled={nearestComparisonLoading} onClick={onShowNearestComparison}>
+              {nearestComparisonLoading ? "불러오는 중..." : "📊 주변 관측소 자료와 비교 그래프 보기"}
+            </button>
+          )}
 
           {nearestError && (
             <div style={{ color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "6px 8px" }}>

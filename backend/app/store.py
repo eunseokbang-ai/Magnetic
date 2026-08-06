@@ -173,6 +173,12 @@ class Project:
     # estimate (list of IagaObservatoryData + combined IDW DataFrame) - see
     # fetch_nearest_intermagnet_preview / apply_nearest_intermagnet_preview.
     intermagnet_nearest_preview: object = None
+    # Same shape as intermagnet_nearest_preview, but kept around after
+    # apply_nearest_intermagnet_preview clears the preview - backs the
+    # comparison chart (get_nearest_intermagnet_comparison) so the user can
+    # still see the individual station data an already-applied estimate
+    # was built from, not just while it's pending confirmation.
+    intermagnet_nearest_last_result: object = None
     processed: pd.DataFrame | None = None
     # processed, before any manual smoothing (set_manual_smoothing) is
     # applied - the pristine base that manual smoothing is re-derived from
@@ -324,12 +330,14 @@ class Project:
         except IntermagnetFetchError as exc:
             raise ProjectError(str(exc)) from exc
 
-        self.intermagnet_nearest_preview = {
+        result = {
             "target_lat": target_lat,
             "target_lon": target_lon,
             "stations": stations,
             "df": combined,
         }
+        self.intermagnet_nearest_preview = result
+        self.intermagnet_nearest_last_result = result
         return {
             "target_lat": target_lat,
             "target_lon": target_lon,
@@ -365,6 +373,35 @@ class Project:
         }
         self.intermagnet_nearest_preview = None
         return self.base_summary()
+
+    def get_nearest_intermagnet_comparison(self) -> dict:
+        """The individual raw series of each station used in the most
+        recent nearest-observatory fetch, alongside the combined (IDW)
+        estimate built from them - for the user to visually sanity-check
+        the estimate against the real station data (applied or still just
+        previewed; see intermagnet_nearest_last_result)."""
+        if self.intermagnet_nearest_last_result is None:
+            raise ProjectError("먼저 주변 관측소 자료를 조회하세요.")
+        result = self.intermagnet_nearest_last_result
+        target_lat, target_lon = result["target_lat"], result["target_lon"]
+        combined = result["df"]
+        return {
+            "combined": {
+                "timestamp": combined["timestamp"].astype(str).tolist(),
+                "mag": combined["mag"].tolist(),
+            },
+            "stations": [
+                {
+                    "station_name": s.station_name,
+                    "iaga_code": s.iaga_code,
+                    "distance_km": haversine_km(target_lat, target_lon, s.lat, s.lon),
+                    "bearing_deg": _bearing_deg(target_lat, target_lon, s.lat, s.lon),
+                    "timestamp": s.df["timestamp"].astype(str).tolist(),
+                    "mag": s.df["mag"].tolist(),
+                }
+                for s in result["stations"]
+            ],
+        }
 
     def export_nearest_intermagnet_csv(self) -> bytes:
         """The combined multi-observatory estimate as plain CSV - for

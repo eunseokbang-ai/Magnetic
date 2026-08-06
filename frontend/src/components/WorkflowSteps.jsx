@@ -95,10 +95,13 @@ export default function WorkflowSteps({
   onApplyNearestIntermagnet,
   onCancelNearestIntermagnetPreview,
   onExportNearestIntermagnetCsv,
+  onShowNearestIntermagnetComparison,
   nearestIntermagnetPreview,
   nearestIntermagnetLoading,
   nearestIntermagnetApplying,
   nearestIntermagnetError,
+  nearestIntermagnetHasResult,
+  nearestIntermagnetComparisonLoading,
   onUploadHeadingCalibration,
   headingCalibrationSummary,
   headingCalibrationUploadProgress,
@@ -326,10 +329,13 @@ export default function WorkflowSteps({
                 onApplyNearestIntermagnet={onApplyNearestIntermagnet}
                 onCancelNearestPreview={onCancelNearestIntermagnetPreview}
                 onExportNearestCsv={onExportNearestIntermagnetCsv}
+                onShowNearestComparison={onShowNearestIntermagnetComparison}
                 nearestPreview={nearestIntermagnetPreview}
                 nearestLoading={nearestIntermagnetLoading}
                 nearestApplying={nearestIntermagnetApplying}
                 nearestError={nearestIntermagnetError}
+                nearestHasResult={nearestIntermagnetHasResult}
+                nearestComparisonLoading={nearestIntermagnetComparisonLoading}
               />
             </details>
           )}

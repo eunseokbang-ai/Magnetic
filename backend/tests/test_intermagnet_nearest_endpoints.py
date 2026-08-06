@@ -117,6 +117,59 @@ def test_apply_commits_nearest_preview_as_base_and_unblocks_processing(client):
     assert r.json()["diurnal"]["mode"] == "base_station"
 
 
+def test_comparison_available_after_fetch_before_apply(client):
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+        )
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/projects/{project_id}/base/intermagnet/nearest/comparison")
+    assert r.status_code == 200, r.text
+    comparison = r.json()
+    assert len(comparison["combined"]["timestamp"]) > 0
+    assert len(comparison["combined"]["timestamp"]) == len(comparison["combined"]["mag"])
+    assert 1 <= len(comparison["stations"]) <= 3
+    for s in comparison["stations"]:
+        assert s["iaga_code"] in _MOCK_STATIONS
+        assert len(s["timestamp"]) == len(s["mag"]) > 0
+        assert s["distance_km"] >= 0
+
+
+def test_comparison_still_available_after_apply(client):
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+            json={"start_date": "2026-07-24", "days": 1, "n_stations": 3},
+        )
+    assert r.status_code == 200, r.text
+
+    r = client.post(f"/api/projects/{project_id}/base/intermagnet/nearest/apply")
+    assert r.status_code == 200, r.text
+
+    # the preview is cleared by apply, but the comparison data should
+    # survive - the user typically asks for the comparison after already
+    # applying the estimate, not only during the pending-preview window.
+    r = client.get(f"/api/projects/{project_id}/base/intermagnet/nearest/comparison")
+    assert r.status_code == 200, r.text
+    comparison = r.json()
+    assert len(comparison["stations"]) >= 1
+
+
+def test_comparison_without_any_fetch_fails_clearly(client):
+    project_id = _new_project(client)
+    r = client.get(f"/api/projects/{project_id}/base/intermagnet/nearest/comparison")
+    assert r.status_code != 200
+    assert "조회" in r.json()["detail"]
+
+
 def test_apply_without_preview_fails_clearly(client):
     project_id = _new_project(client)
     r = client.post(f"/api/projects/{project_id}/base/intermagnet/nearest/apply")
@@ -184,6 +237,9 @@ if __name__ == "__main__":
     c = TestClient(app)
     test_fetch_previews_nearest_stations_without_committing(c)
     test_apply_commits_nearest_preview_as_base_and_unblocks_processing(c)
+    test_comparison_available_after_fetch_before_apply(c)
+    test_comparison_still_available_after_apply(c)
+    test_comparison_without_any_fetch_fails_clearly(c)
     test_apply_without_preview_fails_clearly(c)
     test_csv_export_without_preview_fails_clearly(c)
     test_csv_export_returns_combined_series(c)

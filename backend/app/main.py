@@ -190,6 +190,12 @@ def apply_nearest_intermagnet(project_id: str):
     return project.apply_nearest_intermagnet_preview()
 
 
+@app.get("/api/projects/{project_id}/base/intermagnet/nearest/comparison")
+def get_nearest_intermagnet_comparison(project_id: str):
+    project = store.get(project_id)
+    return project.get_nearest_intermagnet_comparison()
+
+
 @app.get("/api/projects/{project_id}/base/intermagnet/nearest/csv")
 def export_nearest_intermagnet_csv(project_id: str):
     project = store.get(project_id)
