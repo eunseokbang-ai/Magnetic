@@ -181,6 +181,10 @@ export default function App() {
   const [intermagnetLoading, setIntermagnetLoading] = useState(false);
   const [intermagnetApplying, setIntermagnetApplying] = useState(false);
   const [intermagnetError, setIntermagnetError] = useState(null);
+  const [nearestIntermagnetPreview, setNearestIntermagnetPreview] = useState(null);
+  const [nearestIntermagnetLoading, setNearestIntermagnetLoading] = useState(false);
+  const [nearestIntermagnetApplying, setNearestIntermagnetApplying] = useState(false);
+  const [nearestIntermagnetError, setNearestIntermagnetError] = useState(null);
   const [mapBounds, setMapBounds] = useState(null);
   const [tileEstimate, setTileEstimate] = useState(null);
   const [tileDownloadResult, setTileDownloadResult] = useState(null);
@@ -377,6 +381,47 @@ export default function App() {
   const handleCancelIntermagnetPreview = () => {
     setIntermagnetPreview(null);
     setIntermagnetError(null);
+  };
+
+  const handleFetchNearestIntermagnet = async (req) => {
+    try {
+      setNearestIntermagnetError(null);
+      setNearestIntermagnetLoading(true);
+      const id = await ensureProject();
+      const preview = await api.fetchNearestIntermagnet(id, req);
+      setNearestIntermagnetPreview(preview);
+    } catch (e) {
+      setNearestIntermagnetError(e.message || String(e));
+    } finally {
+      setNearestIntermagnetLoading(false);
+    }
+  };
+
+  const handleApplyNearestIntermagnet = async () => {
+    try {
+      setNearestIntermagnetError(null);
+      setNearestIntermagnetApplying(true);
+      const summary = await api.applyNearestIntermagnet(projectId);
+      setBaseSummary(summary);
+      setNearestIntermagnetPreview(null);
+    } catch (e) {
+      setNearestIntermagnetError(e.message || String(e));
+    } finally {
+      setNearestIntermagnetApplying(false);
+    }
+  };
+
+  const handleCancelNearestIntermagnetPreview = () => {
+    setNearestIntermagnetPreview(null);
+    setNearestIntermagnetError(null);
+  };
+
+  const handleExportNearestIntermagnetCsv = async () => {
+    try {
+      await api.exportNearestIntermagnetCsv(projectId, "intermagnet_nearest_estimate.csv");
+    } catch (e) {
+      setNearestIntermagnetError(e.message || String(e));
+    }
   };
 
   const handleMapBoundsChange = useCallback((bounds) => setMapBounds(bounds), []);
@@ -1489,6 +1534,14 @@ export default function App() {
           intermagnetLoading={intermagnetLoading}
           intermagnetApplying={intermagnetApplying}
           intermagnetError={intermagnetError}
+          onFetchNearestIntermagnet={handleFetchNearestIntermagnet}
+          onApplyNearestIntermagnet={handleApplyNearestIntermagnet}
+          onCancelNearestIntermagnetPreview={handleCancelNearestIntermagnetPreview}
+          onExportNearestIntermagnetCsv={handleExportNearestIntermagnetCsv}
+          nearestIntermagnetPreview={nearestIntermagnetPreview}
+          nearestIntermagnetLoading={nearestIntermagnetLoading}
+          nearestIntermagnetApplying={nearestIntermagnetApplying}
+          nearestIntermagnetError={nearestIntermagnetError}
           onUploadHeadingCalibration={handleUploadHeadingCalibration}
           headingCalibrationSummary={headingCalibrationSummary}
           headingCalibrationUploadProgress={headingCalibrationUploadProgress}

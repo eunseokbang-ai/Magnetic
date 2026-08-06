@@ -29,10 +29,21 @@ export default function IntermagnetPanel({
   loading,
   applying,
   error,
+  onFetchNearestIntermagnet,
+  onApplyNearestIntermagnet,
+  onCancelNearestPreview,
+  onExportNearestCsv,
+  nearestPreview,
+  nearestLoading,
+  nearestApplying,
+  nearestError,
 }) {
   const [iagaCode, setIagaCode] = useState("");
   const [startDate, setStartDate] = useState("");
   const [days, setDays] = useState(2);
+  const [nearestStartDate, setNearestStartDate] = useState("");
+  const [nearestDays, setNearestDays] = useState(1);
+  const [nStations, setNStations] = useState(4);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 8, fontSize: 12 }}>
@@ -42,6 +53,119 @@ export default function IntermagnetPanel({
         코드와 날짜를 입력해 서버에서 바로 받아올 수 있습니다 (서버의 아웃바운드 네트워크 정책에 따라 자동 다운로드가
         막혀 있을 수 있으며, 이 경우 파일 업로드를 이용하세요).
       </div>
+
+      {onFetchNearestIntermagnet && (
+        <div
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            padding: "8px 10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            background: "#fafafa",
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>주변 관측소 자동 선택 (추천)</div>
+          <div style={{ color: "#6b7280" }}>
+            조사지역 평균 좌표 주변 동서남북 방향에서 가장 가까운 관측소들을 자동으로 찾아 자료를 받아온 뒤, 거리 가중
+            평균(IDW)으로 결합하여 하나의 가상 베이스 자료로 만듭니다. 관측소 코드를 몰라도 됩니다.
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ color: "#4b5563" }}>시작일</span>
+              <input
+                type="date"
+                style={{ ...inputStyle, width: 140 }}
+                value={nearestStartDate}
+                onChange={(e) => setNearestStartDate(e.target.value)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ color: "#4b5563" }}>일수</span>
+              <input
+                type="number"
+                min="1"
+                max="31"
+                style={{ ...inputStyle, width: 60 }}
+                value={nearestDays}
+                onChange={(e) => setNearestDays(parseInt(e.target.value, 10) || 1)}
+              />
+            </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ color: "#4b5563" }}>관측소 수</span>
+              <input
+                type="number"
+                min="1"
+                max="8"
+                style={{ ...inputStyle, width: 60 }}
+                value={nStations}
+                onChange={(e) => setNStations(parseInt(e.target.value, 10) || 1)}
+              />
+            </label>
+            <button
+              style={buttonStyle}
+              disabled={nearestLoading || !nearestStartDate}
+              onClick={() =>
+                onFetchNearestIntermagnet({ start_date: nearestStartDate, days: nearestDays, n_stations: nStations })
+              }
+            >
+              {nearestLoading ? "탐색 중..." : "주변 관측소 탐색"}
+            </button>
+          </div>
+
+          {nearestError && (
+            <div style={{ color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "6px 8px" }}>
+              {nearestError}
+            </div>
+          )}
+
+          {nearestPreview && (
+            <div
+              style={{
+                border: "1px solid #bfdbfe",
+                background: "#eff6ff",
+                borderRadius: 6,
+                padding: "8px 10px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>선택된 관측소 {nearestPreview.stations?.length}개</div>
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {nearestPreview.stations?.map((s) => (
+                  <li key={s.iaga_code}>
+                    {s.station_name} ({s.iaga_code}) — {s.distance_km?.toFixed(0)} km, 방위각 {s.bearing_deg?.toFixed(0)}°
+                  </li>
+                ))}
+              </ul>
+              <div>
+                결합 자료 {nearestPreview.n_points}개, 기간: {nearestPreview.time_range?.[0]} ~ {nearestPreview.time_range?.[1]}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                <button
+                  style={{ ...buttonStyle, background: "#2563eb", color: "white" }}
+                  disabled={nearestApplying}
+                  onClick={onApplyNearestIntermagnet}
+                >
+                  {nearestApplying ? "적용 중..." : "이 자료를 베이스 자료로 사용"}
+                </button>
+                {onExportNearestCsv && (
+                  <button style={buttonStyle} onClick={onExportNearestCsv}>
+                    CSV로 파일 저장
+                  </button>
+                )}
+                <button style={buttonStyle} disabled={nearestApplying} onClick={onCancelNearestPreview}>
+                  취소
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ fontWeight: 600, marginTop: 4 }}>직접 관측소 지정</div>
 
       <label
         style={{

@@ -93,6 +93,14 @@ export function applyIntermagnet(projectId) {
   return request(`/projects/${projectId}/base/intermagnet/apply`, { method: "POST" });
 }
 
+export function fetchNearestIntermagnet(projectId, req) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/fetch`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function applyNearestIntermagnet(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/apply`, { method: "POST" });
+}
+
 export function uploadHeadingCalibration(projectId, files, onProgress) {
   const form = new FormData();
   for (const f of files) form.append("files", f);
@@ -322,6 +330,11 @@ export async function exportInversionSliceGeotiff(projectId, req, filename) {
 
 export async function exportInversionResult(projectId, filename) {
   const blob = await requestBlob(`/projects/${projectId}/inversion/export`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportNearestIntermagnetCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/base/intermagnet/nearest/csv`);
   downloadBlob(blob, filename);
 }
 

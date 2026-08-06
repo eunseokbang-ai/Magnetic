@@ -193,11 +193,19 @@ def fetch_iaga2002_text(iaga_code: str, start_date: date, days: int = 2, timeout
 
     params = {
         "Request": "GetData",
-        "format": "iaga2002",
+        "format": "IAGA2002",
         "testObsys": "0",
         "observatoryIagaCode": iaga_code.upper(),
-        "samplesPerDay": "minute",
+        # Total samples per UTC day, not a word - the GIN service silently
+        # rejects/misinterprets a non-numeric value here. 1440 = one-minute
+        # cadence (60*24), the standard INTERMAGNET publication resolution
+        # and plenty fine for diurnal correction (confirmed against a
+        # known-working third-party GIN client's exact request string,
+        # which uses 86400 for 1-second data - 1440 is the minute-cadence
+        # equivalent of that same numeric convention).
+        "samplesPerDay": "1440",
         "publicationState": "adj-or-rep",
+        "recordTermination": "UNIX",
         "dataStartDate": f"{start_date.isoformat()}T00:00:00.000Z",
         "dataDuration": str(max(1, int(days))),
     }
@@ -217,3 +225,156 @@ def fetch_iaga2002_text(iaga_code: str, start_date: date, days: int = 2, timeout
     if "Reported" not in text or "DATE" not in text:
         raise IntermagnetFetchError("응답이 IAGA-2002 형식이 아닙니다 - 관측소 코드나 날짜를 확인하세요.")
     return text
+
+
+def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Initial compass bearing (0-360, 0=north) from point 1 to point 2."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dlambda = math.radians(lon2 - lon1)
+    x = math.sin(dlambda) * math.cos(p2)
+    y = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dlambda)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def _candidates_by_rough_distance(target_lat: float, target_lon: float, limit: int):
+    from .intermagnet_stations import COUNTRY_CENTROIDS, OBSERVATORY_ROSTER
+
+    ranked = []
+    for entry in OBSERVATORY_ROSTER:
+        centroid = COUNTRY_CENTROIDS.get(entry.country)
+        if centroid is None:
+            continue
+        d = haversine_km(target_lat, target_lon, centroid[0], centroid[1])
+        ranked.append((d, entry))
+    ranked.sort(key=lambda t: t[0])
+    return [entry for _, entry in ranked[:limit]]
+
+
+def _pick_direction_diverse(
+    probed: list[tuple[float, float, "IagaObservatoryData"]], n_stations: int
+) -> list[tuple[float, float, "IagaObservatoryData"]]:
+    """Picks up to n_stations, preferring the nearest station in each
+    unclaimed 90-degree compass quadrant (N/E/S/W) around the target
+    first, then fills any remaining slots with the next-nearest stations
+    overall. A handful of stations clustered on one side of the target
+    would otherwise dominate a plain nearest-N pick, giving a
+    directionally lopsided (and so less trustworthy) interpolation."""
+    by_quadrant: dict[int, tuple[float, float, "IagaObservatoryData"]] = {}
+    for d, bearing, data in probed:
+        q = int(((bearing + 45) % 360) // 90)  # 0=N, 1=E, 2=S, 3=W
+        if q not in by_quadrant or d < by_quadrant[q][0]:
+            by_quadrant[q] = (d, bearing, data)
+
+    selected = sorted(by_quadrant.values(), key=lambda t: t[0])[:n_stations]
+    selected_codes = {data.iaga_code for _, _, data in selected}
+    if len(selected) < n_stations:
+        for d, bearing, data in probed:
+            if data.iaga_code in selected_codes:
+                continue
+            selected.append((d, bearing, data))
+            selected_codes.add(data.iaga_code)
+            if len(selected) >= n_stations:
+                break
+    return selected
+
+
+def select_nearest_observatories(
+    target_lat: float,
+    target_lon: float,
+    start_date: date,
+    n_stations: int = 4,
+    max_candidates: int = 20,
+    timeout_seconds: float = 15.0,
+) -> list[IagaObservatoryData]:
+    """Finds up to n_stations INTERMAGNET observatories spread around
+    (target_lat, target_lon), for combining into a substitute base series
+    when no local base station was measured at all (see
+    estimate_base_from_observatories).
+
+    Rather than relying on a hand-maintained (and inevitably imprecise or
+    stale) table of station coordinates, this narrows the full ~130-station
+    roster to the max_candidates most plausible ones by a coarse
+    country-centroid distance (see intermagnet_stations.py), then actually
+    fetches each candidate's real data for start_date and reads its
+    authoritative coordinates straight from that file's own IAGA-2002
+    header - so the final selection and every distance reported to the
+    user is always based on real, current observatory metadata, never a
+    guess. Candidates with no data for start_date (not every observatory
+    publishes every day) are silently skipped.
+
+    This makes up to max_candidates live outbound HTTPS requests - see
+    fetch_iaga2002_text's docstring on network reachability."""
+    candidates = _candidates_by_rough_distance(target_lat, target_lon, max_candidates)
+    probed: list[tuple[float, float, IagaObservatoryData]] = []
+    for entry in candidates:
+        try:
+            text = fetch_iaga2002_text(entry.iaga_code, start_date, days=1, timeout_seconds=timeout_seconds)
+            data = parse_iaga2002(text)
+        except (IntermagnetFetchError, IagaParseError):
+            continue
+        if data.lat is None or data.lon is None:
+            continue
+        d = haversine_km(target_lat, target_lon, data.lat, data.lon)
+        bearing = _bearing_deg(target_lat, target_lon, data.lat, data.lon)
+        probed.append((d, bearing, data))
+
+    if not probed:
+        raise IntermagnetFetchError(
+            "근처 INTERMAGNET 관측소 자료를 하나도 받아오지 못했습니다 (네트워크 접근이 막혀 있거나, "
+            "해당 날짜 자료가 아직 게시되지 않았을 수 있습니다)."
+        )
+
+    selected = _pick_direction_diverse(probed, n_stations)
+    selected.sort(key=lambda t: t[0])
+    return [data for _, _, data in selected]
+
+
+def estimate_base_from_observatories(
+    stations: list[IagaObservatoryData], target_lat: float, target_lon: float, power: float = 2.0
+) -> pd.DataFrame:
+    """Combines multiple observatories' scalar total-field (F) series into
+    one virtual base station series for (target_lat, target_lon), using
+    inverse-distance weighting (weight proportional to 1/distance**power,
+    normalized to sum to 1 - the standard IDW spatial interpolation
+    scheme).
+
+    Weighting the raw F values directly (rather than each station's
+    deviation from its own daily mean) is deliberate and equivalent for
+    this app's purposes: diurnal correction (processing/diurnal.py) only
+    ever uses (base_interp - reference_within_flight_window), i.e. the
+    *variation* relative to the survey window's own mean. Since IDW is a
+    linear combination with fixed (time-independent) weights,
+    weighted_avg(F_a, F_b) - mean(weighted_avg(F_a, F_b)) equals
+    weighted_avg(F_a - mean(F_a), F_b - mean(F_b)) - so the arbitrary
+    absolute-level differences between stations at different latitudes
+    cancel out downstream exactly as they would for a single real station,
+    without needing to separately detrend each series here first."""
+    if not stations:
+        raise IntermagnetFetchError("결합할 관측소 자료가 없습니다.")
+
+    weights = np.array([1.0 / max(haversine_km(target_lat, target_lon, s.lat, s.lon), 1.0) ** power for s in stations])
+    weights = weights / weights.sum()
+
+    start = min(s.df["timestamp"].min() for s in stations)
+    end = max(s.df["timestamp"].max() for s in stations)
+    grid = pd.date_range(start, end, freq="1min")
+
+    weighted_sum = np.zeros(len(grid))
+    weight_total = np.zeros(len(grid))
+    for w, s in zip(weights, stations):
+        series = s.df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
+        # Interpolate only small internal gaps (a station's own brief
+        # dropouts) - never extrapolate past a station's real coverage.
+        series = series.interpolate(limit=5, limit_area="inside")
+        valid = series.notna().to_numpy()
+        weighted_sum[valid] += w * series.to_numpy()[valid]
+        weight_total[valid] += w
+
+    has_data = weight_total > 0
+    mag = np.full(len(grid), np.nan)
+    mag[has_data] = weighted_sum[has_data] / weight_total[has_data]
+
+    out = pd.DataFrame({"timestamp": grid, "mag": mag}).dropna(subset=["mag"]).reset_index(drop=True)
+    if out.empty:
+        raise IntermagnetFetchError("선택된 관측소들의 자료가 겹치는 시간대가 없습니다.")
+    return out

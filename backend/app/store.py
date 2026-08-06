@@ -35,9 +35,12 @@ from .processing.manual_smooth import apply_manual_smoothing
 from .processing.intermagnet import (
     IagaParseError,
     IntermagnetFetchError,
+    _bearing_deg,
+    estimate_base_from_observatories,
     fetch_iaga2002_text,
     haversine_km,
     parse_iaga2002,
+    select_nearest_observatories,
 )
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
 from .processing.despike import despike
@@ -166,6 +169,10 @@ class Project:
     # apply_intermagnet_preview. Kept server-side so "이 자료 사용" doesn't
     # need to re-send the whole (potentially large) IAGA-2002 text.
     intermagnet_preview: object = None
+    # A parsed-but-not-yet-applied multi-observatory nearest-station
+    # estimate (list of IagaObservatoryData + combined IDW DataFrame) - see
+    # fetch_nearest_intermagnet_preview / apply_nearest_intermagnet_preview.
+    intermagnet_nearest_preview: object = None
     processed: pd.DataFrame | None = None
     # processed, before any manual smoothing (set_manual_smoothing) is
     # applied - the pristine base that manual smoothing is re-derived from
@@ -290,6 +297,86 @@ class Project:
         }
         self.intermagnet_preview = None
         return self.base_summary()
+
+    def fetch_nearest_intermagnet_preview(
+        self,
+        start_date,
+        days: int = 1,
+        n_stations: int = 4,
+        target_lat: float | None = None,
+        target_lon: float | None = None,
+    ) -> dict:
+        """Auto-select a directionally spread set of nearby INTERMAGNET
+        observatories (defaulting to the survey's own average GPS
+        position when target_lat/target_lon aren't given) and combine
+        their data into one substitute base station series - see
+        processing/intermagnet.py::select_nearest_observatories /
+        estimate_base_from_observatories. Requires this server's own
+        outbound network to reach the data service."""
+        if target_lat is None or target_lon is None:
+            centroid = self._survey_centroid()
+            if centroid is None:
+                raise ProjectError("대상 좌표가 없습니다 - 드론 자료를 먼저 업로드하거나 좌표를 직접 입력하세요.")
+            target_lat, target_lon = centroid
+        try:
+            stations = select_nearest_observatories(target_lat, target_lon, start_date, n_stations=n_stations)
+            combined = estimate_base_from_observatories(stations, target_lat, target_lon)
+        except IntermagnetFetchError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        self.intermagnet_nearest_preview = {
+            "target_lat": target_lat,
+            "target_lon": target_lon,
+            "stations": stations,
+            "df": combined,
+        }
+        return {
+            "target_lat": target_lat,
+            "target_lon": target_lon,
+            "stations": [
+                {
+                    "station_name": s.station_name,
+                    "iaga_code": s.iaga_code,
+                    "lat": s.lat,
+                    "lon": s.lon,
+                    "distance_km": haversine_km(target_lat, target_lon, s.lat, s.lon),
+                    "bearing_deg": _bearing_deg(target_lat, target_lon, s.lat, s.lon),
+                }
+                for s in stations
+            ],
+            "n_points": len(combined),
+            "time_range": [combined["timestamp"].min().isoformat(), combined["timestamp"].max().isoformat()],
+        }
+
+    def apply_nearest_intermagnet_preview(self) -> dict:
+        """Commit the most recently previewed multi-observatory estimate
+        as this project's base (diurnal) station series - a separate
+        confirm step, matching apply_intermagnet_preview's UX."""
+        if self.intermagnet_nearest_preview is None:
+            raise ProjectError("먼저 주변 관측소 자료를 조회하여 미리보기를 확인하세요.")
+        preview = self.intermagnet_nearest_preview
+        self.base_raw = preview["df"]
+        self.base_source = {
+            "type": "intermagnet_nearest",
+            "station_name": " + ".join(s.iaga_code for s in preview["stations"]),
+            "iaga_code": None,
+            "lat": preview["target_lat"],
+            "lon": preview["target_lon"],
+        }
+        self.intermagnet_nearest_preview = None
+        return self.base_summary()
+
+    def export_nearest_intermagnet_csv(self) -> bytes:
+        """The combined multi-observatory estimate as plain CSV - for
+        inspection, or reuse in another project via the IAGA-2002-style
+        manual upload path (see preview_intermagnet_text) - though this
+        export is plain (timestamp, mag) CSV, not IAGA-2002 fixed-width."""
+        if self.intermagnet_nearest_preview is None:
+            raise ProjectError("먼저 주변 관측소 자료를 조회하여 미리보기를 확인하세요.")
+        df = self.intermagnet_nearest_preview["df"]
+        out = df.rename(columns={"mag": "mag_nT"}).copy()
+        out["timestamp"] = out["timestamp"].astype(str)
+        return out.to_csv(index=False).encode("utf-8")
 
     def load_heading_calibration(self, buffers: list) -> dict:
         """A short calibration flight (same instrument/file format as the

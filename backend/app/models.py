@@ -332,6 +332,21 @@ class IntermagnetFetchRequest(BaseModel):
     days: int = Field(2, ge=1, le=31)
 
 
+class NearestIntermagnetRequest(BaseModel):
+    """Auto-selects a directionally spread set of nearby INTERMAGNET
+    observatories around the project's survey area (or an explicit
+    override point) and combines their data via inverse-distance
+    weighting into one substitute base station series - see
+    processing/intermagnet.py::select_nearest_observatories /
+    estimate_base_from_observatories. Requires this server's own outbound
+    network to reach the data service."""
+    start_date: str  # "YYYY-MM-DD"
+    days: int = Field(1, ge=1, le=31)
+    n_stations: int = Field(4, ge=1, le=8)
+    target_lat: float | None = None
+    target_lon: float | None = None
+
+
 class TileBboxRequest(BaseModel):
     """A bounding box + zoom range to estimate or bulk-download offline
     basemap tiles for - see processing/tile_cache.py. Used for both the

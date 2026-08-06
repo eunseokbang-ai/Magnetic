@@ -91,6 +91,14 @@ export default function WorkflowSteps({
   intermagnetLoading,
   intermagnetApplying,
   intermagnetError,
+  onFetchNearestIntermagnet,
+  onApplyNearestIntermagnet,
+  onCancelNearestIntermagnetPreview,
+  onExportNearestIntermagnetCsv,
+  nearestIntermagnetPreview,
+  nearestIntermagnetLoading,
+  nearestIntermagnetApplying,
+  nearestIntermagnetError,
   onUploadHeadingCalibration,
   headingCalibrationSummary,
   headingCalibrationUploadProgress,
@@ -289,6 +297,14 @@ export default function WorkflowSteps({
                   </span>
                 </>
               )}
+              {baseSummary.source?.type === "intermagnet_nearest" && (
+                <>
+                  <br />
+                  <span style={{ color: "#2563eb" }}>
+                    출처: 주변 INTERMAGNET 관측소 {baseSummary.source.station_name} 자료의 거리가중평균(IDW) 추정값
+                  </span>
+                </>
+              )}
             </div>
           )}
 
@@ -306,6 +322,14 @@ export default function WorkflowSteps({
                 loading={intermagnetLoading}
                 applying={intermagnetApplying}
                 error={intermagnetError}
+                onFetchNearestIntermagnet={onFetchNearestIntermagnet}
+                onApplyNearestIntermagnet={onApplyNearestIntermagnet}
+                onCancelNearestPreview={onCancelNearestIntermagnetPreview}
+                onExportNearestCsv={onExportNearestIntermagnetCsv}
+                nearestPreview={nearestIntermagnetPreview}
+                nearestLoading={nearestIntermagnetLoading}
+                nearestApplying={nearestIntermagnetApplying}
+                nearestError={nearestIntermagnetError}
               />
             </details>
           )}

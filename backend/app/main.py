@@ -25,6 +25,7 @@ from .models import (
     ManualExcludeRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
+    NearestIntermagnetRequest,
     PolygonExportRequest,
     PowerSpectrumRequest,
     ProcessParams,
@@ -169,6 +170,33 @@ def fetch_intermagnet(project_id: str, req: IntermagnetFetchRequest):
 def apply_intermagnet(project_id: str):
     project = store.get(project_id)
     return project.apply_intermagnet_preview()
+
+
+@app.post("/api/projects/{project_id}/base/intermagnet/nearest/fetch")
+def fetch_nearest_intermagnet(project_id: str, req: NearestIntermagnetRequest):
+    project = store.get(project_id)
+    try:
+        start_date = date.fromisoformat(req.start_date)
+    except ValueError:
+        raise ProjectError(f"올바르지 않은 시작일 형식입니다: {req.start_date!r} (예: 2026-07-24)")
+    return project.fetch_nearest_intermagnet_preview(
+        start_date, req.days, req.n_stations, req.target_lat, req.target_lon
+    )
+
+
+@app.post("/api/projects/{project_id}/base/intermagnet/nearest/apply")
+def apply_nearest_intermagnet(project_id: str):
+    project = store.get(project_id)
+    return project.apply_nearest_intermagnet_preview()
+
+
+@app.get("/api/projects/{project_id}/base/intermagnet/nearest/csv")
+def export_nearest_intermagnet_csv(project_id: str):
+    project = store.get(project_id)
+    data = project.export_nearest_intermagnet_csv()
+    return Response(
+        content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=intermagnet_nearest_estimate.csv"}
+    )
 
 
 @app.post("/api/projects/{project_id}/upload/heading_calibration")
