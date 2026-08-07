@@ -89,7 +89,7 @@ function LineLabels({ lines, visible }) {
   return null;
 }
 
-function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn }) {
+function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn, repeatMode = false }) {
   const map = useMap();
   const controlRef = useRef(null);
   const groupRef = useRef(null);
@@ -124,12 +124,12 @@ function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn }) {
     const isPolyline = shapeType === "polyline";
     controlRef.current = new L.Control.Draw({
       draw: {
-        polygon: isPolyline ? false : { allowIntersection: false, showArea: false },
+        polygon: isPolyline ? false : { allowIntersection: false, showArea: false, repeatMode },
         // leaflet-draw's readableArea() throws ("type is not defined") on
         // Leaflet 1.9.x when the rectangle tooltip tries to show area, so
         // this stays off - see https://github.com/Leaflet/Leaflet.draw/issues/1026
         rectangle: isPolyline ? false : { showArea: false },
-        polyline: isPolyline ? { showLength: false } : false,
+        polyline: isPolyline ? { showLength: false, repeatMode } : false,
         circle: false,
         circlemarker: false,
         marker: false,
@@ -144,7 +144,53 @@ function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn }) {
         controlRef.current = null;
       }
     };
-  }, [enabled, shapeType, map]);
+  }, [enabled, shapeType, repeatMode, map]);
+
+  return null;
+}
+
+// Persistent ruler results: each finished distance line or area polygon
+// (see App.jsx's measurements state, built in geoMeasure.js) stays drawn on
+// the map with its computed length/area labeled at its midpoint/centroid,
+// so several anomaly-zone measurements can sit on screen together for
+// comparison rather than disappearing after each draw.
+function MeasureLayer({ measurements }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    for (const m of measurements || []) {
+      let anchor;
+      if (m.type === "distance") {
+        const line = L.polyline(m.latlngs, { color: "#dc2626", weight: 3 });
+        group.addLayer(line);
+        anchor = m.latlngs[Math.floor(m.latlngs.length / 2)];
+      } else {
+        const poly = L.polygon(m.latlngs, { color: "#7c3aed", weight: 2, fillColor: "#7c3aed", fillOpacity: 0.12 });
+        group.addLayer(poly);
+        anchor = poly.getBounds().getCenter();
+      }
+      const color = m.type === "distance" ? "#dc2626" : "#7c3aed";
+      const icon = L.divIcon({
+        className: "measure-value-label",
+        html:
+          `<div style="background:${color};color:white;font-size:11px;font-weight:700;padding:2px 6px;` +
+          `border-radius:4px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);transform:translate(-50%,-50%);">` +
+          `${m.label}: ${m.valueText}</div>`,
+        iconSize: [0, 0],
+      });
+      group.addLayer(L.marker(anchor, { icon, interactive: false }));
+    }
+  }, [measurements]);
 
   return null;
 }
@@ -331,9 +377,39 @@ function TargetDetectionLayer({ targets }) {
   return null;
 }
 
+// What Project.sample_overlay_value's "label" field (the base value field
+// or the active transform key) actually reads out as: a short Korean name
+// to disambiguate what's pinned, and the physical unit of that quantity -
+// most transforms are still nT, but the derivative-based ones are not
+// (nT/m, nT/m²) and tilt/theta are angles (°), so a bare "nT" suffix on
+// every pin would misrepresent them. Mirrors the transform button labels
+// in WorkflowSteps.jsx.
+const OVERLAY_VALUE_INFO = {
+  anomaly: { name: "자력 이상", unit: "nT" },
+  tmi: { name: "TMI", unit: "nT" },
+  rtp: { name: "RTP", unit: "nT" },
+  rte: { name: "RTE", unit: "nT" },
+  "1vd": { name: "1VD", unit: "nT/m" },
+  "2vd": { name: "2VD", unit: "nT/m²" },
+  as: { name: "AS", unit: "nT/m" },
+  thdr: { name: "THDR", unit: "nT/m" },
+  tilt: { name: "틸트각", unit: "°" },
+  theta: { name: "세타맵", unit: "°" },
+  dx: { name: "dX", unit: "nT/m" },
+  dy: { name: "dY", unit: "nT/m" },
+  dxx: { name: "dXX", unit: "nT/m²" },
+  dyy: { name: "dYY", unit: "nT/m²" },
+  dxy: { name: "dXY", unit: "nT/m²" },
+  dxz: { name: "dXZ", unit: "nT/m²" },
+  dyz: { name: "dYZ", unit: "nT/m²" },
+  upward_continuation: { name: "상방연속", unit: "nT" },
+  detrend: { name: "추세면제거", unit: "nT" },
+  microlevel: { name: "마이크로레벨링", unit: "nT" },
+};
+
 // Click-to-inspect: while active, every map click samples the currently
 // displayed grid/derivative overlay at that exact point (bilinear
-// interpolation - see Project.sample_overlay_value) and pins the nT value
+// interpolation - see Project.sample_overlay_value) and pins the value
 // right there, so several points can be read and compared at once without
 // leaving the map. Points accumulate until the toggle button is switched
 // off, which clears them (see App.jsx's inspectPoints state).
@@ -366,7 +442,8 @@ function InspectLayer({ active, points, onPointClick }) {
     group.clearLayers();
     for (const p of points || []) {
       const hasValue = p.in_bounds && p.value_nt != null;
-      const text = hasValue ? `${p.value_nt.toFixed(1)} nT` : "자료 없음";
+      const info = OVERLAY_VALUE_INFO[p.label] || { name: p.label || "", unit: "nT" };
+      const text = hasValue ? `${info.name}: ${p.value_nt.toFixed(2)} ${info.unit}` : `${info.name}: 자료 없음`;
       const icon = L.divIcon({
         className: "inspect-value-label",
         html:
@@ -422,6 +499,9 @@ export default function MapView({
   inspectMode,
   inspectPoints,
   onInspectClick,
+  measureMode,
+  measurements,
+  onMeasureShapeDrawn,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -496,7 +576,14 @@ export default function MapView({
       {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
 
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
+      <DrawControl
+        enabled={!!measureMode}
+        shapeType={measureMode === "distance" ? "polyline" : "polygon"}
+        onShapeDrawn={onMeasureShapeDrawn}
+        repeatMode
+      />
       <InspectLayer active={inspectMode} points={inspectPoints} onPointClick={onInspectClick} />
+      <MeasureLayer measurements={measurements} />
       <ScaleControl position="bottomright" imperial={false} />
       <NorthArrow />
     </MapContainer>

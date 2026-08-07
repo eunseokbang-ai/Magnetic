@@ -13,6 +13,7 @@ import LineProfileView from "./components/LineProfileView";
 import BaseStationView from "./components/BaseStationView";
 import NearestIntermagnetComparisonView from "./components/NearestIntermagnetComparisonView";
 import OfflineMapPanel from "./components/OfflineMapPanel";
+import { pathLength, polygonArea, formatDistance, formatArea } from "./geoMeasure";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
 // needs it, and most sessions never open it, so it's split into its own
@@ -148,6 +149,9 @@ export default function App() {
   const [hoverPoint, setHoverPoint] = useState(null);
   const [drawMode, setDrawMode] = useState(false);
   const [drawAction, setDrawAction] = useState("exclude");
+  const [measureMode, setMeasureMode] = useState(null); // null | "distance" | "area"
+  const [measurements, setMeasurements] = useState([]);
+  const measureCounterRef = useRef({ distance: 0, area: 0 });
   // 이착륙 램프 구간(이륙->측선시작, 측선종료->착륙)은 기본적으로 편집 화면에서
   // 숨기고 제외/복원 드로잉의 영향도 받지 않도록 보호한다 - 켜면 다시 보이고
   // 편집도 가능해진다 (backend: ManualExcludeRequest.include_ramp).
@@ -1275,7 +1279,10 @@ export default function App() {
     }
   };
 
-  const handleToggleSectionDrawMode = () => setSectionDrawMode((v) => !v);
+  const handleToggleSectionDrawMode = () => {
+    setMeasureMode(null);
+    setSectionDrawMode((v) => !v);
+  };
 
   const handleSectionPathDrawn = async (latlngCoords) => {
     setSectionDrawMode(false);
@@ -1322,6 +1329,44 @@ export default function App() {
     } else {
       handleShapeDrawn(coords);
     }
+  };
+
+  // 거리/면적 측정 - 다른 그리기 모드(측선 제외, 스무딩 영역, 단면 프로파일)와
+  // 동시에 켜져 있으면 지도 위에 두 개의 그리기 컨트롤이 겹쳐 혼란스러우므로
+  // 서로 배타적으로 켭니다.
+  const toggleMeasureMode = (mode) => {
+    setMeasureMode((current) => (current === mode ? null : mode));
+    setDrawMode(false);
+    setSmoothDrawMode(false);
+    setSectionDrawMode(false);
+  };
+
+  const handleMeasureShapeDrawn = (coords) => {
+    const latlngs = coords.map(([lat, lng]) => ({ lat, lng }));
+    if (measureMode === "distance") {
+      measureCounterRef.current.distance += 1;
+      const value = pathLength(latlngs);
+      setMeasurements((prev) => [
+        ...prev,
+        { id: `d${Date.now()}${Math.random()}`, type: "distance", latlngs, label: `거리 ${measureCounterRef.current.distance}`, valueText: formatDistance(value) },
+      ]);
+    } else if (measureMode === "area") {
+      measureCounterRef.current.area += 1;
+      const value = polygonArea(latlngs);
+      setMeasurements((prev) => [
+        ...prev,
+        { id: `a${Date.now()}${Math.random()}`, type: "area", latlngs, label: `면적 ${measureCounterRef.current.area}`, valueText: formatArea(value) },
+      ]);
+    }
+  };
+
+  const handleRemoveMeasurement = (id) => {
+    setMeasurements((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  const handleClearMeasurements = () => {
+    setMeasurements([]);
+    measureCounterRef.current = { distance: 0, area: 0 };
   };
 
   const handleOpenVolume = async () => {
@@ -1685,6 +1730,9 @@ export default function App() {
           inspectMode={inspectMode}
           inspectPoints={inspectPoints}
           onInspectClick={handleInspectClick}
+          measureMode={measureMode}
+          measurements={measurements}
+          onMeasureShapeDrawn={handleMeasureShapeDrawn}
         />
         {volumeData && (
           <Suspense
@@ -1750,11 +1798,13 @@ export default function App() {
           onSetDrawAction={setDrawAction}
           onToggleDrawMode={() => {
             setSmoothDrawMode(false);
+            setMeasureMode(null);
             setDrawMode((v) => !v);
           }}
           smoothDrawMode={smoothDrawMode}
           onToggleSmoothDrawMode={() => {
             setDrawMode(false);
+            setMeasureMode(null);
             setSmoothDrawMode((v) => !v);
           }}
           smoothing={smoothing}
@@ -1950,6 +2000,80 @@ export default function App() {
           loading={tileLoading}
           error={tileError}
         />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>17. 거리/면적 측정</h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={() => toggleMeasureMode("distance")}
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: `1px solid ${measureMode === "distance" ? "#dc2626" : "#d1d5db"}`,
+                background: measureMode === "distance" ? "#dc2626" : "white",
+                color: measureMode === "distance" ? "white" : "#374151",
+                cursor: "pointer",
+              }}
+              title="지도를 클릭해 선을 그리면(더블클릭으로 종료) 그 경로의 총 거리를 계산해 표시합니다. 이상대 길이 등을 잴 때 사용하세요. 계속 여러 선을 그릴 수 있고, 버튼을 다시 누르면 그리기 모드만 꺼집니다(측정 결과는 남습니다)."
+            >
+              {measureMode === "distance" ? "거리 측정 중 (다시 누르면 종료)" : "거리 측정"}
+            </button>
+            <button
+              onClick={() => toggleMeasureMode("area")}
+              style={{
+                flex: 1,
+                padding: "6px 8px",
+                fontSize: 12,
+                borderRadius: 6,
+                border: `1px solid ${measureMode === "area" ? "#7c3aed" : "#d1d5db"}`,
+                background: measureMode === "area" ? "#7c3aed" : "white",
+                color: measureMode === "area" ? "white" : "#374151",
+                cursor: "pointer",
+              }}
+              title="지도를 클릭해 다각형을 그리면(더블클릭 또는 시작점 클릭으로 종료) 그 영역의 면적을 계산해 표시합니다. 이상대 면적 등을 잴 때 사용하세요. 계속 여러 영역을 그릴 수 있고, 버튼을 다시 누르면 그리기 모드만 꺼집니다(측정 결과는 남습니다)."
+            >
+              {measureMode === "area" ? "면적 측정 중 (다시 누르면 종료)" : "면적 측정"}
+            </button>
+          </div>
+          {measurements.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {measurements.map((m) => (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    fontSize: 12,
+                    background: "white",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 6,
+                    padding: "4px 8px",
+                  }}
+                >
+                  <span>
+                    {m.label}: {m.valueText}
+                  </span>
+                  <button
+                    onClick={() => handleRemoveMeasurement(m.id)}
+                    style={{ border: "none", background: "transparent", color: "#9ca3af", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+                    title="이 측정 삭제"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={handleClearMeasurements}
+                style={{ alignSelf: "flex-start", fontSize: 11, color: "#6b7280", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+              >
+                전체 지우기
+              </button>
+            </div>
+          )}
+        </div>
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>범례</h2>
         <Legend
