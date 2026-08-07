@@ -191,7 +191,7 @@ export default function WorkflowSteps({
         <div style={{ ...sectionStyle, padding: 10, background: "#fef2f2", color: "#dc2626", fontSize: 12 }}>{error}</div>
       )}
 
-      <details style={sectionStyle} open>
+      <details id="wf-section-drone" style={sectionStyle} open>
         <summary style={summaryStyle}>1. 드론 자력자료 업로드</summary>
         <div style={bodyStyle}>
           <input
@@ -236,7 +236,7 @@ export default function WorkflowSteps({
         </div>
       </details>
 
-      <details style={sectionStyle} open>
+      <details id="wf-section-base" style={sectionStyle} open>
         <summary style={summaryStyle}>2. 베이스(일변화) 자료 업로드</summary>
         <div style={bodyStyle}>
           <label style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 8px" }}>
@@ -490,7 +490,7 @@ export default function WorkflowSteps({
         </div>
       </details>
 
-      <details style={sectionStyle} open>
+      <details id="wf-section-process" style={sectionStyle} open>
         <summary style={summaryStyle}>3~5. 필터 · 측선판별 · 보정</summary>
         <div style={bodyStyle}>
           <Field label="필터 종류">
@@ -932,7 +932,7 @@ export default function WorkflowSteps({
         </div>
       </details>
 
-      <details style={sectionStyle}>
+      <details id="wf-section-grid" style={sectionStyle}>
         <summary style={summaryStyle}>9. 그리딩</summary>
         <div style={bodyStyle}>
           <Field label="셀 크기 (m)">

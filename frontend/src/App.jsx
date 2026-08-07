@@ -286,6 +286,12 @@ export default function App() {
   const [multiscaleResult, setMultiscaleResult] = useState(null);
   const [multiscaleError, setMultiscaleError] = useState(null);
   const [showMultiscaleLayer, setShowMultiscaleLayer] = useState(true);
+  // GuidelinePanel (and its lazy-loaded plotly chunk, ~4.4MB) must not mount
+  // until this accordion section is actually opened - <details> only hides
+  // its children visually, React still mounts them on first render, so a
+  // lazy()+Suspense component sitting directly inside an always-rendered
+  // <details> fetches its chunk immediately regardless of open/closed state.
+  const [guidelinePanelOpened, setGuidelinePanelOpened] = useState(false);
 
   const [chatMessages, setChatMessages] = useState([]);
   const [chatSending, setChatSending] = useState(false);
@@ -1321,6 +1327,25 @@ export default function App() {
     }
   };
 
+  // Lets the WorkflowProgress checklist double as navigation in the long
+  // (17-section) accordion sidebar: clicking a step opens its <details>
+  // and its sidebar (drone/base/process/grid live in the left panel,
+  // the advanced step in the right one) and scrolls it into view, instead
+  // of the checklist being purely informational and leaving the user to
+  // hunt for the matching section themselves.
+  const handleWorkflowStepClick = (sectionId) => {
+    if (!sectionId) return;
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    if (typeof el.open === "boolean") el.open = true;
+    if (sectionId === "wf-section-advanced") {
+      setRightSidebarOpen(true);
+    } else {
+      setLeftSidebarOpen(true);
+    }
+    requestAnimationFrame(() => el.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
+
   const handleMapShapeDrawn = (coords) => {
     if (sectionDrawMode) {
       handleSectionPathDrawn(coords);
@@ -1522,6 +1547,7 @@ export default function App() {
           overlay={overlay}
           inversionSummary={inversionSummary}
           eulerResult={eulerResult}
+          onStepClick={handleWorkflowStepClick}
         />
         <input
           type="text"
@@ -1854,7 +1880,7 @@ export default function App() {
           onPickTileFolder={handlePickTileFolder}
         />
 
-        <details open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>
+        <details id="wf-section-advanced" open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>
           <summary style={{ fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "4px 0" }}>
             13~14. 광물자원탐사용 고급 분석 (3차원 역산 · 오일러 디컨볼루션){purposeMode === "target" && " — 근지표 표적탐지에는 보통 불필요"}
           </summary>
@@ -1920,10 +1946,11 @@ export default function App() {
           />
         </details>
 
-        <details style={{ marginBottom: 10 }}>
+        <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>
           <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}>
             15. UAV 자력탐사 가이드라인 진단 도구 (반복측선 · 파워스펙트럼/노치필터 · 멀티스케일 엣지)
           </summary>
+          {guidelinePanelOpened && (
           <Suspense fallback={<div style={{ fontSize: 12, color: "#6b7280", padding: 8 }}>불러오는 중...</div>}>
           <GuidelinePanel
             ready={!!processSummary}
@@ -1964,6 +1991,7 @@ export default function App() {
             }}
           />
           </Suspense>
+          )}
         </details>
 
         <details open={purposeMode === "target"} style={{ marginBottom: 4 }}>
