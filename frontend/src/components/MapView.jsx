@@ -652,7 +652,14 @@ export default function MapView({
           )
         )}
 
-      {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
+      {overlay && (
+        <ImageOverlay
+          url={overlay.image_data_url}
+          bounds={overlay.bounds}
+          opacity={gridOpacity}
+          className="grid-overlay-crisp"
+        />
+      )}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}
 
       <PointLayer

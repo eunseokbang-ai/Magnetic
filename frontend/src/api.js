@@ -299,6 +299,13 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+// Purely client-side (no backend round-trip needed - the data is already
+// in frontend state) - used for the display-boundary polygon so it can be
+// saved to a file and re-loaded later or reused across projects.
+export function downloadJson(data, filename) {
+  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), filename);
+}
+
 export async function exportGridGeotiff(projectId, req, filename) {
   const blob = await requestBlob(`/projects/${projectId}/grid/geotiff`, { method: "POST", body: JSON.stringify(req) });
   downloadBlob(blob, filename);

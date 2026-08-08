@@ -18,6 +18,23 @@ body {
   overflow: hidden;
 }
 
+/* The grid/derivative overlay image is a direct 1:1 render of the
+   underlying grid array (one PNG pixel = one grid cell, see
+   processing/render.py::grid_to_png_overlay) - it is usually displayed at
+   a browser zoom far above its native resolution (a handful of grid cells
+   across a whole screen). Without this, the browser's default bilinear
+   image scaling blurs/blends adjacent cells' colors together, which can
+   make an anomaly's visual "hot spot" look smeared or shifted away from
+   its true cell - not an actual data/gridding distortion, just display
+   smoothing. Crisp/pixelated scaling keeps each cell's edge sharp so the
+   displayed color always matches the exact value at that location (e.g.
+   what the "지점값 확인" click-to-inspect tool reports there). */
+.grid-overlay-crisp {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
 /* Responsive layout: below 900px the left/right panels become
    off-canvas slide-over drawers instead of a fixed 3-column layout, so
    the map keeps usable width on tablets/small laptop windows. Desktop

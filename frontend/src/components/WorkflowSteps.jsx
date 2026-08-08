@@ -146,6 +146,8 @@ export default function WorkflowSteps({
   onToggleBoundaryMode,
   boundaryPolygon,
   onClearBoundary,
+  onExportBoundary,
+  onImportBoundaryFile,
   inspectMode,
   onToggleInspectMode,
   activeTransform,
@@ -988,6 +990,24 @@ export default function WorkflowSteps({
                   경계 지우기
                 </button>
               )}
+              {boundaryPolygon && (
+                <button style={buttonStyle} onClick={() => onExportBoundary()}>
+                  경계 파일로 저장
+                </button>
+              )}
+              <label style={{ ...buttonStyle, display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+                경계 파일 불러오기
+                <input
+                  type="file"
+                  accept=".json"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) onImportBoundaryFile(file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             </div>
           </Field>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

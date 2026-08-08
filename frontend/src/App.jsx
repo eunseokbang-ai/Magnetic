@@ -764,6 +764,32 @@ export default function App() {
     }
   };
 
+  // Lets a boundary drawn once be reused later - on a re-processed version
+  // of the same survey, or on an entirely different project covering the
+  // same physical area - without having to redraw the polygon by hand.
+  const handleExportBoundary = () => {
+    if (!boundaryPolygon) return;
+    api.downloadJson({ polygon: boundaryPolygon }, "boundary.json");
+  };
+
+  const handleImportBoundaryFile = async (file) => {
+    if (!projectId || !file) return;
+    try {
+      setError(null);
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const polygon = Array.isArray(data) ? data : data.polygon;
+      if (!Array.isArray(polygon) || polygon.length < 3) {
+        throw new Error("올바른 경계 파일이 아닙니다 (최소 3개의 [위도, 경도] 좌표 배열이 필요합니다).");
+      }
+      const resp = await api.setDisplayBoundary(projectId, polygon);
+      setBoundaryPolygon(resp.display_boundary_polygon || null);
+      await refreshCurrentOverlay();
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
   const toggleInspectMode = () => {
     setInspectMode((v) => !v);
     setInspectPoints([]);
@@ -1847,6 +1873,8 @@ export default function App() {
           onToggleBoundaryMode={handleToggleBoundaryMode}
           boundaryPolygon={boundaryPolygon}
           onClearBoundary={handleClearBoundary}
+          onExportBoundary={handleExportBoundary}
+          onImportBoundaryFile={handleImportBoundaryFile}
           inspectMode={inspectMode}
           onToggleInspectMode={toggleInspectMode}
           activeTransform={activeTransform}
