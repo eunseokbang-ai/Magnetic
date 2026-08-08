@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import pathlib
+import subprocess
 from datetime import date, timedelta
 
 import orjson
@@ -58,6 +59,43 @@ app.add_middleware(
 # JSON - at ~20MB payloads that is 1-2s of pure CPU time added to every
 # request, independent of how fast the actual endpoint logic is.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+
+
+def _detect_running_version() -> dict:
+    """Which commit this server process is actually running - computed
+    once at startup (not per-request) since the answer can't change until
+    the process is restarted. Exists because "이미 고친 버그가 여전히
+    재현된다"는 제보가 실제로는 run.bat이 최신 커밋을 받아오지 못했거나
+    (git pull 실패/충돌) 빌드가 새로 되지 않은 채 예전 버전이 계속 실행
+    중인 경우로 여러 차례 밝혀졌다 - 사용자가 화면에서 직접 커밋 해시를
+    확인해 "정말 최신 버전을 실행 중인지"를 스스로 판단할 수 있게 한다."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=pathlib.Path(__file__).resolve().parent,
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        commit_date = subprocess.run(
+            ["git", "log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M"],
+            cwd=pathlib.Path(__file__).resolve().parent,
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=pathlib.Path(__file__).resolve().parent,
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        return {"commit": commit, "commit_date": commit_date, "branch": branch}
+    except Exception:
+        return {"commit": None, "commit_date": None, "branch": None}
+
+
+_RUNNING_VERSION = _detect_running_version()
+
+
+@app.get("/api/version")
+def get_version():
+    return _RUNNING_VERSION
 
 
 @app.exception_handler(ProjectError)

@@ -387,3 +387,11 @@ export function loadProject(projectId, file) {
   form.append("file", file);
   return request(`/projects/${projectId}/load`, { method: "POST", body: form });
 }
+
+// Which commit the connected backend is actually running - lets the UI
+// show this directly, since "이미 고친 버그가 재현된다" reports have
+// repeatedly turned out to be a stale run.bat build rather than a real
+// regression (see main.py::_detect_running_version).
+export function getVersion() {
+  return request("/version");
+}

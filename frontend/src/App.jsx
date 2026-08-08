@@ -148,6 +148,10 @@ const DEFAULT_PARAMS = {
 };
 
 export default function App() {
+  const [backendVersion, setBackendVersion] = useState(null);
+  useEffect(() => {
+    api.getVersion().then(setBackendVersion).catch(() => setBackendVersion(null));
+  }, []);
   const [projectId, setProjectId] = useState(null);
   const [droneSummary, setDroneSummary] = useState(null);
   const [baseSummary, setBaseSummary] = useState(null);
@@ -1691,7 +1695,13 @@ export default function App() {
         className={`app-sidebar-left${leftSidebarOpen ? " open" : ""}`}
         style={{ width: 320, borderRight: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
       >
-        <h1 style={{ fontSize: 16, margin: "4px 0 12px 0" }}>드론 자력탐사 자료 처리</h1>
+        <h1 style={{ fontSize: 16, margin: "4px 0 2px 0" }}>드론 자력탐사 자료 처리</h1>
+        <div
+          style={{ fontSize: 10, color: "#9ca3af", margin: "0 0 12px 0" }}
+          title="이 화면이 백엔드 서버로부터 실제로 받은 버전 정보입니다 - '분명히 고쳐달라고 한 문제가 그대로'라면 run.bat을 다시 실행해 이 커밋 해시가 바뀌는지부터 확인하세요"
+        >
+          {backendVersion?.commit ? `버전: ${backendVersion.commit} (${backendVersion.commit_date})` : ""}
+        </div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           <button
             style={{
@@ -1933,7 +1943,7 @@ export default function App() {
         </div>
         <MapView
           points={editablePoints}
-          colorRange={colorRange}
+          colorRange={legendRange}
           cmapName={cmapName}
           overlay={overlay}
           gridOpacity={gridOpacity}
