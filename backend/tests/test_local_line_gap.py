@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.gridding import _local_line_gap_m, grid_points
+from app.processing.gridding import _local_line_gap_m, _local_line_gap_m_exact, grid_points
 
 
 def _three_line_survey():
@@ -92,3 +92,57 @@ def test_grid_points_single_line_auto_mode_falls_back_without_crashing():
     # falls back to the flat 2*cell_size_m behavior - should still produce
     # a narrow filled band along the single line, not crash or mask everything
     assert np.isfinite(result.values).any()
+
+
+def _two_line_asymmetric_survey():
+    # Line A: full length along y=0, x in [0, 50]. Line B: much shorter,
+    # along y=50, x in [0, 20] only - so the *rectangular bounding box*
+    # (x:[0,50], y:[0,50]) has an empty corner near (50, 50) that lies well
+    # outside the *actual* convex hull of the survey
+    # ((0,0)-(50,0)-(20,50)-(0,50)). This is exactly the shape that
+    # triggered the unbounded triangular-fan extrapolation bug: near that
+    # corner, the two nearest distinct lines are both far away and roughly
+    # comparably distant, so local_gap grows with distance from the survey
+    # instead of staying bounded.
+    xa = np.arange(0, 51, 1.0)
+    xb = np.arange(0, 21, 1.0)
+    x = np.concatenate([xa, xb])
+    y = np.concatenate([np.zeros_like(xa), np.full_like(xb, 50.0)])
+    line_id = np.concatenate([np.zeros(len(xa)), np.ones(len(xb))])
+    values = np.full(len(x), 100.0)
+    return x, y, values, line_id
+
+
+def test_hull_cap_prevents_unbounded_fan_extrapolation_past_line_endpoints():
+    x, y, values, line_id = _two_line_asymmetric_survey()
+    result = grid_points(x, y, values, 1.0, method="nearest", max_distance_m=None, line_id=line_id)
+
+    def value_at(target_x, target_y):
+        col = int(np.argmin(np.abs(result.easting - target_x)))
+        row = int(np.argmin(np.abs(result.northing - target_y)))
+        return result.values[row, col]
+
+    # The empty corner near (50, 50) sits inside the rectangular bounding
+    # box but well outside the true survey footprint - must stay NaN no
+    # matter what the local-gap heuristic alone computes there.
+    assert np.isnan(value_at(48.0, 48.0))
+
+    # A point that legitimately sits inside the surveyed footprint (between
+    # the two lines, over x where both lines exist) must still be filled -
+    # the hull cap must not regress ordinary interior gap-filling.
+    assert not np.isnan(value_at(10.0, 25.0))
+
+
+def test_local_line_gap_downsampled_path_tracks_the_exact_computation():
+    x, y, values, line_id = _three_line_survey()
+    xs = np.linspace(0, 49, 90)  # 90x90 = 8100 cells, above the downsample threshold
+    grid_x, grid_y = np.meshgrid(xs, xs)
+
+    exact = _local_line_gap_m_exact(grid_x, grid_y, x, y, line_id, np.unique(line_id))
+    approx = _local_line_gap_m(grid_x, grid_y, x, y, line_id)
+
+    assert approx is not None
+    assert approx.shape == exact.shape
+    # local_gap is a smooth, spacing-scale quantity - the coarse-grid +
+    # upsample approximation should track it closely, not exactly.
+    assert np.nanmean(np.abs(approx - exact)) < 2.0

@@ -24,6 +24,16 @@ _MAX_SPLINE_CONTROL_POINTS = 3000
 # that silently takes minutes.
 _MAX_GRID_CELLS = 3_000_000
 
+# How far (in cells) auto-mode is allowed to extrapolate past the convex
+# hull of the actual survey points - see _hull_extrapolation_mask.
+_HULL_BUFFER_CELLS = 2.0
+
+# _local_line_gap_m's per-line cKDTree query is the dominant cost of auto
+# masking on a fine/large grid; below this cell count a single exact pass
+# is already fast enough that the downsampling machinery isn't worth it.
+_LOCAL_GAP_DOWNSAMPLE_MIN_CELLS = 4000
+_LOCAL_GAP_DOWNSAMPLE_FACTOR = 4.0
+
 
 @dataclass
 class GridResult:
@@ -129,6 +139,13 @@ def grid_points(
     average still get filled correctly instead of leaving a gap in the
     middle of an otherwise-covered block. Falls back to a flat 2 cells
     when line_id isn't given (or there's only one line), same as before.
+    In auto mode, cells are additionally never filled more than
+    _HULL_BUFFER_CELLS cells past the convex hull of the actual survey
+    points regardless of what the local-gap heuristic computes there (see
+    _hull_extrapolation_mask) - the local-gap distance is unbounded far
+    outside the hull (both "nearest" lines become roughly equidistant,
+    growing with distance from the survey), so without this cap auto mode
+    extrapolates without limit in a triangular fan past line endpoints.
 
     line_id + along_line_smooth_wavelength_m: if both are given, each
     line's values are along-line low-passed (see _along_line_lowpass)
@@ -219,9 +236,15 @@ def grid_points(
             max_distance_grid = np.maximum(2.0 * cell_size_m, 0.6 * local_gap)
         else:
             max_distance_grid = 2.0 * cell_size_m
+        # Hard cap, independent of the heuristic above: never extrapolate
+        # past the actual survey footprint (+ a couple of cells of slack)
+        # - see _hull_extrapolation_mask docstring for why local_gap alone
+        # doesn't bound this.
+        hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, _HULL_BUFFER_CELLS * cell_size_m)
     else:
         max_distance_grid = max_distance_m
-    grid_values = np.where(tree_dist <= max_distance_grid, grid_values, np.nan)
+        hull_mask = True
+    grid_values = np.where((tree_dist <= max_distance_grid) & hull_mask, grid_values, np.nan)
 
     return GridResult(
         values=grid_values,
@@ -238,6 +261,37 @@ def _nearest_distance(grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray,
     tree = cKDTree(np.column_stack([pts_x, pts_y]))
     dist, _ = tree.query(np.column_stack([grid_x.ravel(), grid_y.ravel()]))
     return dist.reshape(grid_x.shape)
+
+
+def _hull_extrapolation_mask(
+    grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray, pts_y: np.ndarray, buffer_m: float
+) -> np.ndarray:
+    """Boolean mask, True for grid cells within buffer_m of the convex hull
+    of the actual survey points.
+
+    This is the hard cap that keeps auto-mode masking bounded: the
+    local-gap heuristic in _local_line_gap_m has no upper limit for a
+    query point beyond a flight line's endpoint (its two nearest distinct
+    lines end up roughly equidistant, both growing proportionally with how
+    far outside the survey the point is, so the "60% of local gap"
+    threshold never actually excludes it) - which without this cap
+    produces unbounded triangular extrapolation fans radiating outward
+    past line endpoints/corners. Bounding fill to the convex hull (plus a
+    couple of cells of slack) is the same constraint Oasis
+    Montaj/Surfer/ArcGIS-style grid engines apply by default, and it does
+    not affect the actual Phase-4 gap-filling use case (filling real gaps
+    *between* lines) since those gaps already lie inside the hull.
+
+    buffer_m works via shapely's buffer() regardless of point-set shape
+    (degenerate/collinear point sets still produce a valid buffered
+    polygon - a "stadium" shape around a line, or a circle around a single
+    point - rather than needing special-casing here).
+    """
+    from shapely import contains_xy
+    from shapely.geometry import MultiPoint
+
+    hull = MultiPoint(np.column_stack([pts_x, pts_y])).convex_hull.buffer(buffer_m)
+    return contains_xy(hull, grid_x.ravel(), grid_y.ravel()).reshape(grid_x.shape)
 
 
 def _local_line_gap_m(
@@ -257,12 +311,38 @@ def _local_line_gap_m(
     actual line, so it tracks the true local gap instead of one constant
     everywhere. Returns None if there are fewer than 2 distinct lines (no
     "spacing between lines" is defined with only one).
-    """
-    from scipy.spatial import cKDTree
 
+    On a large/fine grid with many lines, computing this exactly (a
+    separate cKDTree query per line, over every single grid cell) is the
+    dominant cost of auto masking. local_gap is a spacing-scale quantity
+    that varies smoothly over the survey, not per-cell detail, so above
+    _LOCAL_GAP_DOWNSAMPLE_MIN_CELLS it's computed on a coarser grid
+    (_LOCAL_GAP_DOWNSAMPLE_FACTOR cells per axis) and upsampled back to
+    full resolution instead, cutting the per-line query cost by roughly
+    _LOCAL_GAP_DOWNSAMPLE_FACTOR**2 with no visible change in the result.
+    """
     lines = np.unique(line_id)
     if len(lines) < 2:
         return None
+
+    ny, nx = grid_x.shape
+    if ny * nx <= _LOCAL_GAP_DOWNSAMPLE_MIN_CELLS:
+        return _local_line_gap_m_exact(grid_x, grid_y, pts_x, pts_y, line_id, lines)
+
+    coarse_ny = max(2, int(round(ny / _LOCAL_GAP_DOWNSAMPLE_FACTOR)))
+    coarse_nx = max(2, int(round(nx / _LOCAL_GAP_DOWNSAMPLE_FACTOR)))
+    coarse_x = np.linspace(grid_x[0, 0], grid_x[0, -1], coarse_nx)
+    coarse_y = np.linspace(grid_y[0, 0], grid_y[-1, 0], coarse_ny)
+    coarse_xx, coarse_yy = np.meshgrid(coarse_x, coarse_y)
+    coarse_gap = _local_line_gap_m_exact(coarse_xx, coarse_yy, pts_x, pts_y, line_id, lines)
+    return _upsample_to_shape(coarse_gap, (ny, nx))
+
+
+def _local_line_gap_m_exact(
+    grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray, pts_y: np.ndarray, line_id: np.ndarray, lines: np.ndarray
+) -> np.ndarray:
+    from scipy.spatial import cKDTree
+
     query_pts = np.column_stack([grid_x.ravel(), grid_y.ravel()])
     per_line_dist = np.empty((len(lines), query_pts.shape[0]))
     for i, lid in enumerate(lines):
