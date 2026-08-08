@@ -59,6 +59,16 @@ def _nth_difference_rms(values: np.ndarray, n: int) -> tuple[float, float]:
     return float(np.sqrt(np.mean(finite**2))), float(np.max(np.abs(finite)))
 
 
+def normalized_4th_difference_rms(values: np.ndarray) -> float:
+    """Public entry point to _nth_difference_rms's noise-level estimate
+    (see module docstring) for callers that just need a single line's own
+    quality number rather than the full per-line/overall QC report below -
+    e.g. processing/duplicate_lines.py, comparing two repeat-flown passes
+    over the same track to decide which is the better-quality one to keep."""
+    rms, _max_abs = _nth_difference_rms(values, 4)
+    return rms
+
+
 def compute_difference_qc(df: pd.DataFrame, value_col: str, line_id_col: str = "line_id") -> dict:
     """Per-line and overall normalised 4th/8th difference noise QC,
     computed on `value_col` (a production magnetics channel, e.g. the

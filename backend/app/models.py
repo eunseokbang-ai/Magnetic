@@ -125,6 +125,27 @@ class NoiseQcParams(BaseModel):
     enabled: bool = True
 
 
+class DuplicateLineParams(BaseModel):
+    # Detects lines re-flown over (almost exactly) the same physical track
+    # within the main survey itself - e.g. a reflight after a bad first
+    # pass, or an accidental repeat - and keeps only the better-quality
+    # pass (by the same normalised 4th-difference noise metric as
+    # noise_qc.py) over the overlapping stretch, excluding the worse one's
+    # points there instead of letting gridding blend or arbitrarily pick
+    # between a good pass and a noisy one. See processing/duplicate_lines.py.
+    # Off by default - most surveys have no repeat-flown lines, and the
+    # detection is deliberately tight (must be near-exactly the same track,
+    # not just the next line over) but still a judgment call worth opting
+    # into rather than applying silently.
+    enabled: bool = False
+    # How close (perpendicular to the shared track direction) two lines'
+    # centroids must be to count as the same physical track, not just
+    # adjacent survey lines - see processing/duplicate_lines.py's module
+    # docstring for why this is much tighter than repeatability.py's.
+    perp_tolerance_m: float = Field(8.0, gt=0)
+    angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
+
+
 class CrossoverLevelingParams(BaseModel):
     # Off by default - tie lines aren't always flown, and this only does
     # anything useful when perpendicular calibration lines are present in
@@ -187,6 +208,7 @@ class ProcessParams(BaseModel):
     base_qc_params: BaseQCParams = BaseQCParams()
     sway_detection: SwayDetectionParams = SwayDetectionParams()
     heading_effect_calibration: HeadingEffectCalibrationParams = HeadingEffectCalibrationParams()
+    duplicate_line_params: DuplicateLineParams = DuplicateLineParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()

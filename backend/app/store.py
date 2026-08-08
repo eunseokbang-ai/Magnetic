@@ -91,6 +91,7 @@ from .processing.heading_calibration import (
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.report import generate_report_markdown
 from .processing.sway import detect_sway
+from .processing.duplicate_lines import resolve_duplicate_lines
 from .processing.render import (
     grid_to_geotiff_bytes,
     grid_to_geotiff_bytes_colored,
@@ -208,6 +209,7 @@ class Project:
     diurnal_info: dict | None = None
     despike_info: dict | None = None
     sway_info: dict | None = None
+    duplicate_line_info: dict | None = None
     calibration_raw: pd.DataFrame | None = None
     heading_calibration_info: dict | None = None
     crossover_info: dict | None = None
@@ -658,6 +660,32 @@ class Project:
         else:
             self.sway_info = {"enabled": False, "available": False, "n_points_excluded": 0}
 
+        dlp = params.duplicate_line_params
+        if dlp.enabled:
+            # Run on "mag_filtered" (matches noise_qc.py's own QC channel -
+            # right after flight-path cleaning, before diurnal/IGRF/leveling,
+            # so which base-station diurnal reference is used can't bias the
+            # quality comparison) and after sway detection (an already-
+            # excluded swinging sample shouldn't count toward either pass's
+            # overlap or quality). Before line_spacing_m below, so a
+            # duplicate pass about to be excluded doesn't skew that
+            # project-wide spacing estimate.
+            self.duplicate_line_info = resolve_duplicate_lines(
+                df, "mag_filtered", perp_tolerance_m=dlp.perp_tolerance_m, angle_tolerance_deg=dlp.angle_tolerance_deg
+            )
+            self.duplicate_line_info["enabled"] = True
+            # Point ids are only needed to apply the exclusion below - kept
+            # out of the stored summary (process_summary/report) so it isn't
+            # carrying a potentially large raw id list around.
+            excluded_ids = set(self.duplicate_line_info.pop("excluded_point_ids"))
+            if excluded_ids:
+                flagged_active = df["point_id"].isin(excluded_ids).to_numpy() & (df["line_id"].to_numpy() >= 0)
+                df.loc[flagged_active, "exclusion_reason"] = "duplicate_repeat_flight"
+                df.loc[flagged_active, "line_id"] = -1
+                self.duplicate_line_info["n_points_excluded"] = int(flagged_active.sum())
+        else:
+            self.duplicate_line_info = {"enabled": False, "available": False, "n_groups": 0, "n_points_excluded": 0, "groups": []}
+
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
         if params.diurnal_params.mode == "assume_constant" and self.base_raw is None:
@@ -1002,6 +1030,7 @@ class Project:
             "base_qc": self.base_qc_info,
             "despike": self.despike_info,
             "sway_detection": self.sway_info,
+            "duplicate_line_resolution": self.duplicate_line_info,
             "heading_effect_calibration": self.heading_calibration_info,
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),

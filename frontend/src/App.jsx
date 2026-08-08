@@ -113,6 +113,11 @@ const DEFAULT_PARAMS = {
     enabled: false,
     threshold_k: 4.0,
   },
+  duplicate_line_params: {
+    enabled: false,
+    perp_tolerance_m: 8.0,
+    angle_tolerance_deg: 15.0,
+  },
   heading_effect_calibration: {
     enabled: false,
     auto_calibrate_from_turns: true,

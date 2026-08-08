@@ -24,112 +24,25 @@ exist) is reported as the heading error, matching the guidelines' Figure
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 import pandas as pd
 
 from .diurnal import apply_diurnal_correction
+from .line_grouping import LinePass, group_passes, line_pass
 from .lines import LineDetectionParams, detect_lines
 
 # Two lines are treated as repeats of the same physical track when their
 # centroids, projected onto the perpendicular of their shared direction,
 # are closer than this - deliberately generous since a repeatability test
 # box is flown by hand/autopilot with some line-to-line drift, not a
-# precision survey.
+# precision survey. (Contrast processing/duplicate_lines.py's much tighter
+# default, for the main survey's own accidental/deliberate re-flown lines
+# rather than a dedicated test box.)
 _SAME_TRACK_PERP_TOLERANCE_M = 10.0
 _SAME_TRACK_ANGLE_TOLERANCE_DEG = 15.0
-_MIN_POINTS_PER_PASS = 10
 
 
-@dataclass
-class _Pass:
-    line_id: int
-    x: np.ndarray  # time-ordered
-    y: np.ndarray  # time-ordered
-    value: np.ndarray  # time-ordered
-    centroid: np.ndarray
-    # The pass's principal spatial axis, canonicalized to a consistent sign
-    # convention (see _canonical_direction) - identical for two passes
-    # along the same physical track regardless of which way either was
-    # flown, which is exactly what's needed to group and spatially align
-    # them. NOT usable on its own to tell forward from reverse - that's
-    # what flight_sign is for.
-    canonical_direction: np.ndarray
-    # +1 if this pass moved (in time) in the same sense as
-    # canonical_direction, -1 if opposite - i.e. actual flight direction,
-    # independent of the arbitrary eigenvector sign PCA returns.
-    flight_sign: int
-
-
-def _canonical_direction(direction: np.ndarray) -> np.ndarray:
-    flip = direction[0] < 0 or (direction[0] == 0 and direction[1] < 0)
-    return -direction if flip else direction
-
-
-def _line_pass(line_id: int, group: pd.DataFrame) -> _Pass | None:
-    ordered = group.sort_values("timestamp")
-    if len(ordered) < _MIN_POINTS_PER_PASS:
-        return None
-    x, y, v = ordered["x"].to_numpy(), ordered["y"].to_numpy(), ordered["value"].to_numpy()
-    pts = np.column_stack([x, y])
-    centroid = pts.mean(axis=0)
-    centered = pts - centroid
-    cov = np.cov(centered, rowvar=False)
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    raw_direction = eigvecs[:, int(np.argmax(eigvals))]
-    canonical_direction = _canonical_direction(raw_direction)
-
-    temporal_displacement = pts[-1] - pts[0]
-    flight_sign = 1 if float(np.dot(temporal_displacement, canonical_direction)) >= 0 else -1
-
-    return _Pass(
-        line_id=line_id, x=x, y=y, value=v, centroid=centroid,
-        canonical_direction=canonical_direction, flight_sign=flight_sign,
-    )
-
-
-def _group_passes(passes: list[_Pass]) -> list[list[_Pass]]:
-    n = len(passes)
-    parent = list(range(n))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    def union(i, j):
-        ri, rj = find(i), find(j)
-        if ri != rj:
-            parent[ri] = rj
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            # Both directions are already canonicalized, so two passes on
-            # the same physical track (regardless of flight direction)
-            # should point the *same* way here - no need to fold the angle.
-            cos_angle = float(np.clip(np.dot(passes[i].canonical_direction, passes[j].canonical_direction), -1.0, 1.0))
-            angle_deg = np.degrees(np.arccos(cos_angle))
-            if angle_deg > _SAME_TRACK_ANGLE_TOLERANCE_DEG:
-                continue
-            avg_dir = passes[i].canonical_direction + passes[j].canonical_direction
-            norm = np.linalg.norm(avg_dir)
-            if norm < 1e-9:
-                continue
-            avg_dir = avg_dir / norm
-            perp = np.array([-avg_dir[1], avg_dir[0]])
-            offset = float(np.dot(passes[j].centroid - passes[i].centroid, perp))
-            if abs(offset) <= _SAME_TRACK_PERP_TOLERANCE_M:
-                union(i, j)
-
-    groups: dict[int, list[_Pass]] = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(passes[i])
-    return [g for g in groups.values() if len(g) >= 2]
-
-
-def _analyze_group(group: list[_Pass]) -> dict:
+def _analyze_group(group: list[LinePass]) -> dict:
     ref_direction = group[0].canonical_direction
     ref_centroid = group[0].centroid
     ref_flight_sign = group[0].flight_sign
@@ -220,7 +133,7 @@ def analyze_repeatability(
 
     line_passes = []
     for lid, group in detected[detected["line_id"] >= 0].groupby("line_id"):
-        p = _line_pass(int(lid), group)
+        p = line_pass(int(lid), group, value_col="value")
         if p is not None:
             line_passes.append(p)
 
@@ -230,7 +143,7 @@ def analyze_repeatability(
             "reason": "반복 통과로 인식할 만한 측선이 2개 미만입니다 (같은 구간을 여러 번 왕복 비행한 자료가 필요합니다).",
         }
 
-    groups = _group_passes(line_passes)
+    groups = group_passes(line_passes, _SAME_TRACK_PERP_TOLERANCE_M, _SAME_TRACK_ANGLE_TOLERANCE_DEG)
     if not groups:
         return {
             "available": False,

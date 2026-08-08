@@ -183,6 +183,9 @@ export default function WorkflowSteps({
   const updateDespike = (key, val) => setProcessParams((p) => ({ ...p, despike_params: { ...p.despike_params, [key]: val } }));
   const swd = processParams.sway_detection;
   const updateSway = (key, val) => setProcessParams((p) => ({ ...p, sway_detection: { ...p.sway_detection, [key]: val } }));
+  const dlp = processParams.duplicate_line_params;
+  const updateDuplicateLine = (key, val) =>
+    setProcessParams((p) => ({ ...p, duplicate_line_params: { ...p.duplicate_line_params, [key]: val } }));
   const hec = processParams.heading_effect_calibration;
   const updateHeadingCal = (key, val) =>
     setProcessParams((p) => ({ ...p, heading_effect_calibration: { ...p.heading_effect_calibration, [key]: val } }));
@@ -645,6 +648,42 @@ export default function WorkflowSteps({
             </Field>
           )}
 
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={dlp.enabled}
+              onChange={(e) => updateDuplicateLine("enabled", e.target.checked)}
+            />
+            <span title="같은 구간을 실수로(또는 재비행으로) 2번 이상 겹치게 비행한 경우, 겹치는 구간에서 자력계 노이즈(4th difference)가 더 낮은(품질이 더 좋은) 측선만 남기고 나머지는 자동으로 제외합니다. 정상적인 측선 간격(보통 수십 m 이상)은 건드리지 않고, 거의 같은 경로(기본 8m 이내)를 다시 비행한 경우만 잡아냅니다.">
+              반복비행 중복 측선 자동 선택 — 같은 경로를 2번 이상 비행했을 때 더 나은 품질의 측선만 사용
+            </span>
+          </label>
+          {dlp.enabled && (
+            <>
+              <Field label="같은 측선으로 판단할 최대 수직 거리 (m) — 이보다 가까운 두 측선만 중복으로 판단">
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.1"
+                  style={inputStyle}
+                  value={dlp.perp_tolerance_m}
+                  onChange={(e) => updateDuplicateLine("perp_tolerance_m", parseFloat(e.target.value))}
+                />
+              </Field>
+              <Field label="같은 측선으로 판단할 최대 방향 차이 (deg)">
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  max="45"
+                  style={inputStyle}
+                  value={dlp.angle_tolerance_deg}
+                  onChange={(e) => updateDuplicateLine("angle_tolerance_deg", parseFloat(e.target.value))}
+                />
+              </Field>
+            </>
+          )}
+
           <Field label="측선 방향 허용오차 (deg)">
             <input type="number" style={inputStyle} value={lp.heading_tolerance_deg} onChange={(e) => updateLine("heading_tolerance_deg", parseFloat(e.target.value))} />
           </Field>
@@ -851,6 +890,19 @@ export default function WorkflowSteps({
               {processSummary.sway_detection?.enabled && processSummary.sway_detection?.available === false && (
                 <>
                   <span style={{ color: "#9ca3af" }}>IMU 흔들림 검출: 원본 파일에 자이로/가속도 데이터 없음 (건너뜀)</span>
+                  <br />
+                </>
+              )}
+              {processSummary.duplicate_line_resolution?.enabled && processSummary.duplicate_line_resolution?.n_groups > 0 && (
+                <>
+                  반복비행 중복 측선 자동 선택: {processSummary.duplicate_line_resolution.n_groups}개 그룹 발견,{" "}
+                  {processSummary.duplicate_line_resolution.n_points_excluded}개 포인트 제외 (품질이 더 낮은 측선)
+                  <br />
+                </>
+              )}
+              {processSummary.duplicate_line_resolution?.enabled && processSummary.duplicate_line_resolution?.n_groups === 0 && (
+                <>
+                  <span style={{ color: "#9ca3af" }}>반복비행 중복 측선 자동 선택: 중복으로 판단되는 측선 없음</span>
                   <br />
                 </>
               )}
