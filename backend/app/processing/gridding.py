@@ -117,12 +117,18 @@ def grid_points(
     when you specifically don't want any interpolation to happen).
 
     Cells farther than max_distance_m from any input point are masked to
-    NaN so the grid doesn't extrapolate far beyond the flown lines. The
-    caller should pass a value based on the actual line spacing (see
-    processing.lines.estimate_line_spacing_m) - a plain multiple of
-    cell_size_m is usually far smaller than the gap between adjacent lines
-    and leaves most of the survey block masked out. Defaults to 2 cells
-    when not provided, which only fills a narrow band along each line.
+    NaN so the grid doesn't extrapolate far beyond the flown lines. If
+    max_distance_m is given explicitly, it's used as-is everywhere (a
+    plain multiple of cell_size_m is usually far smaller than the gap
+    between adjacent lines and leaves most of the survey block masked
+    out). If left None (auto) and line_id is provided, the threshold is
+    computed per grid cell instead of as one project-wide constant - 60%
+    of the actual local gap between the two nearest distinct flight lines
+    at that exact location (see _local_line_gap_m) - so bowed/skewed
+    lines or a stretch flown with locally wider spacing than the survey
+    average still get filled correctly instead of leaving a gap in the
+    middle of an otherwise-covered block. Falls back to a flat 2 cells
+    when line_id isn't given (or there's only one line), same as before.
 
     line_id + along_line_smooth_wavelength_m: if both are given, each
     line's values are along-line low-passed (see _along_line_lowpass)
@@ -200,10 +206,22 @@ def grid_points(
     else:
         raise ValueError(f"알 수 없는 보간 방법입니다: {method}")
 
-    if max_distance_m is None:
-        max_distance_m = 2.0 * cell_size_m
     tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
-    grid_values = np.where(tree_dist <= max_distance_m, grid_values, np.nan)
+    if max_distance_m is None:
+        # Auto: fill each cell out to 60% of the *local* gap between the
+        # two nearest actual flight lines at that specific location
+        # (bowed/skewed lines and locally wider-than-average spacing are
+        # accounted for directly), not a single survey-wide average -
+        # see _local_line_gap_m. Falls back to the old flat 2 cells when
+        # there's no line grouping to work with (e.g. a single line).
+        local_gap = _local_line_gap_m(easting_2d, northing_2d, x, y, line_id) if line_id is not None else None
+        if local_gap is not None:
+            max_distance_grid = np.maximum(2.0 * cell_size_m, 0.6 * local_gap)
+        else:
+            max_distance_grid = 2.0 * cell_size_m
+    else:
+        max_distance_grid = max_distance_m
+    grid_values = np.where(tree_dist <= max_distance_grid, grid_values, np.nan)
 
     return GridResult(
         values=grid_values,
@@ -220,6 +238,40 @@ def _nearest_distance(grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray,
     tree = cKDTree(np.column_stack([pts_x, pts_y]))
     dist, _ = tree.query(np.column_stack([grid_x.ravel(), grid_y.ravel()]))
     return dist.reshape(grid_x.shape)
+
+
+def _local_line_gap_m(
+    grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray, pts_y: np.ndarray, line_id: np.ndarray
+) -> np.ndarray | None:
+    """Per grid-cell estimate of the real cross-line spacing at that exact
+    location: distance to the nearest point of the closest flight line,
+    plus distance to the nearest point of the second-closest flight line.
+
+    A single project-wide average line spacing (self.line_spacing_m in
+    store.py) understates the true gap wherever lines are locally bowed,
+    skewed, or simply flown farther apart than the average that day -
+    exactly where a fixed global max_distance_m then masks out cells the
+    interpolation would otherwise have filled in perfectly reasonably,
+    leaving real gaps in the middle of an otherwise-covered block. This is
+    computed fresh per grid cell from the actual nearest point on each
+    actual line, so it tracks the true local gap instead of one constant
+    everywhere. Returns None if there are fewer than 2 distinct lines (no
+    "spacing between lines" is defined with only one).
+    """
+    from scipy.spatial import cKDTree
+
+    lines = np.unique(line_id)
+    if len(lines) < 2:
+        return None
+    query_pts = np.column_stack([grid_x.ravel(), grid_y.ravel()])
+    per_line_dist = np.empty((len(lines), query_pts.shape[0]))
+    for i, lid in enumerate(lines):
+        mask = line_id == lid
+        tree = cKDTree(np.column_stack([pts_x[mask], pts_y[mask]]))
+        per_line_dist[i], _ = tree.query(query_pts)
+    nearest_two = np.partition(per_line_dist, 1, axis=0)[:2]
+    local_gap = nearest_two[0] + nearest_two[1]
+    return local_gap.reshape(grid_x.shape)
 
 
 def _nearest_axis_index(axis_1d: np.ndarray, values: np.ndarray) -> np.ndarray:

@@ -1248,7 +1248,13 @@ class Project:
             df.loc[active, col].to_numpy(),
             cell_size_m,
             method=method,
-            max_distance_m=resolved_max_distance,
+            # the raw (possibly None/auto) value, not resolved_max_distance -
+            # None lets grid_points compute a per-cell local-line-gap-based
+            # threshold instead of one project-wide constant (see its
+            # docstring and _local_line_gap_m); resolved_max_distance above
+            # is only used for the cache key, which just needs a stable,
+            # unique-enough value, not the actual masking threshold.
+            max_distance_m=max_distance_m,
             line_id=df.loc[active, "line_id"].to_numpy(),
             along_line_smooth_wavelength_m=effective_wavelength,
         )
