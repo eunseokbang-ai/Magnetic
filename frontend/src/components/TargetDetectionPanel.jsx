@@ -24,7 +24,7 @@ function Field({ label, children }) {
   );
 }
 
-export default function TargetDetectionPanel({ ready, params, setParams, onRun, running, result, error, showTargets, setShowTargets }) {
+export default function TargetDetectionPanel({ ready, params, setParams, onRun, running, result, error, showTargets, setShowTargets, projectId, exportTargetsCsv, exportTargetsShapefile }) {
   const update = (key, val) => setParams((p) => ({ ...p, [key]: val }));
 
   return (
@@ -84,6 +84,22 @@ export default function TargetDetectionPanel({ ready, params, setParams, onRun, 
               <input type="checkbox" checked={showTargets} onChange={(e) => setShowTargets(e.target.checked)} />
               <span>지도에 결과 표시</span>
             </label>
+            {result.targets.length > 0 && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  style={{ ...buttonStyle, background: "white", color: "#374151", border: "1px solid #d1d5db", flex: 1 }}
+                  onClick={() => exportTargetsCsv(projectId, "targets.csv")}
+                >
+                  CSV로 내보내기
+                </button>
+                <button
+                  style={{ ...buttonStyle, background: "white", color: "#374151", border: "1px solid #d1d5db", flex: 1 }}
+                  onClick={() => exportTargetsShapefile(projectId, "targets_shapefile.zip")}
+                >
+                  Shapefile로 내보내기
+                </button>
+              </div>
+            )}
             {result.targets.length > 0 && (
               <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4 }}>
                 <table style={tableStyle}>

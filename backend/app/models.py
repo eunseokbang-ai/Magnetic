@@ -562,3 +562,26 @@ class InversionVolumeRequest(BaseModel):
 class OverlaySampleRequest(BaseModel):
     lat: float
     lon: float
+
+
+class QcCertificateRequest(BaseModel):
+    """Acceptance thresholds for the QC pass/fail certificate (see
+    processing/qc_certificate.py) - defaults are reasonable starting
+    points, not a formal published standard, since acceptable noise/
+    repeatability/gap levels genuinely vary by survey purpose and
+    equipment; adjust to match the actual delivery spec."""
+    noise_threshold_multiplier: float = Field(2.0, gt=0)
+    max_repeatability_1sigma_nt: float = Field(5.0, gt=0)
+    max_sampling_gap_pct: float = Field(5.0, gt=0)
+    max_excluded_pct: float = Field(30.0, gt=0)
+
+
+class GridConfidenceRequest(BaseModel):
+    """Requests a companion "how much should I trust this cell" layer for
+    an already-gridded result - see processing/gridding.py::grid_confidence
+    and store.py::get_grid_confidence_overlay."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    colormap: str = "RdYlGn"

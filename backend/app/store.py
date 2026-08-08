@@ -19,6 +19,7 @@ from .io_.drone_loader import load_drone_csvs
 from .models import (
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
+    GridConfidenceRequest,
     GridRequest,
     InversionParams,
     InversionSectionRequest,
@@ -28,6 +29,7 @@ from .models import (
     MultiscaleEdgeRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    QcCertificateRequest,
     StructureScanRequest,
     TargetDetectionRequest,
     TransformRequest,
@@ -50,7 +52,7 @@ from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
-from .processing.gridding import GridResult, _nearest_axis_index, grid_points
+from .processing.gridding import GridResult, _nearest_axis_index, grid_confidence, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
 from .processing.inversion import (
     InversionError,
@@ -89,6 +91,7 @@ from .processing.heading_calibration import (
     magnetic_heading,
 )
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
+from .processing.qc_certificate import evaluate_qc_certificate
 from .processing.report import generate_report_markdown
 from .processing.sway import detect_sway
 from .processing.duplicate_lines import resolve_duplicate_lines
@@ -223,6 +226,7 @@ class Project:
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
     target_summary_cache: dict | None = None
+    qc_certificate_cache: dict | None = None
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
@@ -1060,6 +1064,7 @@ class Project:
             self.target_summary_cache,
             repeatability_summary=self.repeatability_summary_cache,
             multiscale_edges_summary=self.multiscale_edges_summary_cache,
+            qc_certificate=self.qc_certificate_cache,
         )
 
     def _active_mask(self) -> pd.Series:
@@ -1414,6 +1419,47 @@ class Project:
         self.last_overlay_label = req.value
         return overlay
 
+    def get_grid_confidence_overlay(self, req: GridConfidenceRequest) -> dict:
+        """A companion "how much should this cell be trusted" layer for
+        get_grid_overlay's result - see processing/gridding.py::grid_confidence
+        for what the 0-1 score means. Deliberately grids at the same cell
+        size/method/max_distance the caller would use for the value layer
+        itself (and shares its cache via _grid_for) so the two overlays
+        line up cell-for-cell, but recomputes the confidence score fresh
+        rather than trying to derive it from the already-masked GridResult
+        (which only carries the final NaN/value array, not the distance
+        field the score is built from)."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        df = self.processed
+        active = self._active_mask()
+        easting_2d, northing_2d = np.meshgrid(grid.easting, grid.northing)
+        confidence = grid_confidence(
+            df.loc[active, "x"].to_numpy(),
+            df.loc[active, "y"].to_numpy(),
+            easting_2d,
+            northing_2d,
+            grid.cell_size_m,
+            max_distance_m=req.max_distance_m,
+            line_id=df.loc[active, "line_id"].to_numpy(),
+            typical_line_spacing_m=self.line_spacing_m,
+        )
+        overlay = grid_to_png_overlay(
+            confidence,
+            grid.easting,
+            grid.northing,
+            self.utm_epsg,
+            cmap_name=req.colormap,
+            symmetric=False,
+            vmin=0.0,
+            vmax=1.0,
+            cell_size_m=grid.cell_size_m,
+        )
+        overlay["stats"] = _stats(pd.Series(confidence.ravel()))
+        overlay["cell_size_m"] = grid.cell_size_m
+        return overlay
+
     def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:
         resolved_max_distance = self._resolve_max_distance(req.cell_size_m, req.max_distance_m)
         resolved_smooth_wavelength = req.along_line_smooth_wavelength_m if req.along_line_smooth_wavelength_m is not None else self.line_spacing_m
@@ -1667,6 +1713,87 @@ class Project:
             }
         )
         return out.to_csv(index=False).encode("utf-8")
+
+    def export_targets_csv(self) -> bytes:
+        """The last run_target_detection() result (self.target_summary_cache)
+        as a flat CSV table - lat/lon plus every dipole-fit attribute - for
+        handing a detected-target list to a GIS or spreadsheet without the
+        map UI. Empty (header-only) rather than an error when detection
+        found nothing, since "ran clean, zero targets" is a valid result a
+        caller may still want a well-formed CSV for."""
+        if self.target_summary_cache is None:
+            raise ProjectError("타겟 탐지를 먼저 실행하세요.")
+        targets = self.target_summary_cache.get("targets", [])
+        columns = ["lat", "lon", "depth_m", "moment_am2", "size_class", "peak_anomaly_nt", "footprint_m", "fit_quality", "background_nt"]
+        out = pd.DataFrame(targets, columns=columns) if targets else pd.DataFrame(columns=columns)
+        out.insert(0, "target_id", range(1, len(out) + 1))
+        return out.to_csv(index=False).encode("utf-8")
+
+    def export_targets_shapefile(self) -> bytes:
+        """The same detected-target list as export_targets_csv, packaged as
+        a zipped ESRI shapefile (.shp/.shx/.dbf/.prj point layer) for direct
+        import into GIS software - the standard exchange format the
+        "coverage/target handoff to GIS" use case actually wants, CSV alone
+        requiring a manual re-projection/import step every time."""
+        import io
+        import zipfile
+
+        import shapefile as pyshp
+
+        if self.target_summary_cache is None:
+            raise ProjectError("타겟 탐지를 먼저 실행하세요.")
+        targets = self.target_summary_cache.get("targets", [])
+
+        shp_buf, shx_buf, dbf_buf = io.BytesIO(), io.BytesIO(), io.BytesIO()
+        writer = pyshp.Writer(shp=shp_buf, shx=shx_buf, dbf=dbf_buf, shapeType=pyshp.POINT)
+        writer.field("target_id", "N")
+        writer.field("depth_m", "F", decimal=2)
+        writer.field("moment_am2", "F", decimal=4)
+        writer.field("size_class", "C", size=40)
+        writer.field("peak_nt", "F", decimal=2)
+        # dbf field names are capped at 10 bytes - "footprint_m"/"fit_quality"
+        # would silently truncate (and collide with nothing here, but it's
+        # a latent footgun for any future field starting the same way).
+        writer.field("footprnt_m", "F", decimal=2)
+        writer.field("fit_qual", "F", decimal=3)
+        writer.field("bg_nt", "F", decimal=2)
+        for i, t in enumerate(targets, start=1):
+            writer.point(t["lon"], t["lat"])
+            writer.record(i, t["depth_m"], t["moment_am2"], t["size_class"], t["peak_anomaly_nt"], t["footprint_m"], t["fit_quality"], t["background_nt"])
+        writer.close()
+
+        # WGS84 geographic .prj - point() above was fed lon/lat, matching
+        # this CRS, so the shapefile's coordinates and declared CRS agree
+        # regardless of which UTM zone the project itself works in.
+        prj_wkt = (
+            'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],'
+            'PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]'
+        )
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("targets.shp", shp_buf.getvalue())
+            zf.writestr("targets.shx", shx_buf.getvalue())
+            zf.writestr("targets.dbf", dbf_buf.getvalue())
+            zf.writestr("targets.prj", prj_wkt)
+        return zip_buf.getvalue()
+
+    def generate_qc_certificate(self, req: QcCertificateRequest) -> dict:
+        """Standard QC pass/fail certificate - see
+        processing/qc_certificate.py for what each criterion checks and why
+        a missing metric degrades to "평가 불가" instead of pass/fail."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        result = evaluate_qc_certificate(
+            self.process_summary(),
+            self.repeatability_summary_cache,
+            noise_threshold_multiplier=req.noise_threshold_multiplier,
+            max_repeatability_1sigma_nt=req.max_repeatability_1sigma_nt,
+            max_sampling_gap_pct=req.max_sampling_gap_pct,
+            max_excluded_pct=req.max_excluded_pct,
+        )
+        self.qc_certificate_cache = result
+        return result
 
     def run_euler_deconvolution(self, req: EulerDeconvolutionRequest) -> dict:
         # Defaults to along-line smoothing on (see _grid_for) - Euler

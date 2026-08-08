@@ -17,6 +17,7 @@ from .chat import ChatError
 from .models import (
     ChatRequest,
     EulerDeconvolutionRequest,
+    GridConfidenceRequest,
     GridRequest,
     InversionParams,
     InversionSectionRequest,
@@ -32,6 +33,7 @@ from .models import (
     PolygonExportRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    QcCertificateRequest,
     StructureScanRequest,
     TargetDetectionRequest,
     TileBboxRequest,
@@ -443,6 +445,34 @@ def euler_deconvolution(project_id: str, req: EulerDeconvolutionRequest):
 def target_detection(project_id: str, req: TargetDetectionRequest):
     project = store.get(project_id)
     return project.run_target_detection(req)
+
+
+@app.get("/api/projects/{project_id}/target-detection/csv")
+def export_targets_csv(project_id: str):
+    project = store.get(project_id)
+    data = project.export_targets_csv()
+    return Response(content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=targets.csv"})
+
+
+@app.get("/api/projects/{project_id}/target-detection/shapefile")
+def export_targets_shapefile(project_id: str):
+    project = store.get(project_id)
+    data = project.export_targets_shapefile()
+    return Response(
+        content=data, media_type="application/zip", headers={"Content-Disposition": "attachment; filename=targets_shapefile.zip"}
+    )
+
+
+@app.post("/api/projects/{project_id}/grid/confidence")
+def grid_confidence_overlay(project_id: str, req: GridConfidenceRequest):
+    project = store.get(project_id)
+    return project.get_grid_confidence_overlay(req)
+
+
+@app.post("/api/projects/{project_id}/qc-certificate")
+def qc_certificate(project_id: str, req: QcCertificateRequest):
+    project = store.get(project_id)
+    return project.generate_qc_certificate(req)
 
 
 @app.post("/api/projects/{project_id}/structure-scan")

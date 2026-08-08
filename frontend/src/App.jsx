@@ -27,6 +27,7 @@ import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
 import TargetDetectionPanel from "./components/TargetDetectionPanel";
+import QcCertificatePanel from "./components/QcCertificatePanel";
 import StructureDistortionPanel from "./components/StructureDistortionPanel";
 
 const toggleButtonStyle = {
@@ -60,6 +61,13 @@ const DEFAULT_TARGET_DETECTION_PARAMS = {
   fit_window_m: 8.0,
   max_depth_m: 5.0,
   min_fit_quality: 0.3,
+};
+
+const DEFAULT_QC_CERTIFICATE_PARAMS = {
+  noise_threshold_multiplier: 2.0,
+  max_repeatability_1sigma_nt: 5.0,
+  max_sampling_gap_pct: 5.0,
+  max_excluded_pct: 30.0,
 };
 
 const DEFAULT_STRUCTURE_SCAN_PARAMS = {
@@ -196,6 +204,9 @@ export default function App() {
   const [activeTransform, setActiveTransform] = useState("none");
   const [transformLoading, setTransformLoading] = useState(false);
   const [overlay, setOverlay] = useState(null);
+  const [confidenceOverlay, setConfidenceOverlay] = useState(null);
+  const [showConfidenceOverlay, setShowConfidenceOverlay] = useState(false);
+  const [confidenceLoading, setConfidenceLoading] = useState(false);
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectPoints, setInspectPoints] = useState([]);
   const [flyToTarget, setFlyToTarget] = useState(null);
@@ -335,6 +346,10 @@ export default function App() {
   const [targetDetectionResult, setTargetDetectionResult] = useState(null);
   const [targetDetectionError, setTargetDetectionError] = useState(null);
   const [showDetectedTargets, setShowDetectedTargets] = useState(true);
+  const [qcCertificateParams, setQcCertificateParams] = useState(DEFAULT_QC_CERTIFICATE_PARAMS);
+  const [qcCertificateRunning, setQcCertificateRunning] = useState(false);
+  const [qcCertificateResult, setQcCertificateResult] = useState(null);
+  const [qcCertificateError, setQcCertificateError] = useState(null);
   const [structureScanParams, setStructureScanParams] = useState(DEFAULT_STRUCTURE_SCAN_PARAMS);
   const [structureScanRunning, setStructureScanRunning] = useState(false);
   const [structureScanResult, setStructureScanResult] = useState(null);
@@ -715,10 +730,30 @@ export default function App() {
       });
       setOverlay(resp);
       setActiveTransform("none");
+      setConfidenceOverlay(null);
     } catch (e) {
       handleError(e);
     } finally {
       setGridding(false);
+    }
+  };
+
+  const handleGridConfidence = async () => {
+    try {
+      setError(null);
+      setConfidenceLoading(true);
+      const resp = await api.getGridConfidence(projectId, {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+      });
+      setConfidenceOverlay(resp);
+      setShowConfidenceOverlay(true);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setConfidenceLoading(false);
     }
   };
 
@@ -1378,6 +1413,19 @@ export default function App() {
     }
   };
 
+  const handleRunQcCertificate = async () => {
+    try {
+      setQcCertificateError(null);
+      setQcCertificateRunning(true);
+      const resp = await api.runQcCertificate(projectId, qcCertificateParams);
+      setQcCertificateResult(resp);
+    } catch (e) {
+      setQcCertificateError(e.message || String(e));
+    } finally {
+      setQcCertificateRunning(false);
+    }
+  };
+
   const handleRunStructureScan = async () => {
     try {
       setStructureScanError(null);
@@ -1904,6 +1952,11 @@ export default function App() {
           onGrid={handleGrid}
           gridding={gridding}
           overlay={overlay}
+          onGridConfidence={handleGridConfidence}
+          confidenceLoading={confidenceLoading}
+          confidenceOverlay={confidenceOverlay}
+          showConfidenceOverlay={showConfidenceOverlay}
+          setShowConfidenceOverlay={setShowConfidenceOverlay}
           boundaryMode={boundaryMode}
           onToggleBoundaryMode={handleToggleBoundaryMode}
           boundaryPolygon={boundaryPolygon}
@@ -1952,6 +2005,7 @@ export default function App() {
           cmapName={cmapName}
           overlay={overlay}
           gridOpacity={gridOpacity}
+          confidenceOverlay={showConfidenceOverlay ? confidenceOverlay : null}
           showPointsOverGrid={showPointsOverGrid}
           overlayLayers={overlayLayers}
           lines={processSummary?.lines}
@@ -2246,9 +2300,23 @@ export default function App() {
               error={targetDetectionError}
               showTargets={showDetectedTargets}
               setShowTargets={setShowDetectedTargets}
+              projectId={projectId}
+              exportTargetsCsv={api.exportTargetsCsv}
+              exportTargetsShapefile={api.exportTargetsShapefile}
             />
           </div>
         </details>
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-1. 표준 QC 인증서</h2>
+        <QcCertificatePanel
+          ready={!!processSummary}
+          params={qcCertificateParams}
+          setParams={setQcCertificateParams}
+          onRun={handleRunQcCertificate}
+          running={qcCertificateRunning}
+          result={qcCertificateResult}
+          error={qcCertificateError}
+        />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>15. AI 해석 도우미 (챗봇)</h2>
         <ChatPanel ready={!!processSummary} messages={chatMessages} onSend={handleSendChatMessage} sending={chatSending} error={chatError} />

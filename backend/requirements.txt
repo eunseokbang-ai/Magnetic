@@ -17,3 +17,4 @@ anthropic==0.120.2
 orjson==3.11.9
 requests==2.33.1
 shapely==2.1.2
+pyshp==3.1.6

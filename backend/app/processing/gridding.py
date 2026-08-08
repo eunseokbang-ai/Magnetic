@@ -260,42 +260,9 @@ def grid_points(
         raise ValueError(f"알 수 없는 보간 방법입니다: {method}")
 
     tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
-    if max_distance_m is None:
-        # Auto: fill each cell out to _INTERIOR_FILL_FRACTION of the
-        # *local* gap between the two nearest actual flight lines at that
-        # specific location (bowed/skewed lines and locally wider-than-
-        # average spacing are accounted for directly), not a single
-        # survey-wide average - see _local_line_gap_m. Falls back to the
-        # old flat 2 cells when there's no line grouping to work with (e.g.
-        # a single line).
-        local_gap = _local_line_gap_m(easting_2d, northing_2d, x, y, line_id) if line_id is not None else None
-        if local_gap is not None:
-            max_distance_grid = np.maximum(2.0 * cell_size_m, _INTERIOR_FILL_FRACTION * local_gap)
-        else:
-            max_distance_grid = 2.0 * cell_size_m
-        # Hard cap, independent of the heuristic above: never extrapolate
-        # past the actual survey footprint - see _hull_extrapolation_mask
-        # docstring for why local_gap alone doesn't bound this. The buffer
-        # itself needs to be more than a token couple of cells, though: a
-        # flight path that bows/curves (not perfectly straight parallel
-        # lines) traces out a *concave* footprint, and a flat, tiny buffer
-        # around the strict convex hull would then re-cut real interior
-        # gap-fill area near those bends/curves right back out. Sizing the
-        # buffer off typical_line_spacing_m (a single robust, bounded,
-        # project-wide statistic - see this function's docstring) instead
-        # of anything derived from local_gap's own distribution keeps this
-        # safe: local_gap spans a huge, heavily skewed range from ~0 right
-        # at a data point up to arbitrarily large near a hull edge/corner,
-        # so any statistic pulled from it (even "just" the values already
-        # inside the hull) risks being dragged right back up toward the
-        # same unbounded blowup this cap exists to prevent.
-        buffer_m = _HULL_BUFFER_CELLS * cell_size_m
-        if typical_line_spacing_m:
-            buffer_m = max(buffer_m, _INTERIOR_FILL_FRACTION * typical_line_spacing_m)
-        hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, buffer_m)
-    else:
-        max_distance_grid = max_distance_m
-        hull_mask = True
+    max_distance_grid, hull_mask = _resolve_auto_mask(
+        easting_2d, northing_2d, x, y, cell_size_m, max_distance_m, line_id, typical_line_spacing_m
+    )
     grid_values = np.where((tree_dist <= max_distance_grid) & hull_mask, grid_values, np.nan)
 
     return GridResult(
@@ -313,6 +280,81 @@ def _nearest_distance(grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray,
     tree = cKDTree(np.column_stack([pts_x, pts_y]))
     dist, _ = tree.query(np.column_stack([grid_x.ravel(), grid_y.ravel()]))
     return dist.reshape(grid_x.shape)
+
+
+def _resolve_auto_mask(
+    easting_2d: np.ndarray,
+    northing_2d: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    cell_size_m: float,
+    max_distance_m: float | None,
+    line_id: np.ndarray | None,
+    typical_line_spacing_m: float | None,
+) -> tuple[np.ndarray | float, np.ndarray | bool]:
+    """The auto-mode "how far is it OK to fill/trust a cell" logic shared
+    by grid_points' hard nodata mask and grid_confidence's continuous trust
+    score below - factored out so the two always agree on exactly where
+    the fill boundary is, instead of two independently-maintained copies
+    of the same reasoning (see grid_points' docstring for why each piece -
+    local line gap, interior fill fraction, hull buffer - is there)."""
+    if max_distance_m is None:
+        local_gap = _local_line_gap_m(easting_2d, northing_2d, x, y, line_id) if line_id is not None else None
+        if local_gap is not None:
+            max_distance_grid = np.maximum(2.0 * cell_size_m, _INTERIOR_FILL_FRACTION * local_gap)
+        else:
+            max_distance_grid = 2.0 * cell_size_m
+        buffer_m = _HULL_BUFFER_CELLS * cell_size_m
+        if typical_line_spacing_m:
+            buffer_m = max(buffer_m, _INTERIOR_FILL_FRACTION * typical_line_spacing_m)
+        hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, buffer_m)
+    else:
+        max_distance_grid = max_distance_m
+        hull_mask = True
+    return max_distance_grid, hull_mask
+
+
+def grid_confidence(
+    x: np.ndarray,
+    y: np.ndarray,
+    easting_2d: np.ndarray,
+    northing_2d: np.ndarray,
+    cell_size_m: float,
+    max_distance_m: float | None = None,
+    line_id: np.ndarray | None = None,
+    typical_line_spacing_m: float | None = None,
+) -> np.ndarray:
+    """Continuous 0-1 "how much should this cell be trusted" companion to
+    grid_points' binary nodata mask: 1.0 exactly at a real data point,
+    fading linearly to 0.0 at the same fill-boundary distance
+    (max_distance_grid, from _resolve_auto_mask - identical logic to
+    grid_points, so the two layers always agree at the nodata edge) that
+    grid_points itself already uses to decide whether to fill a cell at
+    all. NaN wherever grid_points would mask that cell out entirely (past
+    the fill boundary or outside the survey hull), matching the shape of
+    grid_points' own output exactly.
+
+    A binary "has data / no data" mask alone doesn't distinguish a cell
+    sitting right on top of a flight line from one at the ragged edge of
+    the auto-fill radius, even though the interpolation is leaning on the
+    real data far more directly in the first case - this fills that gap
+    for interpretation (e.g. "the northeast corner shows an anomaly, but
+    it's in a low-confidence zone barely reached by the nearest line - fly
+    it again before drawing conclusions from it")."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    x, y = x[finite], y[finite]
+    if line_id is not None:
+        line_id = np.asarray(line_id)[finite]
+
+    tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
+    max_distance_grid, hull_mask = _resolve_auto_mask(
+        easting_2d, northing_2d, x, y, cell_size_m, max_distance_m, line_id, typical_line_spacing_m
+    )
+    confidence = np.clip(1.0 - tree_dist / np.maximum(max_distance_grid, 1e-9), 0.0, 1.0)
+    within_reach = tree_dist <= max_distance_grid
+    return np.where(within_reach & hull_mask, confidence, np.nan)
 
 
 def _hull_extrapolation_mask(

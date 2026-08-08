@@ -143,6 +143,14 @@ export function runTargetDetection(projectId, req) {
   return request(`/projects/${projectId}/target-detection`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function getGridConfidence(projectId, req) {
+  return request(`/projects/${projectId}/grid/confidence`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runQcCertificate(projectId, req) {
+  return request(`/projects/${projectId}/qc-certificate`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function runMultiscaleEdges(projectId, req) {
   return request(`/projects/${projectId}/multiscale-edges`, { method: "POST", body: JSON.stringify(req) });
 }
@@ -328,6 +336,16 @@ export async function exportTransformXyz(projectId, req, filename) {
 
 export async function exportPointsCsv(projectId, filename) {
   const blob = await requestBlob(`/projects/${projectId}/points/csv`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportTargetsCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/target-detection/csv`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportTargetsShapefile(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/target-detection/shapefile`);
   downloadBlob(blob, filename);
 }
 

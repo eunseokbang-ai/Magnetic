@@ -144,6 +144,11 @@ export default function WorkflowSteps({
   onGrid,
   gridding,
   overlay,
+  onGridConfidence,
+  confidenceLoading,
+  confidenceOverlay,
+  showConfidenceOverlay,
+  setShowConfidenceOverlay,
   boundaryMode,
   onToggleBoundaryMode,
   boundaryPolygon,
@@ -1174,6 +1179,20 @@ export default function WorkflowSteps({
           >
             {inspectMode ? "지점값 확인 중 (클릭하면 종료)" : "지점값 확인"}
           </button>
+          <button
+            style={{ ...buttonStyle, background: "white", color: "#374151", border: "1px solid #d1d5db" }}
+            disabled={!processSummary || confidenceLoading}
+            onClick={() => onGridConfidence()}
+            title="자료점으로부터의 거리(같은 그리드 빈 공간 채우기 기준)를 바탕으로, 각 셀이 실제 자료에 얼마나 가까이 구속되어 있는지(1=자료점 바로 위, 0=보간 한계 지점)를 색으로 보여줍니다. 붉은/노란 구간은 보간에 크게 의존한 값이니 해석 시 주의하세요."
+          >
+            {confidenceLoading ? "신뢰도 계산 중..." : "격자 신뢰도 레이어 계산"}
+          </button>
+          {confidenceOverlay && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="checkbox" checked={showConfidenceOverlay} onChange={(e) => setShowConfidenceOverlay(e.target.checked)} />
+              <span style={{ color: "#4b5563" }}>지도에 신뢰도 레이어 표시 (초록=신뢰 높음, 빨강=보간 의존)</span>
+            </label>
+          )}
         </div>
       </details>
 

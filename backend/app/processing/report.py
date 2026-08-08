@@ -27,6 +27,7 @@ def generate_report_markdown(
     target_summary: dict | None = None,
     repeatability_summary: dict | None = None,
     multiscale_edges_summary: dict | None = None,
+    qc_certificate: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# 드론 자력탐사 자료 처리 보고서")
@@ -272,6 +273,23 @@ def generate_report_markdown(
             f"- 검출된 엣지 포인트 수: {multiscale_edges_summary.get('n_points')} "
             f"(상향연속 고도: {multiscale_edges_summary.get('heights_m')})"
         )
+        lines.append("")
+
+    if qc_certificate:
+        overall = {"pass": "✅ PASS", "fail": "❌ FAIL", "not_evaluated": "평가 불가"}.get(qc_certificate.get("overall_status"), "-")
+        lines.append("## 12. 표준 QC 인증서")
+        lines.append("")
+        lines.append(f"- **종합 결과: {overall}** ({qc_certificate.get('n_pass')} PASS / {qc_certificate.get('n_fail')} FAIL / {qc_certificate.get('n_not_evaluated')} 평가 불가)")
+        lines.append("")
+        lines.append("| 항목 | 측정값 | 허용기준 | 결과 | 비고 |")
+        lines.append("|---|---|---|---|---|")
+        status_label = {"pass": "PASS", "fail": "FAIL", "not_evaluated": "평가 불가"}
+        for c in qc_certificate.get("criteria", []):
+            value = c["value"]
+            value_str = f"{_fmt(value)}{c['unit']}" if isinstance(value, float) else ("N/A" if value is None else f"{value}{c['unit']}")
+            threshold = c["threshold"]
+            threshold_str = "-" if threshold is None else (f"{_fmt(threshold)}{c['unit']}" if isinstance(threshold, float) else str(threshold))
+            lines.append(f"| {c['name']} | {value_str} | {threshold_str} | {status_label.get(c['status'], c['status'])} | {c['detail']} |")
         lines.append("")
 
     return "\n".join(lines) + "\n"

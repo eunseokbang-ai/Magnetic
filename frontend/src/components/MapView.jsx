@@ -636,6 +636,7 @@ export default function MapView({
   cmapName,
   overlay,
   gridOpacity,
+  confidenceOverlay,
   showPointsOverGrid,
   overlayLayers,
   lines,
@@ -734,6 +735,19 @@ export default function MapView({
           <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />
         ))}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}
+
+      {confidenceOverlay &&
+        (confidenceOverlay.topleft && confidenceOverlay.topright && confidenceOverlay.bottomleft ? (
+          <RotatedImageOverlay
+            url={confidenceOverlay.image_data_url}
+            topleft={confidenceOverlay.topleft}
+            topright={confidenceOverlay.topright}
+            bottomleft={confidenceOverlay.bottomleft}
+            opacity={0.7}
+          />
+        ) : (
+          <ImageOverlay url={confidenceOverlay.image_data_url} bounds={confidenceOverlay.bounds} opacity={0.7} />
+        ))}
 
       <PointLayer
         points={pointsVisible ? points : []}
