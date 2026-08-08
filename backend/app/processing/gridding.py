@@ -109,6 +109,7 @@ def grid_points(
     max_distance_m: float | None = None,
     line_id: np.ndarray | None = None,
     along_line_smooth_wavelength_m: float | None = None,
+    typical_line_spacing_m: float | None = None,
 ) -> GridResult:
     """Block-mean reduce then interpolate scattered (x, y, values) onto a
     regular grid at cell_size_m spacing.
@@ -139,13 +140,22 @@ def grid_points(
     average still get filled correctly instead of leaving a gap in the
     middle of an otherwise-covered block. Falls back to a flat 2 cells
     when line_id isn't given (or there's only one line), same as before.
-    In auto mode, cells are additionally never filled more than
-    _HULL_BUFFER_CELLS cells past the convex hull of the actual survey
-    points regardless of what the local-gap heuristic computes there (see
+    In auto mode, cells are additionally never filled past the convex hull
+    of the actual survey points, buffered outward by the greater of
+    _HULL_BUFFER_CELLS cells or (a fraction of) typical_line_spacing_m,
+    regardless of what the local-gap heuristic computes there (see
     _hull_extrapolation_mask) - the local-gap distance is unbounded far
     outside the hull (both "nearest" lines become roughly equidistant,
     growing with distance from the survey), so without this cap auto mode
     extrapolates without limit in a triangular fan past line endpoints.
+    typical_line_spacing_m (a single project-wide robust estimate, e.g.
+    store.py's self.line_spacing_m - deliberately *not* the per-cell,
+    unbounded local_gap array) sizes that buffer generously enough that a
+    flight path which bows/curves rather than running in dead-straight
+    parallel lines - and so traces out a footprint that's itself slightly
+    concave - doesn't get a real interior gap near the bend clipped back
+    out by too tight a hull buffer. Left None, only the small flat
+    _HULL_BUFFER_CELLS buffer applies.
 
     line_id + along_line_smooth_wavelength_m: if both are given, each
     line's values are along-line low-passed (see _along_line_lowpass)
@@ -237,10 +247,25 @@ def grid_points(
         else:
             max_distance_grid = 2.0 * cell_size_m
         # Hard cap, independent of the heuristic above: never extrapolate
-        # past the actual survey footprint (+ a couple of cells of slack)
-        # - see _hull_extrapolation_mask docstring for why local_gap alone
-        # doesn't bound this.
-        hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, _HULL_BUFFER_CELLS * cell_size_m)
+        # past the actual survey footprint - see _hull_extrapolation_mask
+        # docstring for why local_gap alone doesn't bound this. The buffer
+        # itself needs to be more than a token couple of cells, though: a
+        # flight path that bows/curves (not perfectly straight parallel
+        # lines) traces out a *concave* footprint, and a flat, tiny buffer
+        # around the strict convex hull would then re-cut real interior
+        # gap-fill area near those bends/curves right back out. Sizing the
+        # buffer off typical_line_spacing_m (a single robust, bounded,
+        # project-wide statistic - see this function's docstring) instead
+        # of anything derived from local_gap's own distribution keeps this
+        # safe: local_gap spans a huge, heavily skewed range from ~0 right
+        # at a data point up to arbitrarily large near a hull edge/corner,
+        # so any statistic pulled from it (even "just" the values already
+        # inside the hull) risks being dragged right back up toward the
+        # same unbounded blowup this cap exists to prevent.
+        buffer_m = _HULL_BUFFER_CELLS * cell_size_m
+        if typical_line_spacing_m:
+            buffer_m = max(buffer_m, 0.6 * typical_line_spacing_m)
+        hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, buffer_m)
     else:
         max_distance_grid = max_distance_m
         hull_mask = True

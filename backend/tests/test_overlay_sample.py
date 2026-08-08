@@ -9,8 +9,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
+from pyproj import Transformer
 
 from app.main import app
 from app.store import ProjectError, store as project_store
@@ -72,6 +74,69 @@ def test_sample_overlay_value_far_outside_bounds_is_out_of_bounds():
     r = client.post(f"/api/projects/{project_id}/overlay/sample", json={"lat": 60.0, "lon": 30.0})
     assert r.status_code == 200, r.text
     resp = r.json()
+    assert resp["in_bounds"] is False
+    assert resp["value_nt"] is None
+
+
+def test_sample_overlay_value_returns_exact_nearest_cell_not_a_blend():
+    """Regression test: sample_overlay_value used to bilinearly interpolate
+    between neighboring cells, which could return a value blended toward a
+    sharply different neighbor instead of the exact value of the cell the
+    user actually clicked on (or actually visible at that pixel, now that
+    the overlay renders one flat color per cell - see
+    processing/render.py::grid_to_png_overlay). Injects a small synthetic
+    grid with a single very different "hot" cell directly onto a real
+    Project (bypassing the real gridding pipeline, so the exact node
+    values are known) and checks an exact-node click returns precisely
+    that node's value, not something blended toward its very different
+    neighbor."""
+    client, project_id = _make_processed_project()
+    client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0})
+    project = project_store.get(project_id)
+
+    cell = 10.0
+    n = 9
+    easting = np.arange(0, n * cell, cell)
+    northing = np.arange(0, n * cell, cell)
+    values = np.zeros((n, n))
+    hot_row, hot_col = 4, 4
+    values[hot_row, hot_col] = 500.0  # sharply different from its all-zero neighbors
+    project.last_overlay_easting = easting
+    project.last_overlay_northing = northing
+    project.last_overlay_values = values
+
+    transformer = Transformer.from_crs(f"EPSG:{project.utm_epsg}", "EPSG:4326", always_xy=True)
+    lon, lat = transformer.transform(easting[hot_col], northing[hot_row])
+
+    resp = project.sample_overlay_value(lat, lon)
+    assert resp["in_bounds"] is True
+    assert resp["value_nt"] == pytest.approx(500.0)
+
+
+def test_sample_overlay_value_reports_no_data_for_the_exact_blank_cell():
+    """The other half of the same bug: a click whose nearest cell is
+    genuinely NaN (blank on the map) must report "no data" even though a
+    bilinear read could have blended in a nearby finite neighbor and
+    returned a (wrong) number instead."""
+    client, project_id = _make_processed_project()
+    client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0})
+    project = project_store.get(project_id)
+
+    cell = 10.0
+    n = 9
+    easting = np.arange(0, n * cell, cell)
+    northing = np.arange(0, n * cell, cell)
+    values = np.full((n, n), 42.0)
+    blank_row, blank_col = 4, 4
+    values[blank_row, blank_col] = np.nan
+    project.last_overlay_easting = easting
+    project.last_overlay_northing = northing
+    project.last_overlay_values = values
+
+    transformer = Transformer.from_crs(f"EPSG:{project.utm_epsg}", "EPSG:4326", always_xy=True)
+    lon, lat = transformer.transform(easting[blank_col], northing[blank_row])
+
+    resp = project.sample_overlay_value(lat, lon)
     assert resp["in_bounds"] is False
     assert resp["value_nt"] is None
 

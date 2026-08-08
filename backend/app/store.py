@@ -13,7 +13,6 @@ import pandas as pd
 import rasterio
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
-from scipy.interpolate import RegularGridInterpolator
 
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
@@ -51,7 +50,7 @@ from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
-from .processing.gridding import GridResult, grid_points
+from .processing.gridding import GridResult, _nearest_axis_index, grid_points
 from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
 from .processing.inversion import (
     InversionError,
@@ -1316,6 +1315,7 @@ class Project:
             max_distance_m=max_distance_m,
             line_id=df.loc[active, "line_id"].to_numpy(),
             along_line_smooth_wavelength_m=effective_wavelength,
+            typical_line_spacing_m=self.line_spacing_m,
         )
         self.grid_cache[key] = result
         return result
@@ -1998,11 +1998,22 @@ class Project:
         return result
 
     def sample_overlay_value(self, lat: float, lon: float) -> dict:
-        """Bilinearly-interpolated value from the most recently displayed
-        grid/derivative overlay at a clicked map point - matches what the
-        overlay's color at that exact pixel represents, unlike
+        """Value of the nearest cell in the most recently displayed
+        grid/derivative overlay to a clicked map point - matches exactly
+        what the overlay's color at that pixel represents, unlike
         sample_point() which reports the nearest raw survey point.
-        Powers the map's click-to-inspect tool."""
+        Powers the map's click-to-inspect tool.
+
+        Deliberately nearest-cell, not a bilinear blend between
+        neighboring cells: the PNG overlay (see
+        processing/render.py::grid_to_png_overlay) renders one flat color
+        per cell with hard edges (no smoothing baked into the image
+        itself), so a bilinearly-interpolated read-out could return a
+        value blended from a neighboring cell that visibly differs from
+        (and doesn't actually match) the exact color the user clicked on -
+        most noticeable right at a sharp anomaly edge, exactly where
+        getting this right matters most. Nearest-cell guarantees the
+        number always matches the pixel."""
         if self.last_overlay_values is None:
             raise ProjectError("먼저 그리드를 생성하세요.")
         if self.utm_epsg is None:
@@ -2013,12 +2024,17 @@ class Project:
         transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
         x, y = transformer.transform(lon, lat)
         result = {"lat": lat, "lon": lon, "value_nt": None, "in_bounds": False, "label": self.last_overlay_label}
-        if x < easting[0] or x > easting[-1] or y < northing[0] or y > northing[-1]:
+        # Half a cell of slack on each side matches the overlay image's own
+        # rendered extent (see grid_to_png_overlay's "pixel is area" bounds)
+        # - without it, a click inside the visually-drawn edge cell but
+        # past the last cell *center* would wrongly report out-of-bounds.
+        half_e = (easting[1] - easting[0]) / 2.0 if len(easting) > 1 else 0.0
+        half_n = (northing[1] - northing[0]) / 2.0 if len(northing) > 1 else 0.0
+        if x < easting[0] - half_e or x > easting[-1] + half_e or y < northing[0] - half_n or y > northing[-1] + half_n:
             return result
-        interp = RegularGridInterpolator(
-            (northing, easting), values, method="linear", bounds_error=False, fill_value=np.nan,
-        )
-        value = float(interp([[y, x]])[0])
+        col = int(_nearest_axis_index(easting, np.array([x]))[0])
+        row = int(_nearest_axis_index(northing, np.array([y]))[0])
+        value = float(values[row, col])
         if not np.isfinite(value):
             return result
         result["value_nt"] = value

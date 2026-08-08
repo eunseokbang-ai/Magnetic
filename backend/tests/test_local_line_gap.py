@@ -146,3 +146,35 @@ def test_local_line_gap_downsampled_path_tracks_the_exact_computation():
     # local_gap is a smooth, spacing-scale quantity - the coarse-grid +
     # upsample approximation should track it closely, not exactly.
     assert np.nanmean(np.abs(approx - exact)) < 2.0
+
+
+def test_typical_line_spacing_widens_hull_buffer_but_stays_bounded():
+    """typical_line_spacing_m (store.py's self.line_spacing_m - a single
+    robust, project-wide statistic) widens the hull cap's buffer beyond
+    the tiny flat _HULL_BUFFER_CELLS default, so a real multi-line survey
+    with any bowing/curvature in its flight path (a slightly concave
+    footprint) doesn't get real interior gap-fill area near the bends
+    clipped back out - see grid_points' docstring. It must still stay
+    *bounded*: a modest, realistic spacing value must not resurrect the
+    unbounded far-outside-hull extrapolation bug _two_line_asymmetric_
+    survey regression-tests below."""
+    x, y, values, line_id = _two_line_asymmetric_survey()
+
+    def value_at(result, target_x, target_y):
+        col = int(np.argmin(np.abs(result.easting - target_x)))
+        row = int(np.argmin(np.abs(result.northing - target_y)))
+        return result.values[row, col]
+
+    result_default = grid_points(x, y, values, 1.0, method="nearest", max_distance_m=None, line_id=line_id)
+    result_spaced = grid_points(
+        x, y, values, 1.0, method="nearest", max_distance_m=None, line_id=line_id, typical_line_spacing_m=15.0
+    )
+    # a realistic line-spacing value still keeps the pathological far
+    # corner excluded...
+    assert np.isnan(value_at(result_default, 48.0, 48.0))
+    assert np.isnan(value_at(result_spaced, 48.0, 48.0))
+    # ...while genuinely widening the fill area closer to the hull edge
+    # compared to the tiny flat default (a point just past the strict
+    # hull - too far for the flat 2-cell/2m default but within 0.6*15m=9m).
+    assert np.isnan(value_at(result_default, 25.0, 47.0))
+    assert not np.isnan(value_at(result_spaced, 25.0, 47.0))

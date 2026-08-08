@@ -173,8 +173,25 @@ def grid_to_png_overlay(
     png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     transformer = Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
-    corners_e = [easting.min(), easting.max(), easting.min(), easting.max()]
-    corners_n = [northing.min(), northing.min(), northing.max(), northing.max()]
+    # Leaflet's ImageOverlay stretches the PNG (one pixel per grid cell) to
+    # exactly fill `bounds`, treating each pixel as covering an *area* (its
+    # own square swath of ground), not as a point sample. easting/northing
+    # are each cell's *center* coordinate, so the image must extend half a
+    # cell past the outermost cell centers on every side for pixel i's
+    # rendered center to land exactly on easting[i]/northing[i] - otherwise
+    # every pixel is stretched across the wrong-sized box and each one's
+    # true screen position drifts away from its real coordinate (zero at
+    # the grid's own center, growing to half a cell at the edges). This is
+    # the same "pixel is area" convention already used correctly for the
+    # GeoTIFF export below (see from_origin(easting[0] - cell_size / 2,
+    # ...)) - kept consistent here so the interactive map overlay and the
+    # exported GeoTIFF agree on where each cell actually sits, and so a
+    # map click (see store.py::sample_overlay_value) samples the exact
+    # cell its color is drawn from instead of a neighboring one.
+    half_e = (easting[1] - easting[0]) / 2.0 if len(easting) > 1 else cell_size_m / 2.0
+    half_n = (northing[1] - northing[0]) / 2.0 if len(northing) > 1 else cell_size_m / 2.0
+    corners_e = [easting.min() - half_e, easting.max() + half_e, easting.min() - half_e, easting.max() + half_e]
+    corners_n = [northing.min() - half_n, northing.min() - half_n, northing.max() + half_n, northing.max() + half_n]
     lon_c, lat_c = transformer.transform(corners_e, corners_n)
 
     bounds = [[float(min(lat_c)), float(min(lon_c))], [float(max(lat_c)), float(max(lon_c))]]
