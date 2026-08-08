@@ -4,6 +4,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
 import "leaflet-draw";
+import "leaflet-imageoverlay-rotated";
 import { makeColorScale } from "../colormap";
 import { minMax } from "../arrayUtils";
 import pointCanvasLayer from "../leafletPointCanvasLayer";
@@ -52,6 +53,52 @@ function FlyToTarget({ target }) {
     if (!target) return;
     map.flyTo([target.lat, target.lon], Math.max(map.getZoom(), 19), { duration: 1.0 });
   }, [target, map]);
+  return null;
+}
+
+// Renders the grid/derivative/inversion-slice color image using its true
+// 3-corner footprint (leaflet-imageoverlay-rotated) instead of a plain
+// axis-aligned <ImageOverlay bounds=...>. A UTM grid's rows/columns are
+// only exactly north-south/east-west along its own zone's central
+// meridian - anywhere else, "grid north" is rotated a little (to a lot,
+// for surveys far from the central meridian or spanning a lot of
+// longitude) away from true north, so the grid's real footprint on a
+// lat/lon map is a sheared/rotated rectangle. A plain axis-aligned
+// ImageOverlay can only stretch the PNG into an axis-aligned box, which
+// silently drops that shear and visibly displaces the image from its
+// true position (confirmed up to ~70m on this app's own multi-line test
+// fixture) - exactly the "그리드 이미지 색이랑 실제 클릭값이랑 위치가
+//어긋난다" symptom, even though the click-to-inspect readout itself
+// (store.py::sample_overlay_value, which re-projects each click
+// independently rather than reading off this image) was never affected.
+// See processing/render.py::grid_to_png_overlay for where topleft/
+// topright/bottomleft come from.
+function RotatedImageOverlay({ url, topleft, topright, bottomleft, opacity }) {
+  const map = useMap();
+  const layerRef = useRef(null);
+
+  useEffect(() => {
+    if (!url || !topleft || !topright || !bottomleft) return undefined;
+    const layer = L.imageOverlay.rotated(url, topleft, topright, bottomleft, {
+      opacity: opacity ?? 1,
+    });
+    layer.addTo(map);
+    layerRef.current = layer;
+    return () => {
+      layer.remove();
+      layerRef.current = null;
+    };
+    // url already changes whenever topleft/topright/bottomleft do (a new
+    // grid/transform response always carries a matching new image), so a
+    // fresh layer per url covers repositioning too without needing a
+    // separate reposition() call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, url]);
+
+  useEffect(() => {
+    if (layerRef.current) layerRef.current.setOpacity(opacity ?? 1);
+  }, [opacity]);
+
   return null;
 }
 
@@ -671,7 +718,21 @@ export default function MapView({
           )
         )}
 
-      {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
+      {overlay &&
+        (overlay.topleft && overlay.topright && overlay.bottomleft ? (
+          <RotatedImageOverlay
+            url={overlay.image_data_url}
+            topleft={overlay.topleft}
+            topright={overlay.topright}
+            bottomleft={overlay.bottomleft}
+            opacity={gridOpacity}
+          />
+        ) : (
+          // Fallback for an overlay response that doesn't carry corner
+          // points (shouldn't happen from this app's own backend, but
+          // keeps this resilient rather than rendering nothing).
+          <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />
+        ))}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}
 
       <PointLayer

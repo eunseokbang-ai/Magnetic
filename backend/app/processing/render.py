@@ -190,15 +190,43 @@ def grid_to_png_overlay(
     # cell its color is drawn from instead of a neighboring one.
     half_e = (easting[1] - easting[0]) / 2.0 if len(easting) > 1 else cell_size_m / 2.0
     half_n = (northing[1] - northing[0]) / 2.0 if len(northing) > 1 else cell_size_m / 2.0
+    # Order: SW, SE, NW, NE.
     corners_e = [easting.min() - half_e, easting.max() + half_e, easting.min() - half_e, easting.max() + half_e]
     corners_n = [northing.min() - half_n, northing.min() - half_n, northing.max() + half_n, northing.max() + half_n]
     lon_c, lat_c = transformer.transform(corners_e, corners_n)
 
     bounds = [[float(min(lat_c)), float(min(lon_c))], [float(max(lat_c)), float(max(lon_c))]]
 
+    # `bounds` above is only a north/south/east/west axis-aligned envelope
+    # of the 4 corners - it is NOT the image's true footprint. A UTM grid's
+    # cell rows/columns are only exactly north-south/east-west along its
+    # own zone's central meridian; anywhere else, "grid north" is rotated a
+    # few tenths of a degree to a few degrees away from true north (map
+    # convergence), so the grid's real shape on a lat/lon map is a slightly
+    # sheared/rotated rectangle, not an axis-aligned one. A plain Leaflet
+    # ImageOverlay can only stretch this PNG into an axis-aligned `bounds`
+    # box, which silently discards that shear - every pixel not on the two
+    # corners that happen to be simultaneously N/S- and E/W-extreme drifts
+    # away from its true position, worse the farther the survey sits from
+    # its UTM zone's central meridian and the larger the survey (measured
+    # this at up to ~70m for a real multi-line survey in this app's own
+    # test fixtures - enough to visibly mismatch the "지점값 확인"
+    # click-to-inspect readout, which instead re-projects each click
+    # exactly and is never affected by this). The frontend therefore uses
+    # these exact 3 corners (leaflet-imageoverlay-rotated, which applies a
+    # CSS affine transform instead of an axis-aligned stretch) to place the
+    # image without that distortion; `bounds` is kept only as a fallback/
+    # fit-to-view helper.
+    topleft = [float(lat_c[2]), float(lon_c[2])]
+    topright = [float(lat_c[3]), float(lon_c[3])]
+    bottomleft = [float(lat_c[0]), float(lon_c[0])]
+
     return {
         "image_data_url": f"data:image/png;base64,{png_b64}",
         "bounds": bounds,
+        "topleft": topleft,
+        "topright": topright,
+        "bottomleft": bottomleft,
         "vmin": vmin,
         "vmax": vmax,
         "cmap": cmap_name,

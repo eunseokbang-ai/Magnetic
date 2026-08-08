@@ -32,6 +32,7 @@ from pyproj import Transformer
 from app.processing.render import grid_to_png_overlay
 
 UTM_EPSG = 32652
+UTM_EPSG_106E = 32648  # zone 48N, central meridian 105E
 
 
 def _decode(overlay):
@@ -64,3 +65,67 @@ def test_off_center_cell_renders_at_its_true_geographic_position():
     py = (north - lat_hot) / (north - south) * H
     assert px == pytest.approx(hot_col + 0.5, abs=1e-6)
     assert py == pytest.approx((n - 1 - hot_row) + 0.5, abs=1e-6)
+
+
+def test_axis_aligned_bounds_alone_misplace_a_tall_grid_far_from_the_central_meridian():
+    """Regression test for a second, independent coordinate bug: `bounds`
+    is only the axis-aligned N/S/E/W envelope of the image's 4 corners, not
+    its true footprint. A UTM grid's rows/columns are exactly north-south/
+    east-west only along its own zone's central meridian; anywhere else,
+    "grid north" is rotated away from true north (map convergence), so a
+    tall/wide grid's real shape on a lat/lon map is a sheared parallelogram,
+    not an axis-aligned rectangle. Leaflet's plain <ImageOverlay bounds=..>
+    can only stretch the PNG into that axis-aligned box, silently discarding
+    the shear - every pixel except the two corners that happen to be both
+    the N/S and E/W extremes drifts from its true position. This is what
+    let a user see the *color* at a map location visibly disagree with the
+    *number* "지점값 확인" reports for that same location (the number is
+    always exact - see sample_overlay_value, which reprojects each click
+    independently rather than reading off this image), even after the
+    half-cell bug above was fixed. The frontend now positions the image via
+    the 3 corners below (leaflet-imageoverlay-rotated) instead of `bounds`."""
+    # A grid running well north-south (tall, narrow - a common survey
+    # shape) sitting ~1.3 degrees of longitude east of UTM zone 48N's
+    # central meridian (105E) at a mid-latitude, close to this app's own
+    # real sample-fixture location/shape (see test_overlay_sample.py) -
+    # exactly where map convergence is large enough to matter.
+    cell = 10.0
+    n_e, n_n = 40, 400
+    easting = 597500.0 + np.arange(n_e) * cell
+    northing = 5148400.0 + np.arange(n_n) * cell
+    values = np.random.default_rng(0).normal(size=(n_n, n_e))
+
+    overlay = grid_to_png_overlay(values, easting, northing, UTM_EPSG_106E, cmap_name="viridis", vmin=-3, vmax=3, cell_size_m=cell)
+
+    assert overlay["topleft"] and overlay["topright"] and overlay["bottomleft"]
+    south, west = overlay["bounds"][0]
+    north, east = overlay["bounds"][1]
+    tl_lat, tl_lon = overlay["topleft"]
+    tr_lat, tr_lon = overlay["topright"]
+    bl_lat, bl_lon = overlay["bottomleft"]
+
+    # bounds must be a valid envelope of the 3 true corners (used only as a
+    # fallback/fit-to-view helper, not for placing the image).
+    assert south <= min(tl_lat, tr_lat, bl_lat) + 1e-9
+    assert north >= max(tl_lat, tr_lat, bl_lat) - 1e-9
+    assert west <= min(tl_lon, tr_lon, bl_lon) + 1e-9
+    assert east >= max(tl_lon, tr_lon, bl_lon) - 1e-9
+
+    # A plain axis-aligned <ImageOverlay bounds=..> linearly stretches pixel
+    # fraction (col_frac, row_frac) to lat = south + row_frac*(north-south),
+    # lon = west + col_frac*(east-west) - reproduce that placement for the
+    # true east-edge, south-edge (bottom-right) node and confirm it lands a
+    # real, visually-noticeable distance from that node's actual reprojected
+    # position (the true position sample_overlay_value/the rotated overlay
+    # both use), proving this grid's real shear is large enough to matter.
+    transformer = Transformer.from_crs(f"EPSG:{UTM_EPSG_106E}", "EPSG:4326", always_xy=True)
+    true_br_lon, true_br_lat = transformer.transform(easting[-1] + cell / 2.0, northing[0] - cell / 2.0)
+    naive_br_lat = south  # row_frac=0 -> south edge
+    naive_br_lon = east  # col_frac=1 -> east edge
+
+    import math
+
+    dlat_m = (naive_br_lat - true_br_lat) * 111320
+    dlon_m = (naive_br_lon - true_br_lon) * 111320 * math.cos(math.radians(true_br_lat))
+    shear_error_m = math.hypot(dlat_m, dlon_m)
+    assert shear_error_m > 5.0  # a real, visually-noticeable amount
