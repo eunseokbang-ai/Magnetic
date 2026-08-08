@@ -377,6 +377,63 @@ function TargetDetectionLayer({ targets }) {
   return null;
 }
 
+// Structure-distortion auto-scan results (store.py::scan_structure_distortion):
+// buffered OpenStreetMap building/road regions as filled polygons, plus the
+// signal-only compact-anomaly candidates as points colored by whether they
+// landed inside one of those regions - a solid highlighted outline marks
+// whichever ones are currently checked in StructureDistortionPanel, so the
+// selection being about to be smoothed is visible on the map before applying.
+function StructureCandidateLayer({ result, selectedPolygonIndices, selectedAnomalyIndices }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    if (!result) return;
+
+    (result.structure_polygons || []).forEach((ring, i) => {
+      const selected = selectedPolygonIndices?.has(i);
+      const poly = L.polygon(ring, {
+        color: selected ? "#0f766e" : "#5eead4",
+        weight: selected ? 3 : 1.5,
+        fillColor: "#0f766e",
+        fillOpacity: selected ? 0.25 : 0.1,
+        dashArray: selected ? null : "4,3",
+      });
+      poly.bindTooltip(`구조물 영역 #${i + 1}`, { sticky: true });
+      group.addLayer(poly);
+    });
+
+    (result.anomalies || []).forEach((a, i) => {
+      const selected = selectedAnomalyIndices?.has(i);
+      const color = a.matched_structure ? "#0f766e" : "#b45309";
+      const marker = L.circleMarker([a.lat, a.lon], {
+        radius: selected ? 8 : 6,
+        color: selected ? "#111827" : color,
+        weight: selected ? 2 : 1,
+        fillColor: color,
+        fillOpacity: 0.7,
+      });
+      marker.bindTooltip(
+        `${a.matched_structure ? "구조물 매칭" : "미매칭 (직접 확인 필요)"}<br/>` +
+          `첨두이상: ${a.peak_anomaly_nt.toFixed(1)} nT<br/>크기: ${a.footprint_m.toFixed(1)} m<br/>적합도: ${a.fit_quality.toFixed(2)}`,
+        { sticky: true }
+      );
+      group.addLayer(marker);
+    });
+  }, [result, selectedPolygonIndices, selectedAnomalyIndices]);
+
+  return null;
+}
+
 // What Project.sample_overlay_value's "label" field (the base value field
 // or the active transform key) actually reads out as: a short Korean name
 // to disambiguate what's pinned, and the physical unit of that quantity -
@@ -502,6 +559,9 @@ export default function MapView({
   measureMode,
   measurements,
   onMeasureShapeDrawn,
+  structureScanResult,
+  selectedStructurePolygonIndices,
+  selectedStructureAnomalyIndices,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -574,6 +634,13 @@ export default function MapView({
       {eulerSolutions && <EulerLayer solutions={eulerSolutions} />}
       {detectedTargets && <TargetDetectionLayer targets={detectedTargets} />}
       {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
+      {structureScanResult && (
+        <StructureCandidateLayer
+          result={structureScanResult}
+          selectedPolygonIndices={selectedStructurePolygonIndices}
+          selectedAnomalyIndices={selectedStructureAnomalyIndices}
+        />
+      )}
 
       <DrawControl enabled={drawMode} shapeType={drawShapeType} onShapeDrawn={onShapeDrawn} />
       <DrawControl

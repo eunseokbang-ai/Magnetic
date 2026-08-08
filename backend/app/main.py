@@ -30,6 +30,7 @@ from .models import (
     PolygonExportRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    StructureScanRequest,
     TargetDetectionRequest,
     TileBboxRequest,
     TransformRequest,
@@ -397,6 +398,12 @@ def euler_deconvolution(project_id: str, req: EulerDeconvolutionRequest):
 def target_detection(project_id: str, req: TargetDetectionRequest):
     project = store.get(project_id)
     return project.run_target_detection(req)
+
+
+@app.post("/api/projects/{project_id}/structure-scan")
+def structure_scan(project_id: str, req: StructureScanRequest):
+    project = store.get(project_id)
+    return project.scan_structure_distortion(req)
 
 
 @app.post("/api/projects/{project_id}/multiscale-edges")

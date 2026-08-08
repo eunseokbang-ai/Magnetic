@@ -314,11 +314,15 @@ class ManualSmoothRequest(BaseModel):
     instead of being fabricated from a fitted model. See
     store.py::_apply_manual_smoothing. Points are targeted either by an
     explicit point_id list (e.g. a drag-selected range on a line's time
-    series chart) or by a lat/lon polygon (e.g. drawn on the map over a
-    structure visible in an imported orthophoto reference layer)."""
-    mode: Literal["point_ids", "polygon", "reset"]
+    series chart), a single lat/lon polygon (e.g. drawn on the map over a
+    structure visible in an imported orthophoto reference layer), or a
+    batch of polygons at once (mode "polygons" - e.g. every region the
+    structure-distortion auto-scan found and the user confirmed; unioned
+    into the same single history entry rather than one call per region)."""
+    mode: Literal["point_ids", "polygon", "polygons", "reset"]
     point_ids: Optional[list[int]] = None
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...]
+    polygons: Optional[list[list[list[float]]]] = None  # [[[lat, lon], ...], ...]
 
 
 class IntermagnetFetchRequest(BaseModel):
@@ -458,6 +462,35 @@ class TargetDetectionRequest(BaseModel):
     fit_window_m: float = Field(8.0, gt=0)
     max_depth_m: float = Field(5.0, gt=0)
     min_fit_quality: float = Field(0.3, ge=0, le=1)
+
+
+class StructureScanRequest(BaseModel):
+    """Auto-detect ground-structure-caused magnetic distortion by
+    combining an OpenStreetMap building/road location prior with the same
+    compact-anomaly signal detector used for near-surface target
+    detection (see TargetDetectionRequest) - see
+    processing/osm_structures.py and store.py::scan_structure_distortion.
+    Defaults are structure-scale rather than mine/UXO-scale: coarser
+    detection grid, larger allowed footprint, more lenient fit quality
+    (buildings are messier, less point-like sources than a compact
+    target)."""
+    cell_size_m: float = Field(2.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    # How far a building's/road's magnetic influence (rebar, buried
+    # utilities, guardrails) is assumed to reach beyond its mapped
+    # footprint - also how far apart nearby structures' regions get
+    # merged into one when applying smoothing.
+    building_buffer_m: float = Field(10.0, gt=0)
+    road_buffer_m: float = Field(6.0, gt=0)
+    # If omitted, auto = threshold_k * robust std of the anomaly grid.
+    amplitude_threshold_nt: Optional[float] = Field(None, gt=0)
+    threshold_k: float = Field(4.0, gt=0)
+    min_footprint_m: float = Field(1.0, gt=0)
+    max_footprint_m: float = Field(40.0, gt=0)
+    fit_window_m: float = Field(25.0, gt=0)
+    max_depth_m: float = Field(10.0, gt=0)
+    min_fit_quality: float = Field(0.2, ge=0, le=1)
 
 
 class MultiscaleEdgeRequest(BaseModel):

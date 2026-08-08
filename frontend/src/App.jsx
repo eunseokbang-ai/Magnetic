@@ -13,7 +13,7 @@ import LineProfileView from "./components/LineProfileView";
 import BaseStationView from "./components/BaseStationView";
 import NearestIntermagnetComparisonView from "./components/NearestIntermagnetComparisonView";
 import OfflineMapPanel from "./components/OfflineMapPanel";
-import { pathLength, polygonArea, formatDistance, formatArea } from "./geoMeasure";
+import { pathLength, polygonArea, formatDistance, formatArea, circlePolygon } from "./geoMeasure";
 
 // plotly.js-dist-min alone is ~4.7MB unminified - only the 3D volume view
 // needs it, and most sessions never open it, so it's split into its own
@@ -27,6 +27,7 @@ import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
 import TargetDetectionPanel from "./components/TargetDetectionPanel";
+import StructureDistortionPanel from "./components/StructureDistortionPanel";
 
 const toggleButtonStyle = {
   width: 36,
@@ -59,6 +60,18 @@ const DEFAULT_TARGET_DETECTION_PARAMS = {
   fit_window_m: 8.0,
   max_depth_m: 5.0,
   min_fit_quality: 0.3,
+};
+
+const DEFAULT_STRUCTURE_SCAN_PARAMS = {
+  cell_size_m: 2.0,
+  building_buffer_m: 10.0,
+  road_buffer_m: 6.0,
+  threshold_k: 4.0,
+  min_footprint_m: 1.0,
+  max_footprint_m: 40.0,
+  fit_window_m: 25.0,
+  max_depth_m: 10.0,
+  min_fit_quality: 0.2,
 };
 
 const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
@@ -308,6 +321,14 @@ export default function App() {
   const [targetDetectionResult, setTargetDetectionResult] = useState(null);
   const [targetDetectionError, setTargetDetectionError] = useState(null);
   const [showDetectedTargets, setShowDetectedTargets] = useState(true);
+  const [structureScanParams, setStructureScanParams] = useState(DEFAULT_STRUCTURE_SCAN_PARAMS);
+  const [structureScanRunning, setStructureScanRunning] = useState(false);
+  const [structureScanResult, setStructureScanResult] = useState(null);
+  const [structureScanError, setStructureScanError] = useState(null);
+  const [structureScanShow, setStructureScanShow] = useState(true);
+  const [structureScanApplying, setStructureScanApplying] = useState(false);
+  const [selectedStructurePolygonIndices, setSelectedStructurePolygonIndices] = useState(new Set());
+  const [selectedStructureAnomalyIndices, setSelectedStructureAnomalyIndices] = useState(new Set());
 
   // Drone and base uploads can both fire ensureProject() before the
   // projectId state update from the first call has re-rendered, which
@@ -1254,6 +1275,77 @@ export default function App() {
     }
   };
 
+  const handleRunStructureScan = async () => {
+    try {
+      setStructureScanError(null);
+      setStructureScanRunning(true);
+      const resp = await api.scanStructureDistortion(projectId, structureScanParams);
+      setStructureScanResult(resp);
+      // Mapped buildings/roads are real structures almost by definition,
+      // so pre-select all of them for a one-click bulk apply (this is the
+      // whole point - replacing drawing one polygon per structure by
+      // hand). A signal spike with no matching mapped structure gets left
+      // unchecked though, since that could just as easily be real geology
+      // as an unmapped structure - worth a deliberate look before
+      // smoothing it away.
+      setSelectedStructurePolygonIndices(new Set((resp.structure_polygons || []).map((_p, i) => i)));
+      setSelectedStructureAnomalyIndices(
+        new Set((resp.anomalies || []).map((a, i) => (a.matched_structure ? i : null)).filter((i) => i !== null))
+      );
+    } catch (e) {
+      setStructureScanError(e.message || String(e));
+    } finally {
+      setStructureScanRunning(false);
+    }
+  };
+
+  const handleToggleStructurePolygon = (i) => {
+    setSelectedStructurePolygonIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const handleToggleStructureAnomaly = (i) => {
+    setSelectedStructureAnomalyIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const handleApplyStructureSmoothing = async () => {
+    if (!structureScanResult) return;
+    try {
+      setError(null);
+      setStructureScanApplying(true);
+      const polygons = [];
+      for (const i of selectedStructurePolygonIndices) {
+        polygons.push(structureScanResult.structure_polygons[i]);
+      }
+      for (const i of selectedStructureAnomalyIndices) {
+        const a = structureScanResult.anomalies[i];
+        // point candidates aren't polygons on their own - a small circle
+        // covering the detected footprint stands in for one, same as a
+        // hand-drawn region would.
+        polygons.push(circlePolygon(a.lat, a.lon, Math.max(a.footprint_m, 3)));
+      }
+      if (polygons.length === 0) return;
+      const summary = await api.applySmoothing(projectId, { mode: "polygons", polygons });
+      if (Array.isArray(summary.manual_smooth_point_ids)) {
+        setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
+      }
+      await _afterSmoothingApplied(summary);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setStructureScanApplying(false);
+    }
+  };
+
   const handleSendChatMessage = async (text) => {
     try {
       setChatError(null);
@@ -1759,6 +1851,9 @@ export default function App() {
           measureMode={measureMode}
           measurements={measurements}
           onMeasureShapeDrawn={handleMeasureShapeDrawn}
+          structureScanResult={structureScanShow ? structureScanResult : null}
+          selectedStructurePolygonIndices={selectedStructurePolygonIndices}
+          selectedStructureAnomalyIndices={selectedStructureAnomalyIndices}
         />
         {volumeData && (
           <Suspense
@@ -1852,6 +1947,25 @@ export default function App() {
           canExportBln={!!lastDrawnPolygon}
           showRampPoints={showRampPoints}
           onToggleShowRampPoints={setShowRampPoints}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-1. 지상구조물 왜곡 자동탐지 (OSM + 신호분석)</h2>
+        <StructureDistortionPanel
+          ready={!!processSummary}
+          params={structureScanParams}
+          setParams={setStructureScanParams}
+          onRun={handleRunStructureScan}
+          running={structureScanRunning}
+          result={structureScanResult}
+          error={structureScanError}
+          showOnMap={structureScanShow}
+          setShowOnMap={setStructureScanShow}
+          selectedPolygonIndices={selectedStructurePolygonIndices}
+          onTogglePolygon={handleToggleStructurePolygon}
+          selectedAnomalyIndices={selectedStructureAnomalyIndices}
+          onToggleAnomaly={handleToggleStructureAnomaly}
+          onApplySelected={handleApplyStructureSmoothing}
+          applying={structureScanApplying}
         />
 
         {flightPathEditorOpen && (

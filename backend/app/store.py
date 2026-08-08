@@ -28,6 +28,7 @@ from .models import (
     MultiscaleEdgeRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    StructureScanRequest,
     TargetDetectionRequest,
     TransformRequest,
 )
@@ -46,6 +47,7 @@ from .processing.intermagnet import (
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
+from .processing.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
 from .processing.diurnal import apply_diurnal_correction
 from .processing.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
 from .processing.gridding import GridResult, grid_points
@@ -1189,12 +1191,25 @@ class Project:
                 if not req.point_ids:
                     raise ProjectError("point_ids가 필요합니다.")
                 new_ids = set(req.point_ids)
-            else:
+            elif req.mode == "polygon":
                 if not req.polygon or len(req.polygon) < 3:
                     raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
                 poly_path = MplPath([(pt[1], pt[0]) for pt in req.polygon])  # (lon, lat)
                 inside = poly_path.contains_points(np.column_stack([base_df["lon"], base_df["lat"]]))
                 new_ids = set(base_df.loc[inside, "point_id"])
+            else:  # "polygons" - a batch (e.g. every region a structure-
+                # distortion auto-scan found and the user confirmed),
+                # unioned into this single call/history entry instead of
+                # one call per region.
+                if not req.polygons:
+                    raise ProjectError("polygons가 필요합니다.")
+                new_ids = set()
+                for polygon in req.polygons:
+                    if len(polygon) < 3:
+                        continue
+                    poly_path = MplPath([(pt[1], pt[0]) for pt in polygon])  # (lon, lat)
+                    inside = poly_path.contains_points(np.column_stack([base_df["lon"], base_df["lat"]]))
+                    new_ids |= set(base_df.loc[inside, "point_id"])
             self.manual_smooth_point_ids |= new_ids
 
         self.processed = apply_manual_smoothing(base_df, self.manual_smooth_point_ids)
@@ -1720,6 +1735,130 @@ class Project:
         }
         self.target_summary_cache = summary
         return summary
+
+    def scan_structure_distortion(self, req: StructureScanRequest) -> dict:
+        """Combine an OpenStreetMap building/road location prior with the
+        same compact-anomaly signal detector used for near-surface target
+        detection (run_target_detection) to auto-generate the regions the
+        "지도에서 왜곡 영역 그려 스무딩" tool would otherwise need one
+        hand-drawn polygon per structure for - see
+        processing/osm_structures.py.
+
+        Returns both the buffered structure polygons (regardless of
+        whether a signal anomaly matched them - a subtle building without
+        a peak reaching the detection threshold is still worth a visual
+        check) and the compact anomalies the signal-only side found, each
+        tagged with whether it falls inside a mapped structure's buffered
+        region - lets the caller show "this spike lines up with a mapped
+        building" separately from "no mapped structure here at all, worth
+        a closer look (unmapped structure, or possibly real geology)"
+        instead of blindly trusting either signal alone."""
+        if self.processed is None or self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다.")
+
+        active = self._active_mask()
+        df = self.processed.loc[active]
+        if df.empty:
+            raise ProjectError("유효한 측선 포인트가 없습니다.")
+
+        lat_min, lat_max = float(df["lat"].min()), float(df["lat"].max())
+        lon_min, lon_max = float(df["lon"].min()), float(df["lon"].max())
+        margin_m = 50.0
+        lat_margin = margin_m / 111_000.0
+        lon_margin = margin_m / (111_000.0 * max(np.cos(np.radians((lat_min + lat_max) / 2)), 0.1))
+
+        try:
+            structures = fetch_osm_structures(
+                lat_min - lat_margin, lon_min - lon_margin, lat_max + lat_margin, lon_max + lon_margin
+            )
+        except OsmFetchError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        structure_polygons = buffer_structures_to_polygons(
+            structures, self.utm_epsg, req.building_buffer_m, req.road_buffer_m
+        )
+
+        x_span = float(df["x"].max() - df["x"].min())
+        y_span = float(df["y"].max() - df["y"].min())
+        est_cells = (x_span / req.cell_size_m + 1) * (y_span / req.cell_size_m + 1)
+        if est_cells > TARGET_DETECTION_GRID_CELL_CAP:
+            raise ProjectError(
+                f"탐지 격자가 너무 촘촘합니다 (예상 셀 수 약 {int(est_cells):,}개, 상한 {TARGET_DETECTION_GRID_CELL_CAP:,}개). "
+                "탐지 격자 크기(m)를 늘리거나, 폴리곤으로 관심 영역만 남기고 나머지 측선을 제외한 뒤 다시 시도하세요."
+            )
+
+        # Along-line smoothing off, same reasoning as run_target_detection:
+        # this hunts for compact, localized anomalies, which a low-pass
+        # tuned to the (much larger) line spacing would blur away.
+        grid = self._grid_for("anomaly", req.cell_size_m, req.method, req.max_distance_m, along_line_smooth=False)
+
+        if req.amplitude_threshold_nt is not None:
+            threshold_nt = req.amplitude_threshold_nt
+        else:
+            finite = grid.values[np.isfinite(grid.values)]
+            robust_std = float(1.4826 * np.median(np.abs(finite - np.median(finite)))) if finite.size else 0.0
+            threshold_nt = max(req.threshold_k * robust_std, 1e-6)
+
+        candidates = detect_targets(
+            df["x"].to_numpy(),
+            df["y"].to_numpy(),
+            df["anomaly"].to_numpy(),
+            grid.values,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.inclination_deg,
+            self.declination_deg,
+            threshold_nt=threshold_nt,
+            min_footprint_m=req.min_footprint_m,
+            max_footprint_m=req.max_footprint_m,
+            fit_window_m=req.fit_window_m,
+            max_depth_m=req.max_depth_m,
+            min_fit_quality=req.min_fit_quality,
+        )
+
+        structure_polys_local = []
+        if structure_polygons:
+            to_local = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            for ring in structure_polygons:
+                xs, ys = to_local.transform([p[1] for p in ring], [p[0] for p in ring])
+                structure_polys_local.append(MplPath(list(zip(xs, ys))))
+
+        transformer = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
+        anomaly_dicts = []
+        if candidates:
+            lons, lats = transformer.transform([c.x for c in candidates], [c.y for c in candidates])
+        else:
+            lons, lats = [], []
+        for c, lat, lon in zip(candidates, lats, lons):
+            matched = any(path.contains_point((c.x, c.y)) for path in structure_polys_local)
+            anomaly_dicts.append(
+                {
+                    "lat": float(lat),
+                    "lon": float(lon),
+                    "peak_anomaly_nt": c.peak_anomaly_nt,
+                    "footprint_m": c.footprint_m,
+                    "fit_quality": c.fit_quality,
+                    "matched_structure": matched,
+                }
+            )
+        # matched-and-confident first - the most trustworthy "this is
+        # almost certainly cultural noise" candidates, read top-down.
+        anomaly_dicts.sort(key=lambda d: (not d["matched_structure"], -d["fit_quality"]))
+
+        return {
+            "n_buildings": len(structures.buildings),
+            "n_roads": len(structures.roads),
+            "structure_polygons": structure_polygons,
+            "n_structure_polygons": len(structure_polygons),
+            "amplitude_threshold_nt": threshold_nt,
+            "cell_size_m": grid.cell_size_m,
+            "anomalies": anomaly_dicts,
+            "n_anomalies": len(anomaly_dicts),
+            "n_matched": sum(1 for a in anomaly_dicts if a["matched_structure"]),
+        }
 
     def load_dem(self, data: bytes, name: str) -> dict:
         try:

@@ -57,3 +57,17 @@ export function formatArea(m2) {
   if (m2 >= 1e4) return `${(m2 / 1e4).toFixed(3)} ha`;
   return `${m2.toFixed(1)} m²`;
 }
+
+// A small circular ring of [lat, lon] points around a center, radiusM out -
+// e.g. to turn a single detected point anomaly (which the manual-smoothing
+// polygon mode has no notion of) into a polygon covering its footprint.
+export function circlePolygon(lat, lon, radiusM, nPoints = 16) {
+  const mPerDegLat = (Math.PI / 180) * EARTH_RADIUS_M;
+  const mPerDegLng = mPerDegLat * Math.cos(toRad(lat));
+  const ring = [];
+  for (let i = 0; i < nPoints; i++) {
+    const theta = (2 * Math.PI * i) / nPoints;
+    ring.push([lat + (radiusM * Math.sin(theta)) / mPerDegLat, lon + (radiusM * Math.cos(theta)) / mPerDegLng]);
+  }
+  return ring;
+}

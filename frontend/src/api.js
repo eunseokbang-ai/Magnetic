@@ -173,6 +173,10 @@ export function applySmoothing(projectId, req) {
   return request(`/projects/${projectId}/smooth`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function scanStructureDistortion(projectId, req) {
+  return request(`/projects/${projectId}/structure-scan`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function estimateOfflineTiles(req) {
   return request(`/tiles/estimate`, { method: "POST", body: JSON.stringify(req) });
 }
