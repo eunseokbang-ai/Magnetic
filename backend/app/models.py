@@ -576,6 +576,54 @@ class QcCertificateRequest(BaseModel):
     max_excluded_pct: float = Field(30.0, gt=0)
 
 
+class LineamentRequest(BaseModel):
+    """See processing/lineaments.py. `source` selects which derivative of
+    the grid ridge-maxima are traced on - THD/analytic-signal/tilt/1VD are
+    the standard lineament-extraction inputs (a plain TMI/anomaly grid has
+    no sharp ridge over a contact the way its derivatives do)."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    source: Literal["thd", "as", "tilt", "1vd"] = "thd"
+    percentile_threshold: float = Field(90.0, gt=0, le=100)
+    min_segment_points: int = Field(4, ge=2)
+    min_length_m: float = Field(0.0, ge=0)
+    rose_bin_width_deg: float = Field(10.0, gt=0, le=90)
+    max_gap_cells: float = Field(2.5, gt=0)
+
+
+class TiltDepthRequest(BaseModel):
+    """See processing/depth_estimation.py:tilt_depth_estimates (Salem et
+    al. 2007)."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    min_depth_m: float = Field(1.0, gt=0)
+    max_depth_m: float = Field(500.0, gt=0)
+
+
+class AnalyticSignalDepthRequest(BaseModel):
+    """See processing/depth_estimation.py:analytic_signal_depth_estimates
+    (Nabighian 1972 / Roest et al. 1992 half-width method)."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    percentile_threshold: float = Field(90.0, gt=0, le=100)
+    search_radius_cells: int = Field(15, gt=0)
+
+
+class SpectralDepthRequest(BaseModel):
+    """See processing/depth_estimation.py:spectral_depth_diagnostic
+    (Spector & Grant 1970)."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+
+
 class GridConfidenceRequest(BaseModel):
     """Requests a companion "how much should I trust this cell" layer for
     an already-gridded result - see processing/gridding.py::grid_confidence

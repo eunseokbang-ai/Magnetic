@@ -17,6 +17,7 @@ from pyproj import Transformer
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
 from .models import (
+    AnalyticSignalDepthRequest,
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
     GridConfidenceRequest,
@@ -24,14 +25,17 @@ from .models import (
     InversionParams,
     InversionSectionRequest,
     InversionSliceRequest,
+    LineamentRequest,
     ManualExcludeRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
     PowerSpectrumRequest,
     ProcessParams,
     QcCertificateRequest,
+    SpectralDepthRequest,
     StructureScanRequest,
     TargetDetectionRequest,
+    TiltDepthRequest,
     TransformRequest,
 )
 from .processing.base_qc import process_base_station
@@ -121,6 +125,12 @@ from .processing.transforms import (
     upward_continuation,
     vertical_derivative,
 )
+from .processing.depth_estimation import (
+    analytic_signal_depth_estimates,
+    spectral_depth_diagnostic,
+    tilt_depth_estimates,
+)
+from .processing.lineaments import extract_lineaments
 from .processing.microlevel import apply_microleveling
 from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
 from .processing.noise_qc import compute_difference_qc
@@ -223,6 +233,10 @@ class Project:
     repeatability_raw: pd.DataFrame | None = None
     repeatability_summary_cache: dict | None = None
     multiscale_edges_summary_cache: dict | None = None
+    lineament_summary_cache: dict | None = None
+    tilt_depth_cache: dict | None = None
+    as_depth_cache: dict | None = None
+    spectral_depth_cache: dict | None = None
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
     target_summary_cache: dict | None = None
@@ -1851,6 +1865,69 @@ class Project:
         }
         self.multiscale_edges_summary_cache = summary
         return summary
+
+    def run_lineament_extraction(self, req: LineamentRequest) -> dict:
+        """Magnetic lineament extraction + rose-diagram structural
+        statistics - see processing/lineaments.py. Along-line smoothing
+        stays on (the default) for the underlying grid: lineament
+        extraction reads a derivative of that grid, which would otherwise
+        amplify any flight-line-parallel corrugation into spurious
+        "lineaments" running exactly along the survey's own line
+        direction."""
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        source_grid = {
+            "thd": lambda: total_horizontal_derivative(grid.values, grid.cell_size_m),
+            "as": lambda: analytic_signal(grid.values, grid.cell_size_m),
+            "tilt": lambda: tilt_angle(grid.values, grid.cell_size_m),
+            "1vd": lambda: vertical_derivative(grid.values, grid.cell_size_m, order=1),
+        }[req.source]()
+        result = extract_lineaments(
+            source_grid,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.utm_epsg,
+            percentile_threshold=req.percentile_threshold,
+            min_segment_points=req.min_segment_points,
+            min_length_m=req.min_length_m,
+            rose_bin_width_deg=req.rose_bin_width_deg,
+            max_gap_cells=req.max_gap_cells,
+        )
+        result["source"] = req.source
+        self.lineament_summary_cache = result
+        return result
+
+    def run_tilt_depth(self, req: TiltDepthRequest) -> dict:
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        result = tilt_depth_estimates(
+            grid.values, grid.easting, grid.northing, grid.cell_size_m, self.utm_epsg,
+            min_depth_m=req.min_depth_m, max_depth_m=req.max_depth_m,
+        )
+        self.tilt_depth_cache = result
+        return result
+
+    def run_analytic_signal_depth(self, req: AnalyticSignalDepthRequest) -> dict:
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        result = analytic_signal_depth_estimates(
+            grid.values, grid.easting, grid.northing, grid.cell_size_m, self.utm_epsg,
+            percentile_threshold=req.percentile_threshold, search_radius_cells=req.search_radius_cells,
+        )
+        self.as_depth_cache = result
+        return result
+
+    def run_spectral_depth(self, req: SpectralDepthRequest) -> dict:
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        result = spectral_depth_diagnostic(grid.values, grid.cell_size_m)
+        self.spectral_depth_cache = result
+        return result
 
     def get_power_spectrum(self, req: PowerSpectrumRequest) -> dict:
         if self.processed is None:

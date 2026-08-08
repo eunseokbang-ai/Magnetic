@@ -28,6 +28,8 @@ import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
 import TargetDetectionPanel from "./components/TargetDetectionPanel";
 import QcCertificatePanel from "./components/QcCertificatePanel";
+import LineamentPanel from "./components/LineamentPanel";
+import DepthEstimationPanel from "./components/DepthEstimationPanel";
 import StructureDistortionPanel from "./components/StructureDistortionPanel";
 
 const toggleButtonStyle = {
@@ -69,6 +71,21 @@ const DEFAULT_QC_CERTIFICATE_PARAMS = {
   max_sampling_gap_pct: 5.0,
   max_excluded_pct: 30.0,
 };
+
+const DEFAULT_LINEAMENT_PARAMS = {
+  value: "anomaly",
+  cell_size_m: 10.0,
+  method: "nearest",
+  source: "thd",
+  percentile_threshold: 90.0,
+  min_segment_points: 4,
+  min_length_m: 0.0,
+  rose_bin_width_deg: 10.0,
+  max_gap_cells: 2.5,
+};
+
+const DEFAULT_TILT_DEPTH_PARAMS = { min_depth_m: 1.0, max_depth_m: 500.0 };
+const DEFAULT_AS_DEPTH_PARAMS = { percentile_threshold: 90.0, search_radius_cells: 15 };
 
 const DEFAULT_STRUCTURE_SCAN_PARAMS = {
   cell_size_m: 2.0,
@@ -350,6 +367,25 @@ export default function App() {
   const [qcCertificateRunning, setQcCertificateRunning] = useState(false);
   const [qcCertificateResult, setQcCertificateResult] = useState(null);
   const [qcCertificateError, setQcCertificateError] = useState(null);
+  const [lineamentParams, setLineamentParams] = useState(DEFAULT_LINEAMENT_PARAMS);
+  const [lineamentRunning, setLineamentRunning] = useState(false);
+  const [lineamentResult, setLineamentResult] = useState(null);
+  const [lineamentError, setLineamentError] = useState(null);
+  const [showLineaments, setShowLineaments] = useState(true);
+  const [depthEstimationCellSize, setDepthEstimationCellSize] = useState(10.0);
+  const [tiltDepthParams, setTiltDepthParams] = useState(DEFAULT_TILT_DEPTH_PARAMS);
+  const [tiltDepthRunning, setTiltDepthRunning] = useState(false);
+  const [tiltDepthResult, setTiltDepthResult] = useState(null);
+  const [tiltDepthError, setTiltDepthError] = useState(null);
+  const [showTiltDepth, setShowTiltDepth] = useState(true);
+  const [asDepthParams, setAsDepthParams] = useState(DEFAULT_AS_DEPTH_PARAMS);
+  const [asDepthRunning, setAsDepthRunning] = useState(false);
+  const [asDepthResult, setAsDepthResult] = useState(null);
+  const [asDepthError, setAsDepthError] = useState(null);
+  const [showAsDepth, setShowAsDepth] = useState(true);
+  const [spectralDepthRunning, setSpectralDepthRunning] = useState(false);
+  const [spectralDepthResult, setSpectralDepthResult] = useState(null);
+  const [spectralDepthError, setSpectralDepthError] = useState(null);
   const [structureScanParams, setStructureScanParams] = useState(DEFAULT_STRUCTURE_SCAN_PARAMS);
   const [structureScanRunning, setStructureScanRunning] = useState(false);
   const [structureScanResult, setStructureScanResult] = useState(null);
@@ -1426,6 +1462,58 @@ export default function App() {
     }
   };
 
+  const handleRunLineamentExtraction = async () => {
+    try {
+      setLineamentError(null);
+      setLineamentRunning(true);
+      const resp = await api.runLineamentExtraction(projectId, lineamentParams);
+      setLineamentResult(resp);
+    } catch (e) {
+      setLineamentError(e.message || String(e));
+    } finally {
+      setLineamentRunning(false);
+    }
+  };
+
+  const handleRunTiltDepth = async () => {
+    try {
+      setTiltDepthError(null);
+      setTiltDepthRunning(true);
+      const resp = await api.runTiltDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest", ...tiltDepthParams });
+      setTiltDepthResult(resp);
+    } catch (e) {
+      setTiltDepthError(e.message || String(e));
+    } finally {
+      setTiltDepthRunning(false);
+    }
+  };
+
+  const handleRunAsDepth = async () => {
+    try {
+      setAsDepthError(null);
+      setAsDepthRunning(true);
+      const resp = await api.runAnalyticSignalDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest", ...asDepthParams });
+      setAsDepthResult(resp);
+    } catch (e) {
+      setAsDepthError(e.message || String(e));
+    } finally {
+      setAsDepthRunning(false);
+    }
+  };
+
+  const handleRunSpectralDepth = async () => {
+    try {
+      setSpectralDepthError(null);
+      setSpectralDepthRunning(true);
+      const resp = await api.runSpectralDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest" });
+      setSpectralDepthResult(resp);
+    } catch (e) {
+      setSpectralDepthError(e.message || String(e));
+    } finally {
+      setSpectralDepthRunning(false);
+    }
+  };
+
   const handleRunStructureScan = async () => {
     try {
       setStructureScanError(null);
@@ -2017,6 +2105,9 @@ export default function App() {
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
           detectedTargets={showDetectedTargets ? targetDetectionResult?.targets : null}
           multiscaleEdgePoints={showMultiscaleLayer ? multiscaleResult?.points : null}
+          lineaments={showLineaments ? lineamentResult?.lineaments : null}
+          tiltDepthPoints={showTiltDepth ? tiltDepthResult?.points : null}
+          analyticSignalDepthPoints={showAsDepth ? asDepthResult?.points : null}
           onBoundsChange={handleMapBoundsChange}
           inspectMode={inspectMode}
           inspectPoints={inspectPoints}
@@ -2236,6 +2327,52 @@ export default function App() {
             setShowSolutions={setShowEulerSolutions}
           />
         </details>
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-3. 자력 리니어먼트 추출 + 로즈다이어그램</h2>
+        <LineamentPanel
+          ready={!!processSummary}
+          params={lineamentParams}
+          setParams={setLineamentParams}
+          onRun={handleRunLineamentExtraction}
+          running={lineamentRunning}
+          result={lineamentResult}
+          error={lineamentError}
+          showOnMap={showLineaments}
+          setShowOnMap={setShowLineaments}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-4. 빠른 심도추정 (틸트각 / AS / 스펙트럼)</h2>
+        <DepthEstimationPanel
+          ready={!!processSummary}
+          cellSizeM={depthEstimationCellSize}
+          setCellSizeM={setDepthEstimationCellSize}
+          tilt={{
+            params: tiltDepthParams,
+            setParams: setTiltDepthParams,
+            onRun: handleRunTiltDepth,
+            running: tiltDepthRunning,
+            result: tiltDepthResult,
+            error: tiltDepthError,
+            showOnMap: showTiltDepth,
+            setShowOnMap: setShowTiltDepth,
+          }}
+          analyticSignal={{
+            params: asDepthParams,
+            setParams: setAsDepthParams,
+            onRun: handleRunAsDepth,
+            running: asDepthRunning,
+            result: asDepthResult,
+            error: asDepthError,
+            showOnMap: showAsDepth,
+            setShowOnMap: setShowAsDepth,
+          }}
+          spectral={{
+            onRun: handleRunSpectralDepth,
+            running: spectralDepthRunning,
+            result: spectralDepthResult,
+            error: spectralDepthError,
+          }}
+        />
 
         <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>
           <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}>

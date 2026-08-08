@@ -22,9 +22,14 @@ import numpy as np
 from .gridding import grid_points
 
 
-def estimate_source_depth_m(grid_values: np.ndarray, cell_size_m: float) -> float | None:
-    """Spector & Grant (1970) radially-averaged spectral depth estimate.
-    Returns None if the grid is too small/uniform for a meaningful fit."""
+def spectral_depth_diagnostics(grid_values: np.ndarray, cell_size_m: float) -> dict | None:
+    """Spector & Grant (1970) radially-averaged spectral depth estimate,
+    with the underlying radial power-spectrum points and fitted band
+    included - the shared implementation behind estimate_source_depth_m
+    below (which just wants the scalar depth, for mesh auto-sizing) and
+    processing/depth_estimation.py:spectral_depth_diagnostic (which wants
+    the full diagnostic for a QC plot). Returns None if the grid is too
+    small/uniform for a meaningful fit."""
     values = np.asarray(grid_values, dtype=float)
     finite = np.isfinite(values)
     if finite.sum() < 16:
@@ -75,11 +80,25 @@ def estimate_source_depth_m(grid_values: np.ndarray, cell_size_m: float) -> floa
     if band.sum() < 3:
         band = np.ones_like(radial_k, dtype=bool)
 
-    slope, _ = np.polyfit(radial_k[band], ln_p[band], 1)
+    slope, intercept = np.polyfit(radial_k[band], ln_p[band], 1)
     depth = -slope / 2.0
     if not np.isfinite(depth) or depth <= 0:
         return None
-    return float(depth)
+    return {
+        "depth_m": float(depth),
+        "wavenumbers_rad_per_m": radial_k,
+        "ln_power": ln_p,
+        "fit_band_mask": band,
+        "fit_slope": float(slope),
+        "fit_intercept": float(intercept),
+    }
+
+
+def estimate_source_depth_m(grid_values: np.ndarray, cell_size_m: float) -> float | None:
+    """Spector & Grant (1970) radially-averaged spectral depth estimate.
+    Returns None if the grid is too small/uniform for a meaningful fit."""
+    diag = spectral_depth_diagnostics(grid_values, cell_size_m)
+    return diag["depth_m"] if diag is not None else None
 
 
 def _grid_shape(width: float, height: float, cell_size_m: float) -> tuple[int, int]:

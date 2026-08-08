@@ -498,6 +498,79 @@ function StructureCandidateLayer({ result, selectedPolygonIndices, selectedAnoma
   return null;
 }
 
+// Magnetic lineaments (processing/lineaments.py::extract_lineaments) as
+// polylines, colored by strike (0-180deg mapped to a hue wheel so parallel
+// structures read as the same color at a glance - matching the rose
+// diagram's own coloring, see LineamentPanel.jsx).
+function LineamentLayer({ lineaments }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    (lineaments || []).forEach((l, i) => {
+      const hue = (l.strike_deg / 180) * 360;
+      const color = `hsl(${hue}, 75%, 45%)`;
+      const line = L.polyline(l.points_latlon, { color, weight: 3, opacity: 0.85 });
+      line.bindTooltip(
+        `리니어먼트 #${i + 1}<br/>주향: ${l.strike_deg.toFixed(1)}°<br/>길이: ${l.length_m.toFixed(0)} m`,
+        { sticky: true }
+      );
+      group.addLayer(line);
+    });
+  }, [lineaments]);
+
+  return null;
+}
+
+// Quick depth-estimation point picks (tilt-depth / analytic-signal-depth,
+// processing/depth_estimation.py) as circle markers colored on a
+// blue(shallow)-to-red(deep) scale over the result's own min/max range.
+function DepthEstimationLayer({ points, color }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    const list = points || [];
+    if (list.length === 0) return;
+    const depths = list.map((p) => p.depth_m);
+    const [dmin, dmax] = minMax(depths);
+    const span = dmax - dmin || 1;
+    list.forEach((p) => {
+      const t = (p.depth_m - dmin) / span; // 0=shallow, 1=deep
+      const fillColor = `hsl(${220 - 220 * t}, 80%, 50%)`;
+      const marker = L.circleMarker([p.lat, p.lon], {
+        radius: 3,
+        color,
+        weight: 1,
+        fillColor,
+        fillOpacity: 0.8,
+      });
+      marker.bindTooltip(`심도 추정: ${p.depth_m.toFixed(1)} m`, { sticky: true });
+      group.addLayer(marker);
+    });
+  }, [points, color]);
+
+  return null;
+}
+
 // What Project.sample_overlay_value's "label" field (the base value field
 // or the active transform key) actually reads out as: a short Korean name
 // to disambiguate what's pinned, and the physical unit of that quantity -
@@ -648,6 +721,9 @@ export default function MapView({
   eulerSolutions,
   detectedTargets,
   multiscaleEdgePoints,
+  lineaments,
+  tiltDepthPoints,
+  analyticSignalDepthPoints,
   onBoundsChange,
   inspectMode,
   inspectPoints,
@@ -762,6 +838,9 @@ export default function MapView({
       {eulerSolutions && <EulerLayer solutions={eulerSolutions} />}
       {detectedTargets && <TargetDetectionLayer targets={detectedTargets} />}
       {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
+      {lineaments && <LineamentLayer lineaments={lineaments} />}
+      {tiltDepthPoints && <DepthEstimationLayer points={tiltDepthPoints} color="#1d4ed8" />}
+      {analyticSignalDepthPoints && <DepthEstimationLayer points={analyticSignalDepthPoints} color="#7c3aed" />}
       {structureScanResult && (
         <StructureCandidateLayer
           result={structureScanResult}

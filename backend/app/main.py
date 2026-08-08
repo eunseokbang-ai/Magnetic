@@ -15,6 +15,7 @@ from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
 from .chat import ChatError
 from .models import (
+    AnalyticSignalDepthRequest,
     ChatRequest,
     EulerDeconvolutionRequest,
     GridConfidenceRequest,
@@ -23,6 +24,7 @@ from .models import (
     InversionSectionRequest,
     InversionSliceRequest,
     IntermagnetFetchRequest,
+    LineamentRequest,
     LocalTileFolderRequest,
     ManualExcludeRequest,
     DisplayBoundaryRequest,
@@ -34,9 +36,11 @@ from .models import (
     PowerSpectrumRequest,
     ProcessParams,
     QcCertificateRequest,
+    SpectralDepthRequest,
     StructureScanRequest,
     TargetDetectionRequest,
     TileBboxRequest,
+    TiltDepthRequest,
     TransformRequest,
 )
 from .processing import local_tiles, tile_cache
@@ -485,6 +489,30 @@ def structure_scan(project_id: str, req: StructureScanRequest):
 def multiscale_edges(project_id: str, req: MultiscaleEdgeRequest):
     project = store.get(project_id)
     return project.run_multiscale_edges(req)
+
+
+@app.post("/api/projects/{project_id}/lineaments")
+def lineaments(project_id: str, req: LineamentRequest):
+    project = store.get(project_id)
+    return project.run_lineament_extraction(req)
+
+
+@app.post("/api/projects/{project_id}/depth-estimation/tilt")
+def tilt_depth(project_id: str, req: TiltDepthRequest):
+    project = store.get(project_id)
+    return project.run_tilt_depth(req)
+
+
+@app.post("/api/projects/{project_id}/depth-estimation/analytic-signal")
+def analytic_signal_depth(project_id: str, req: AnalyticSignalDepthRequest):
+    project = store.get(project_id)
+    return project.run_analytic_signal_depth(req)
+
+
+@app.post("/api/projects/{project_id}/depth-estimation/spectral")
+def spectral_depth(project_id: str, req: SpectralDepthRequest):
+    project = store.get(project_id)
+    return project.run_spectral_depth(req)
 
 
 @app.post("/api/projects/{project_id}/spectrum")

@@ -155,6 +155,22 @@ export function runMultiscaleEdges(projectId, req) {
   return request(`/projects/${projectId}/multiscale-edges`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function runLineamentExtraction(projectId, req) {
+  return request(`/projects/${projectId}/lineaments`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runTiltDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/tilt`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runAnalyticSignalDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/analytic-signal`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runSpectralDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/spectral`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function getPowerSpectrum(projectId, req) {
   return request(`/projects/${projectId}/spectrum`, { method: "POST", body: JSON.stringify(req) });
 }
