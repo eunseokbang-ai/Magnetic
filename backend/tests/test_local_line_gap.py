@@ -148,6 +148,64 @@ def test_local_line_gap_downsampled_path_tracks_the_exact_computation():
     assert np.nanmean(np.abs(approx - exact)) < 2.0
 
 
+def _irregular_multi_line_survey(seed=2, n_lines=10, line_spacing=50.0, line_length=1200.0, along_spacing=3.0):
+    """A more realistic multi-line survey than _three_line_survey above:
+    each line's start/end trimmed by a random amount (as real lines rarely
+    all start/end at exactly the same along-track position) and given a
+    gentle bow/heading-jitter, rather than perfectly straight and equal-
+    length. Used to reproduce a real "그리드 간격을 15m 했을 때는 nodata가
+    없는데 10m 하면 중간중간 생긴다" report: the interior-fill threshold
+    only needs to reach a bit past the ideal straight-line half-gap to
+    cover this kind of everyday irregularity, and a fine grid samples the
+    threshold at far more discrete points across the same interior area
+    than a coarse one does - so a margin that's fine on paper for the
+    idealized case can still leave a few isolated interior cells just
+    outside reach only once the grid is fine enough to happen to land a
+    cell there.
+    """
+    rng = np.random.default_rng(seed)
+    xs, ys, vals, lids = [], [], [], []
+    for i in range(n_lines):
+        y0 = i * line_spacing
+        start = rng.uniform(0, 60)
+        end = line_length - rng.uniform(0, 60)
+        n_pts = int((end - start) / along_spacing)
+        x = np.linspace(start, end, n_pts)
+        y = y0 + 3.0 * np.sin(x / 250.0 + i * 0.7) + rng.normal(0, 0.3, n_pts)
+        v = 100 + 5 * np.sin(x / 100.0) + rng.normal(0, 2, n_pts)
+        xs.append(x)
+        ys.append(y)
+        vals.append(v)
+        lids.append(np.full(n_pts, i))
+    return np.concatenate(xs), np.concatenate(ys), np.concatenate(vals), np.concatenate(lids)
+
+
+def test_fine_cell_size_has_no_more_nodata_than_a_coarse_one():
+    """Regression test for a real user report: gridding a 50m-line-spacing
+    survey at 15m cell size had no nodata gaps, but reducing the cell size
+    to 10m (still coarser than the recommended 1/4-1/5 of line spacing)
+    introduced a handful of scattered nodata cells "중간중간" (here and
+    there). The interior-fill reach must not get *effectively* stingier as
+    the cell size shrinks - a finer grid should only add resolution, never
+    punch new holes in coverage a coarser grid of the same data didn't
+    have. On a somewhat messy synthetic survey (bowed lines, staggered
+    start/end points - not perfectly straight/equal-length), the previous
+    0.6 coefficient left a handful of cells unfilled at some cell sizes but
+    not others; checked all the way down to line_spacing/10 (5m here), the
+    finest ratio explicitly requested for detailed work."""
+    x, y, v, line_id = _irregular_multi_line_survey()
+    line_spacing = 50.0
+
+    nan_counts = {}
+    for cell in (15.0, 10.0, 5.0):
+        result = grid_points(
+            x, y, v, cell, method="nearest", max_distance_m=None, line_id=line_id, typical_line_spacing_m=line_spacing
+        )
+        nan_counts[cell] = int(np.isnan(result.values).sum())
+
+    assert all(n == 0 for n in nan_counts.values()), f"nodata cells remain: {nan_counts}"
+
+
 def test_typical_line_spacing_widens_hull_buffer_but_stays_bounded():
     """typical_line_spacing_m (store.py's self.line_spacing_m - a single
     robust, project-wide statistic) widens the hull cap's buffer beyond
@@ -175,6 +233,6 @@ def test_typical_line_spacing_widens_hull_buffer_but_stays_bounded():
     assert np.isnan(value_at(result_spaced, 48.0, 48.0))
     # ...while genuinely widening the fill area closer to the hull edge
     # compared to the tiny flat default (a point just past the strict
-    # hull - too far for the flat 2-cell/2m default but within 0.6*15m=9m).
+    # hull - too far for the flat 2-cell/2m default but within 1.2*15m=18m).
     assert np.isnan(value_at(result_default, 25.0, 47.0))
     assert not np.isnan(value_at(result_spaced, 25.0, 47.0))

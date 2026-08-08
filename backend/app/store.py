@@ -1272,7 +1272,9 @@ class Project:
         if max_distance_m is not None:
             return max_distance_m
         if self.line_spacing_m:
-            return max(2.0 * cell_size_m, 0.6 * self.line_spacing_m)
+            # Matches processing/gridding.py's _INTERIOR_FILL_FRACTION - see
+            # its docstring for why 0.6 left too thin a margin.
+            return max(2.0 * cell_size_m, 1.2 * self.line_spacing_m)
         return 2.0 * cell_size_m
 
     def _grid_for(

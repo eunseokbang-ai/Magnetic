@@ -28,6 +28,32 @@ _MAX_GRID_CELLS = 3_000_000
 # hull of the actual survey points - see _hull_extrapolation_mask.
 _HULL_BUFFER_CELLS = 2.0
 
+# Auto-mode interior fill reach, as a fraction of the local gap between the
+# two nearest flight lines (see _local_line_gap_m). At the exact midpoint
+# between two straight, evenly-spaced lines the nearest single point is
+# local_gap/2 away, so anything above 0.5 covers that ideal case - but real
+# lines bow, drift, have along-track point spacing/dropouts (QC/despike
+# exclusion, turns), and rarely all start/end at exactly the same along-
+# track position, which locally pushes the true nearest-point distance a
+# bit past that ideal half-gap, especially near where a shorter line ends
+# but its neighbors keep going. A coefficient of 0.6 left too thin a margin
+# for that: fine cell sizes (which sample the threshold at many more
+# discrete points across the same interior region than a coarse grid does)
+# would occasionally land a cell just past the 0.6 line and mask it out,
+# producing small "중간중간" gaps between lines that a coarser grid simply
+# never happened to sample. Tuned against a synthetic irregular multi-line
+# survey (line spacing 50m, bowed/jittered lines with staggered start/end
+# points): 0.6-1.0 all still left one or more interior cells unfilled
+# somewhere between 15m and 5m cell size, while 1.2 left none at any of
+# 15/10/5m - so gridding down to a small fraction of the line spacing (as
+# recommended for detailed work, e.g. 1/10) stays fully filled between
+# lines even on realistically messy data, not just clean synthetic ones.
+# Still fundamentally bounded, same as before: _hull_extrapolation_mask
+# below is a separate, independent hard cap that this coefficient cannot
+# push past no matter how large - see test_hull_cap_prevents_unbounded_
+# fan_extrapolation_past_line_endpoints in test_local_line_gap.py.
+_INTERIOR_FILL_FRACTION = 1.2
+
 # _local_line_gap_m's per-line cKDTree query is the dominant cost of auto
 # masking on a fine/large grid; below this cell count a single exact pass
 # is already fast enough that the downsampling machinery isn't worth it.
@@ -235,15 +261,16 @@ def grid_points(
 
     tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
     if max_distance_m is None:
-        # Auto: fill each cell out to 60% of the *local* gap between the
-        # two nearest actual flight lines at that specific location
-        # (bowed/skewed lines and locally wider-than-average spacing are
-        # accounted for directly), not a single survey-wide average -
-        # see _local_line_gap_m. Falls back to the old flat 2 cells when
-        # there's no line grouping to work with (e.g. a single line).
+        # Auto: fill each cell out to _INTERIOR_FILL_FRACTION of the
+        # *local* gap between the two nearest actual flight lines at that
+        # specific location (bowed/skewed lines and locally wider-than-
+        # average spacing are accounted for directly), not a single
+        # survey-wide average - see _local_line_gap_m. Falls back to the
+        # old flat 2 cells when there's no line grouping to work with (e.g.
+        # a single line).
         local_gap = _local_line_gap_m(easting_2d, northing_2d, x, y, line_id) if line_id is not None else None
         if local_gap is not None:
-            max_distance_grid = np.maximum(2.0 * cell_size_m, 0.6 * local_gap)
+            max_distance_grid = np.maximum(2.0 * cell_size_m, _INTERIOR_FILL_FRACTION * local_gap)
         else:
             max_distance_grid = 2.0 * cell_size_m
         # Hard cap, independent of the heuristic above: never extrapolate
@@ -264,7 +291,7 @@ def grid_points(
         # same unbounded blowup this cap exists to prevent.
         buffer_m = _HULL_BUFFER_CELLS * cell_size_m
         if typical_line_spacing_m:
-            buffer_m = max(buffer_m, 0.6 * typical_line_spacing_m)
+            buffer_m = max(buffer_m, _INTERIOR_FILL_FRACTION * typical_line_spacing_m)
         hull_mask = _hull_extrapolation_mask(easting_2d, northing_2d, x, y, buffer_m)
     else:
         max_distance_grid = max_distance_m
