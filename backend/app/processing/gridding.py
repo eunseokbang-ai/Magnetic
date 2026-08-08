@@ -278,7 +278,7 @@ def _nearest_distance(grid_x: np.ndarray, grid_y: np.ndarray, pts_x: np.ndarray,
     from scipy.spatial import cKDTree
 
     tree = cKDTree(np.column_stack([pts_x, pts_y]))
-    dist, _ = tree.query(np.column_stack([grid_x.ravel(), grid_y.ravel()]))
+    dist, _ = tree.query(np.column_stack([grid_x.ravel(), grid_y.ravel()]), workers=-1)
     return dist.reshape(grid_x.shape)
 
 
@@ -442,7 +442,11 @@ def _local_line_gap_m_exact(
     for i, lid in enumerate(lines):
         mask = line_id == lid
         tree = cKDTree(np.column_stack([pts_x[mask], pts_y[mask]]))
-        per_line_dist[i], _ = tree.query(query_pts)
+        # workers=-1: use every available core for this query - a survey
+        # with many flight lines (e.g. a real multi-day/multi-file dataset
+        # resurveyed dozens of times) pays for this loop once per line, and
+        # the query itself is trivially parallel across query points.
+        per_line_dist[i], _ = tree.query(query_pts, workers=-1)
     nearest_two = np.partition(per_line_dist, 1, axis=0)[:2]
     local_gap = nearest_two[0] + nearest_two[1]
     return local_gap.reshape(grid_x.shape)
