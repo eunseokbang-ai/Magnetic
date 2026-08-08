@@ -1826,6 +1826,27 @@ class Project:
         # gradients as any other derivative-based analysis, and this
         # request type has no UI toggle of its own for it.
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+
+        altitude_grid = None
+        if req.flight_agl_m is not None:
+            if self.processed is None:
+                raise ProjectError("자료 처리를 먼저 실행하세요.")
+            df = self.processed
+            active = self._active_mask()
+            # Gridded with the exact same points/cell size/max_distance as
+            # the anomaly grid above so the two line up cell-for-cell (same
+            # pattern run_inversion uses for its obs_grid/alt_grid pair).
+            altitude_grid = grid_points(
+                df.loc[active, "x"].to_numpy(),
+                df.loc[active, "y"].to_numpy(),
+                df.loc[active, "altitude_ellipsoidal_m"].to_numpy(),
+                grid.cell_size_m,
+                method=req.method,
+                max_distance_m=req.max_distance_m,
+                line_id=df.loc[active, "line_id"].to_numpy(),
+                typical_line_spacing_m=self.line_spacing_m,
+            ).values
+
         solutions = _euler_deconvolution_solve(
             grid.values,
             grid.easting,
@@ -1835,11 +1856,16 @@ class Project:
             structural_index=req.structural_index,
             window_size_m=req.window_size_m,
             max_depth_uncertainty_pct=req.max_depth_uncertainty_pct,
+            altitude_grid=altitude_grid,
+            flight_agl_m=req.flight_agl_m,
         )
         depths = [s.depth_m for s in solutions]
         summary = {
             "n_solutions": len(solutions),
             "structural_index": req.structural_index,
+            "depth_reference": solutions[0].depth_reference if solutions else (
+                "ground_surface" if req.flight_agl_m is not None else "flat_datum"
+            ),
             "depth_stats": _stats(pd.Series(depths)) if depths else None,
             "solutions": [
                 {

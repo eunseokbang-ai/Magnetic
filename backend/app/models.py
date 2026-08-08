@@ -478,6 +478,18 @@ class EulerDeconvolutionRequest(BaseModel):
     structural_index: float = Field(1.0, ge=0, le=3)
     window_size_m: float = Field(100.0, gt=0)
     max_depth_uncertainty_pct: float = Field(30.0, gt=0, le=200)
+    # When set, the drone's own recorded GPS altitude (already gridded and
+    # used elsewhere for IGRF/3D-inversion) is used as each observation's
+    # real z-coordinate in Euler's homogeneity equation instead of assuming
+    # every point was measured on one flat plane - the standard "draped
+    # survey" correction. This constant is the flight's height above ground
+    # (AGL, e.g. 50 for a terrain-following survey held at 50m) and is used
+    # only to relabel the solved depth as "depth below ground" instead of
+    # "depth below the local flight point" - see
+    # processing/euler_deconvolution.py and terrain.py:estimate_ground_elevation
+    # for the same assumed-AGL convention used by the 3D inversion. None
+    # (default) keeps the original flat-z=0 assumption unchanged.
+    flight_agl_m: Optional[float] = Field(None, gt=0)
 
 
 class TargetDetectionRequest(BaseModel):

@@ -343,6 +343,7 @@ export default function App() {
   const [eulerStructuralIndex, setEulerStructuralIndex] = useState(1.0);
   const [eulerWindowSize, setEulerWindowSize] = useState(100.0);
   const [eulerMaxUncertaintyPct, setEulerMaxUncertaintyPct] = useState(30.0);
+  const [eulerFlightAglM, setEulerFlightAglM] = useState(null);
   const [eulerRunning, setEulerRunning] = useState(false);
   const [eulerResult, setEulerResult] = useState(null);
   const [eulerError, setEulerError] = useState(null);
@@ -1380,6 +1381,7 @@ export default function App() {
         structural_index: eulerStructuralIndex,
         window_size_m: eulerWindowSize,
         max_depth_uncertainty_pct: eulerMaxUncertaintyPct,
+        flight_agl_m: eulerFlightAglM,
       });
       setEulerResult(resp);
     } catch (e) {
@@ -2391,6 +2393,8 @@ export default function App() {
             setWindowSize={setEulerWindowSize}
             maxUncertaintyPct={eulerMaxUncertaintyPct}
             setMaxUncertaintyPct={setEulerMaxUncertaintyPct}
+            flightAglM={eulerFlightAglM}
+            setFlightAglM={setEulerFlightAglM}
             onRun={handleRunEuler}
             running={eulerRunning}
             result={eulerResult}
