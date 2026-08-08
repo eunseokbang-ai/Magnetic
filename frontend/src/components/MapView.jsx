@@ -522,6 +522,37 @@ function InspectLayer({ active, points, onPointClick }) {
   return null;
 }
 
+// Outlines the optional user-drawn display-boundary polygon (see App.jsx's
+// boundaryPolygon state / api.js::setDisplayBoundary) so the user can see
+// exactly what area grid interpolation/extrapolation is currently clipped
+// to, on top of the automatic convex-hull cap the backend always applies.
+function BoundaryLayer({ polygon }) {
+  const map = useMap();
+  const layerRef = useRef(null);
+
+  useEffect(() => {
+    if (layerRef.current) {
+      layerRef.current.remove();
+      layerRef.current = null;
+    }
+    if (!polygon || polygon.length < 3) return undefined;
+    const layer = L.polygon(polygon, {
+      color: "#ea580c",
+      weight: 2,
+      dashArray: "6 4",
+      fill: false,
+      interactive: false,
+    }).addTo(map);
+    layerRef.current = layer;
+    return () => {
+      layer.remove();
+      layerRef.current = null;
+    };
+  }, [polygon, map]);
+
+  return null;
+}
+
 // Reports the current visible map bounds up to the parent (e.g. so the
 // offline tile download panel can offer "use the area I'm currently
 // looking at" instead of making the user type lat/lon by hand).
@@ -562,6 +593,9 @@ export default function MapView({
   structureScanResult,
   selectedStructurePolygonIndices,
   selectedStructureAnomalyIndices,
+  boundaryMode,
+  boundaryPolygon,
+  onBoundaryDrawn,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -649,6 +683,8 @@ export default function MapView({
         onShapeDrawn={onMeasureShapeDrawn}
         repeatMode
       />
+      <DrawControl enabled={!!boundaryMode} shapeType="polygon" onShapeDrawn={onBoundaryDrawn} />
+      <BoundaryLayer polygon={boundaryPolygon} />
       <InspectLayer active={inspectMode} points={inspectPoints} onPointClick={onInspectClick} />
       <MeasureLayer measurements={measurements} />
       <ScaleControl position="bottomright" imperial={false} />

@@ -142,6 +142,10 @@ export default function WorkflowSteps({
   onGrid,
   gridding,
   overlay,
+  boundaryMode,
+  onToggleBoundaryMode,
+  boundaryPolygon,
+  onClearBoundary,
   inspectMode,
   onToggleInspectMode,
   activeTransform,
@@ -960,6 +964,32 @@ export default function WorkflowSteps({
           {processSummary?.line_spacing_m && (
             <div style={{ color: "#6b7280" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
           )}
+          <Field
+            label={
+              <span title="그리드는 자동으로 실측 측선들이 감싸는 볼록 다각형(convex hull) 바깥으로는 확장되지 않습니다. 하지만 조사구역이 L자 등 오목한 모양이면 그 자동 범위 안에 실제로 측선이 없는 빈 구역이 포함될 수 있습니다 - 지도에 직접 다각형을 그려 그 안쪽만 표시되도록 추가로 제한할 수 있습니다.">
+                표시 경계 (선택) — 지도에 다각형을 그려 그 안쪽만 내삽/외삽 표시 ⓘ
+              </span>
+            }
+          >
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button
+                style={{
+                  ...buttonStyle,
+                  background: boundaryMode ? "#ea580c" : "white",
+                  color: boundaryMode ? "white" : "#ea580c",
+                  borderColor: "#ea580c",
+                }}
+                onClick={() => onToggleBoundaryMode()}
+              >
+                {boundaryMode ? "경계 그리는 중 (다각형 완성하면 자동 적용)" : "경계 그리기"}
+              </button>
+              {boundaryPolygon && (
+                <button style={buttonStyle} onClick={() => onClearBoundary()}>
+                  경계 지우기
+                </button>
+              )}
+            </div>
+          </Field>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={alongLineSmooth} onChange={(e) => setAlongLineSmooth(e.target.checked)} />
             <span

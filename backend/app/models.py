@@ -325,6 +325,17 @@ class ManualSmoothRequest(BaseModel):
     polygons: Optional[list[list[list[float]]]] = None  # [[[lat, lon], ...], ...]
 
 
+class DisplayBoundaryRequest(BaseModel):
+    """Optional user-drawn polygon that further restricts where grid
+    interpolation/extrapolation is shown, on top of the automatic
+    convex-hull cap in processing/gridding.py::grid_points. The hull cap
+    alone still over-fills a concave (e.g. L-shaped) survey footprint's
+    notch since the notch is inside the hull; drawing an explicit boundary
+    lets the user clip exactly to the real survey outline in that case.
+    None/omit clears the boundary (shows the full auto-capped extent)."""
+    polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...] or None to clear
+
+
 class IntermagnetFetchRequest(BaseModel):
     """Downloads IAGA-2002 data for a public INTERMAGNET observatory to use
     as a stand-in base station when no local base was measured - see

@@ -23,6 +23,7 @@ from .models import (
     IntermagnetFetchRequest,
     LocalTileFolderRequest,
     ManualExcludeRequest,
+    DisplayBoundaryRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
     NearestIntermagnetRequest,
@@ -300,6 +301,12 @@ def base_timeseries(project_id: str):
 def smooth(project_id: str, req: ManualSmoothRequest):
     project = store.get(project_id)
     return project.set_manual_smoothing(req)
+
+
+@app.post("/api/projects/{project_id}/display-boundary")
+def display_boundary(project_id: str, req: DisplayBoundaryRequest):
+    project = store.get(project_id)
+    return project.set_display_boundary(req)
 
 
 @app.post("/api/projects/{project_id}/grid")

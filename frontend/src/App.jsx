@@ -175,6 +175,8 @@ export default function App() {
   const [alongLineSmooth, setAlongLineSmooth] = useState(true);
   const [alongLineSmoothWavelength, setAlongLineSmoothWavelength] = useState(null);
   const [gridding, setGridding] = useState(false);
+  const [boundaryMode, setBoundaryMode] = useState(false);
+  const [boundaryPolygon, setBoundaryPolygon] = useState(null);
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
@@ -713,6 +715,54 @@ export default function App() {
   useEffect(() => {
     setInspectPoints([]);
   }, [overlay]);
+
+  // Keep the boundary shown on the map in sync with what the backend
+  // actually has stored (e.g. after loading a saved project, or after any
+  // process_summary refresh) rather than only updating it locally when the
+  // user draws/clears it themselves.
+  useEffect(() => {
+    if (processSummary && "display_boundary_polygon" in processSummary) {
+      setBoundaryPolygon(processSummary.display_boundary_polygon || null);
+    }
+  }, [processSummary]);
+
+  const handleToggleBoundaryMode = () => setBoundaryMode((v) => !v);
+
+  // Re-request whichever overlay (plain grid or an active derived
+  // transform) is currently shown, so a boundary draw/clear is reflected
+  // on the map immediately instead of only taking effect the next time the
+  // user happens to regenerate the grid/transform themselves.
+  const refreshCurrentOverlay = async () => {
+    if (!overlay) return;
+    if (activeTransform === "none") {
+      await handleGrid();
+    } else {
+      await handleTransform(activeTransform);
+    }
+  };
+
+  const handleBoundaryDrawn = async (coords) => {
+    setBoundaryMode(false);
+    if (!projectId) return;
+    try {
+      const resp = await api.setDisplayBoundary(projectId, coords);
+      setBoundaryPolygon(resp.display_boundary_polygon || null);
+      await refreshCurrentOverlay();
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
+  const handleClearBoundary = async () => {
+    if (!projectId) return;
+    try {
+      const resp = await api.setDisplayBoundary(projectId, null);
+      setBoundaryPolygon(resp.display_boundary_polygon || null);
+      await refreshCurrentOverlay();
+    } catch (e) {
+      handleError(e);
+    }
+  };
 
   const toggleInspectMode = () => {
     setInspectMode((v) => !v);
@@ -1793,6 +1843,10 @@ export default function App() {
           onGrid={handleGrid}
           gridding={gridding}
           overlay={overlay}
+          boundaryMode={boundaryMode}
+          onToggleBoundaryMode={handleToggleBoundaryMode}
+          boundaryPolygon={boundaryPolygon}
+          onClearBoundary={handleClearBoundary}
           inspectMode={inspectMode}
           onToggleInspectMode={toggleInspectMode}
           activeTransform={activeTransform}
@@ -1854,6 +1908,9 @@ export default function App() {
           structureScanResult={structureScanShow ? structureScanResult : null}
           selectedStructurePolygonIndices={selectedStructurePolygonIndices}
           selectedStructureAnomalyIndices={selectedStructureAnomalyIndices}
+          boundaryMode={boundaryMode}
+          boundaryPolygon={boundaryPolygon}
+          onBoundaryDrawn={handleBoundaryDrawn}
         />
         {volumeData && (
           <Suspense

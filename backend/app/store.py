@@ -18,6 +18,7 @@ from scipy.interpolate import RegularGridInterpolator
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
 from .models import (
+    DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
     GridRequest,
     InversionParams,
@@ -191,6 +192,10 @@ class Project:
     # disturbance (building, fence, vehicle, ...) and interpolated across
     # - see _apply_manual_smoothing / set_manual_smoothing.
     manual_smooth_point_ids: set = field(default_factory=set)
+    # Optional user-drawn [[lat, lon], ...] polygon that clips grid display
+    # (overlay/export) to exactly that outline, on top of the automatic
+    # convex-hull extrapolation cap in gridding.py - see set_display_boundary.
+    display_boundary_polygon: list[list[float]] | None = None
     # point_id -> True (force include, even if auto-excluded) | False (force
     # exclude, even if auto-included). Absent point_ids fall back to the
     # automatic line_id>=0 result.
@@ -1008,6 +1013,7 @@ class Project:
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling),
+            "display_boundary_polygon": self.display_boundary_polygon,
         }
 
     def run_chat(self, message: str, history: list[dict]) -> dict:
@@ -1225,6 +1231,44 @@ class Project:
             "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
         }
 
+    def set_display_boundary(self, req: DisplayBoundaryRequest) -> dict:
+        """Set or clear the optional user-drawn boundary polygon that
+        clips grid overlay/export output to exactly that outline - see
+        display_boundary_polygon and _apply_display_boundary.
+
+        Deliberately does *not* touch grid_cache/transform_cache: the
+        boundary is applied as a cheap mask at render time (see
+        _apply_display_boundary), not baked into the cached grid values,
+        so drawing/clearing it doesn't force expensive regridding."""
+        if req.polygon is not None and len(req.polygon) < 3:
+            raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
+        self.display_boundary_polygon = req.polygon
+        return {"display_boundary_polygon": self.display_boundary_polygon}
+
+    def _apply_display_boundary(self, values: np.ndarray, grid: GridResult) -> np.ndarray:
+        """Mask `values` (a grid.values-shaped array) to NaN outside the
+        user-drawn display_boundary_polygon, if one is set - complements
+        the automatic convex-hull extrapolation cap in
+        processing/gridding.py::grid_points, which still leaves the full
+        convex hull filled even for a concave (e.g. L-shaped) survey
+        footprint. Always returns a fresh array (never mutates `values` in
+        place), since callers commonly pass in a grid_cache/transform_cache
+        entry that must stay valid (boundary-free) for other callers/later
+        boundary changes."""
+        if not self.display_boundary_polygon or self.utm_epsg is None:
+            return values
+        from shapely import contains_xy
+        from shapely.geometry import Polygon
+
+        lat = [pt[0] for pt in self.display_boundary_polygon]
+        lon = [pt[1] for pt in self.display_boundary_polygon]
+        to_local = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+        bx, by = to_local.transform(lon, lat)
+        polygon = Polygon(np.column_stack([bx, by]))
+        easting_2d, northing_2d = np.meshgrid(grid.easting, grid.northing)
+        inside = contains_xy(polygon, easting_2d.ravel(), northing_2d.ravel()).reshape(values.shape)
+        return np.where(inside, values, np.nan)
+
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
         if max_distance_m is not None:
             return max_distance_m
@@ -1306,6 +1350,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         grid = self._maybe_pre_level(grid, req)
+        grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
         overlay = grid_to_png_overlay(
             grid.values,
@@ -1452,6 +1497,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         values, symmetric = self._transform_values(grid, req)
+        values = self._apply_display_boundary(values, grid)
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
         overlay = grid_to_png_overlay(
@@ -1484,6 +1530,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         grid = self._maybe_pre_level(grid, req)
+        grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         if req.colored:
             cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
             return grid_to_geotiff_bytes_colored(
@@ -1501,6 +1548,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         values, symmetric = self._transform_values(grid, req)
+        values = self._apply_display_boundary(values, grid)
         if req.colored:
             cmap = req.cmap or DEFAULT_CMAPS["derivative"]
             return grid_to_geotiff_bytes_colored(
@@ -1518,6 +1566,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         grid = self._maybe_pre_level(grid, req)
+        grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         return grid_to_xyz_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_transform_xyz(self, req: TransformRequest) -> bytes:
@@ -1526,6 +1575,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         values, _symmetric = self._transform_values(grid, req)
+        values = self._apply_display_boundary(values, grid)
         return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_grid_surfer_grd(self, req: GridRequest) -> bytes:
@@ -1534,6 +1584,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         grid = self._maybe_pre_level(grid, req)
+        grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         return grid_to_surfer_grd_bytes(grid.values, grid.easting, grid.northing)
 
     def export_transform_surfer_grd(self, req: TransformRequest) -> bytes:
@@ -1542,6 +1593,7 @@ class Project:
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
         values, _symmetric = self._transform_values(grid, req)
+        values = self._apply_display_boundary(values, grid)
         return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
 
     def export_polygon_bln(self, polygon_latlon: list[list[float]]) -> bytes:
@@ -1988,6 +2040,7 @@ class Project:
             "last_params": self.last_params.model_dump() if self.last_params is not None else None,
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
+            "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
         }
@@ -2055,6 +2108,9 @@ class Project:
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
+                    boundary_polygon = meta.get("display_boundary_polygon")
+                    if boundary_polygon:
+                        self.set_display_boundary(DisplayBoundaryRequest(polygon=boundary_polygon))
                     processed = True
 
                 inversion_summary = None
