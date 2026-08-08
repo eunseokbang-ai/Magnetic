@@ -244,6 +244,42 @@ def test_csv_export_returns_combined_series(client):
     assert len(body.splitlines()) > 1
 
 
+def test_csv_export_round_trips_through_standard_base_upload(client):
+    """Regression test: a user who saves this export and later re-uploads
+    it via the plain "베이스(일변화) 자료 업로드" file picker (not the
+    dedicated INTERMAGNET re-import path this export was originally built
+    for) must have it load cleanly instead of silently failing to advance
+    past the upload step - see io_/base_loader.py's dedicated format
+    branch for this exact export shape."""
+    import io
+
+    from app.io_.base_loader import load_base_csv
+
+    project_id = _new_project(client)
+    _upload_drone(client, project_id)
+
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        r = client.post(
+            f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
+            json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
+        )
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/projects/{project_id}/base/intermagnet/nearest/csv")
+    assert r.status_code == 200, r.text
+
+    df = load_base_csv(io.BytesIO(r.content), filename="intermagnet_nearest_estimate.csv")
+    assert list(df.columns) == ["timestamp", "mag"]
+    assert len(df) > 0
+
+    # and the standard multi-file base upload endpoint accepts it directly
+    r2 = client.post(
+        f"/api/projects/{project_id}/upload/base",
+        files={"files": ("intermagnet_nearest_estimate.csv", r.content, "text/csv")},
+    )
+    assert r2.status_code == 200, r2.text
+
+
 def test_fetch_rejects_malformed_start_date_with_clear_korean_message(client):
     project_id = _new_project(client)
     r = client.post(

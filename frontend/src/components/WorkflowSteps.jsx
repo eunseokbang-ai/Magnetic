@@ -95,6 +95,8 @@ export default function WorkflowSteps({
   onApplyNearestIntermagnet,
   onCancelNearestIntermagnetPreview,
   onExportNearestIntermagnetCsv,
+  nearestIntermagnetCsvFilename,
+  setNearestIntermagnetCsvFilename,
   onShowNearestIntermagnetComparison,
   nearestIntermagnetPreview,
   nearestIntermagnetLoading,
@@ -147,6 +149,8 @@ export default function WorkflowSteps({
   boundaryPolygon,
   onClearBoundary,
   onExportBoundary,
+  boundaryFilename,
+  setBoundaryFilename,
   onImportBoundaryFile,
   inspectMode,
   onToggleInspectMode,
@@ -338,6 +342,8 @@ export default function WorkflowSteps({
                 onApplyNearestIntermagnet={onApplyNearestIntermagnet}
                 onCancelNearestPreview={onCancelNearestIntermagnetPreview}
                 onExportNearestCsv={onExportNearestIntermagnetCsv}
+                nearestCsvFilename={nearestIntermagnetCsvFilename}
+                onNearestCsvFilenameChange={setNearestIntermagnetCsvFilename}
                 onShowNearestComparison={onShowNearestIntermagnetComparison}
                 nearestPreview={nearestIntermagnetPreview}
                 nearestLoading={nearestIntermagnetLoading}
@@ -991,9 +997,19 @@ export default function WorkflowSteps({
                 </button>
               )}
               {boundaryPolygon && (
-                <button style={buttonStyle} onClick={() => onExportBoundary()}>
-                  경계 파일로 저장
-                </button>
+                <>
+                  <input
+                    type="text"
+                    value={boundaryFilename}
+                    onChange={(e) => setBoundaryFilename(e.target.value)}
+                    placeholder="저장할 파일명"
+                    title="다른 프로젝트에서도 같은 경계를 재사용하려면 알아보기 쉬운 이름으로 바꿀 수 있습니다"
+                    style={{ ...inputStyle, width: 160 }}
+                  />
+                  <button style={buttonStyle} onClick={() => onExportBoundary()}>
+                    경계 파일로 저장
+                  </button>
+                </>
               )}
               <label style={{ ...buttonStyle, display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
                 경계 파일 불러오기

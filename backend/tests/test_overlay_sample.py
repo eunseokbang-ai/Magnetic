@@ -155,3 +155,27 @@ def test_sample_overlay_value_switches_source_after_transform():
     assert r.status_code == 200, r.text
     project = project_store.get(project_id)
     assert project.last_overlay_label == "1vd"
+
+
+def test_grid_overlay_reports_extrema_locations_that_click_to_the_same_value():
+    """Regression/feature test for the "최댓값/최솟값 위치로 이동" jump
+    button: overlay["extrema"] must point at a lat/lon that, when clicked
+    via sample_overlay_value (the exact same code path the map's
+    click-to-inspect tool uses), returns precisely the reported max/min -
+    i.e. clicking there can never land on a neighboring cell."""
+    client, project_id = _make_processed_project()
+    r = client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 5.0})
+    assert r.status_code == 200, r.text
+    resp = r.json()
+
+    assert resp["extrema"]["max"] is not None
+    assert resp["extrema"]["min"] is not None
+    assert resp["extrema"]["max"]["value_nt"] == pytest.approx(resp["stats"]["max"])
+    assert resp["extrema"]["min"]["value_nt"] == pytest.approx(resp["stats"]["min"])
+
+    project = project_store.get(project_id)
+    for key in ("max", "min"):
+        loc = resp["extrema"][key]
+        sampled = project.sample_overlay_value(loc["lat"], loc["lon"])
+        assert sampled["in_bounds"] is True
+        assert sampled["value_nt"] == pytest.approx(loc["value_nt"])

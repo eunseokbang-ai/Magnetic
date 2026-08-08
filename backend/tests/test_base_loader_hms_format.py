@@ -78,6 +78,30 @@ def test_load_base_csvs_combines_files_and_surfaces_date_fallback_flag():
     assert combined2.attrs["date_fallback_used"] is True
 
 
+def test_detects_own_timestamp_mag_csv_export_format():
+    """This app's own "주변 관측소 자료" export (store.py::export_
+    nearest_intermagnet_csv) - a plain header'd (timestamp, mag_nT) CSV -
+    must load back in cleanly through the standard base-upload path, not
+    just the export's original intended re-import path, since users
+    naturally expect a file they saved as a "base station replacement" to
+    work as one."""
+    lines = ["timestamp,mag_nT"] + [f"2026-07-24 06:00:{i:02d},{59000.0 + i}" for i in range(5)]
+    csv_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+    df = load_base_csv(io.BytesIO(csv_bytes))
+    assert list(df.columns) == ["timestamp", "mag"]
+    assert len(df) == 5
+    assert df["mag"].iloc[0] == pytest.approx(59000.0)
+    assert df["timestamp"].iloc[0] == pd_timestamp("2026-07-24 06:00:00")
+
+
+def test_timestamp_mag_csv_format_is_case_and_column_order_insensitive():
+    lines = ["Mag_nT,Timestamp"] + [f"{59000.0 + i},2026-07-24 06:00:{i:02d}" for i in range(3)]
+    csv_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+    df = load_base_csv(io.BytesIO(csv_bytes))
+    assert len(df) == 3
+    assert df["mag"].iloc[0] == pytest.approx(59000.0)
+
+
 def test_unrecognized_format_raises_clear_error():
     with pytest.raises(BaseLoadError):
         load_base_csv(io.BytesIO(b"this is not a recognized base file format at all\n"))

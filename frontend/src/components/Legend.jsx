@@ -1,6 +1,16 @@
 import { getColorFn, COLORMAP_OPTIONS } from "../colormap";
 
 const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const jumpButtonStyle = {
+  marginLeft: 6,
+  padding: "1px 6px",
+  fontSize: 10,
+  borderRadius: 4,
+  border: "1px solid #93c5fd",
+  background: "#eff6ff",
+  color: "#1d4ed8",
+  cursor: "pointer",
+};
 
 function Gradient({ cmapName }) {
   const fn = getColorFn(cmapName);
@@ -28,6 +38,8 @@ export default function Legend({
   onManualRangeChange,
   stats,
   hoverPoint,
+  extrema,
+  onJumpToExtremum,
 }) {
   const updateManual = (key, value) => onManualRangeChange({ ...manualRange, [key]: value });
 
@@ -87,11 +99,33 @@ export default function Legend({
             <tbody>
               <tr>
                 <td>Min</td>
-                <td style={{ textAlign: "right" }}>{fmt(stats.min)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {fmt(stats.min)}
+                  {extrema?.min && onJumpToExtremum && (
+                    <button
+                      onClick={() => onJumpToExtremum("min")}
+                      title="지도에서 최솟값 위치로 이동"
+                      style={jumpButtonStyle}
+                    >
+                      📍이동
+                    </button>
+                  )}
+                </td>
               </tr>
               <tr>
                 <td>Max</td>
-                <td style={{ textAlign: "right" }}>{fmt(stats.max)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {fmt(stats.max)}
+                  {extrema?.max && onJumpToExtremum && (
+                    <button
+                      onClick={() => onJumpToExtremum("max")}
+                      title="지도에서 최댓값 위치로 이동"
+                      style={jumpButtonStyle}
+                    >
+                      📍이동
+                    </button>
+                  )}
+                </td>
               </tr>
               <tr>
                 <td>Mean</td>

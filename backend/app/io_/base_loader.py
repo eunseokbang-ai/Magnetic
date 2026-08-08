@@ -1,6 +1,6 @@
 """Base station (diurnal) magnetometer file loader.
 
-Auto-detects between two base logger export shapes:
+Auto-detects between three base logger export shapes:
   - The common no-header CSV export: `flag, mag(nT), flag,
     "오전/오후 h:mm:ss", MM/DD/YY, flag`, saved with a UTF-8 BOM and Korean
     12-hour AM/PM markers. Each row carries its own date, so no external
@@ -16,6 +16,11 @@ Auto-detects between two base logger export shapes:
     (an 8-digit YYYYMMDD run, as in "cyg202607151s.txt"); if that's not
     found, the server's current date is used as a last-resort fallback
     (flagged via df.attrs["date_fallback_used"] so callers can warn).
+  - This app's own header'd `timestamp, mag_nT` CSV export (see
+    store.py::export_nearest_intermagnet_csv) - lets an INTERMAGNET
+    nearest-observatory diurnal estimate saved from one project be
+    re-uploaded as a normal base station file in another, without redoing
+    the lookup. Detected by header keywords, not exact column order.
 """
 from __future__ import annotations
 
@@ -79,6 +84,33 @@ def _load_korean_ampm_format(text: str) -> pd.DataFrame:
         raise BaseLoadError("베이스 파일에 유효한 자력 데이터가 없습니다.")
 
     return df[["timestamp", "mag"]].sort_values("timestamp").reset_index(drop=True)
+
+
+def _load_timestamp_mag_csv_format(text: str) -> pd.DataFrame:
+    """A plain header'd (timestamp, mag[_nT]) CSV - specifically this
+    app's own "주변 관측소 자료" export (store.py::export_nearest_
+    intermagnet_csv), so a project can reuse a saved nearest-observatory
+    diurnal estimate as a normal base-station upload later, in another
+    project, without redoing the INTERMAGNET lookup. Detected by header
+    keywords rather than a fixed column layout so it isn't tied to the
+    exact export column order/casing."""
+    df = pd.read_csv(io.StringIO(text))
+    cols_lower = {str(c).strip().lower(): c for c in df.columns}
+    ts_col = cols_lower.get("timestamp")
+    mag_col = cols_lower.get("mag_nt") or cols_lower.get("mag")
+    if ts_col is None or mag_col is None:
+        raise BaseLoadError("베이스 파일 형식을 인식할 수 없습니다 (timestamp/mag 컬럼을 찾을 수 없습니다).")
+
+    out = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(df[ts_col], errors="coerce"),
+            "mag": pd.to_numeric(df[mag_col], errors="coerce"),
+        }
+    )
+    out = out.dropna(subset=["timestamp", "mag"])
+    if out.empty:
+        raise BaseLoadError("베이스 파일에 유효한 자력 데이터가 없습니다.")
+    return out.sort_values("timestamp").reset_index(drop=True)
 
 
 def _date_from_filename(filename: str | None) -> _date | None:
@@ -145,6 +177,9 @@ def load_base_csv(path_or_buffer, filename: str | None = None) -> pd.DataFrame:
     if not first_line:
         raise BaseLoadError("베이스 파일이 비어 있습니다.")
 
+    header_lower = first_line.lower()
+    if "timestamp" in header_lower and "mag" in header_lower:
+        return _load_timestamp_mag_csv_format(text)
     if "," in first_line:
         return _load_korean_ampm_format(text)
     if _HMS_LINE_RE.match(first_line):

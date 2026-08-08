@@ -38,6 +38,23 @@ function PointLayer({ points, vmin, vmax, cmapName, onHover }) {
   return null;
 }
 
+// Pans/zooms the map to a specific point on demand - used by the
+// "최댓값/최솟값 위치로 이동" jump button (see WorkflowSteps.jsx). Manually
+// finding and clicking the exact extreme cell is genuinely hard once
+// cells are only a few screen pixels wide (adjacent cells can look nearly
+// identical at typical zoom), so jumping straight there at a deep zoom
+// sidesteps that precision problem entirely. `target` carries a `nonce`
+// so clicking the same extremum twice in a row (e.g. after regridding)
+// still re-triggers the flight even though lat/lon didn't change.
+function FlyToTarget({ target }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    map.flyTo([target.lat, target.lon], Math.max(map.getZoom(), 19), { duration: 1.0 });
+  }, [target, map]);
+  return null;
+}
+
 function FitBounds({ points }) {
   const map = useMap();
   const fitted = useRef(false);
@@ -596,6 +613,7 @@ export default function MapView({
   boundaryMode,
   boundaryPolygon,
   onBoundaryDrawn,
+  flyToTarget,
 }) {
   const center = useMemo(() => [46.5, 106.27], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -631,6 +649,7 @@ export default function MapView({
       </LayersControl>
 
       <FitBounds points={points} />
+      <FlyToTarget target={flyToTarget} />
 
       {/* user-uploaded reference layers (e.g. GeoTIFF geology maps, or a
           pre-tiled local folder for large orthophotos), bottom to top */}
@@ -652,14 +671,7 @@ export default function MapView({
           )
         )}
 
-      {overlay && (
-        <ImageOverlay
-          url={overlay.image_data_url}
-          bounds={overlay.bounds}
-          opacity={gridOpacity}
-          className="grid-overlay-crisp"
-        />
-      )}
+      {overlay && <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}
 
       <PointLayer

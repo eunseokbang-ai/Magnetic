@@ -1369,6 +1369,7 @@ class Project:
             stretch=req.stretch,
         )
         overlay["stats"] = _stats(pd.Series(grid.values.ravel()))
+        overlay["extrema"] = _extrema_locations(grid.values, grid.easting, grid.northing, self.utm_epsg)
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         if req.show_contours:
@@ -1510,6 +1511,7 @@ class Project:
             stretch=req.stretch,
         )
         overlay["stats"] = _stats(pd.Series(values.ravel()))
+        overlay["extrema"] = _extrema_locations(values, grid.easting, grid.northing, self.utm_epsg)
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         overlay["transform"] = req.transform
@@ -2631,6 +2633,31 @@ def _median_speed_mps(drone_raw: pd.DataFrame) -> float | None:
     if speed.size == 0:
         return None
     return float(np.median(speed))
+
+
+def _extrema_locations(values: np.ndarray, easting: np.ndarray, northing: np.ndarray, utm_epsg: int) -> dict:
+    """lat/lon of the single cell holding the grid's max and min value -
+    powers the "최댓값/최솟값 위치로 이동" map jump button. Exists because
+    manually finding and clicking the exact extreme cell on a busy map is
+    genuinely hard once cells are only a few screen pixels wide (adjacent
+    cells can look nearly identical at typical zoom, especially with the
+    "nearest" method's sharp cell-to-cell jumps) - jumping straight there
+    sidesteps that precision problem entirely rather than just tolerating
+    it."""
+    finite = np.isfinite(values)
+    if not finite.any():
+        return {"max": None, "min": None}
+    transformer = Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
+
+    def _location(idx_func):
+        row, col = idx_func(np.where(finite, values, np.nan))
+        lon, lat = transformer.transform(float(easting[col]), float(northing[row]))
+        return {"lat": float(lat), "lon": float(lon), "value_nt": float(values[row, col])}
+
+    return {
+        "max": _location(lambda v: np.unravel_index(np.nanargmax(v), v.shape)),
+        "min": _location(lambda v: np.unravel_index(np.nanargmin(v), v.shape)),
+    }
 
 
 def _stats(series: pd.Series) -> dict:

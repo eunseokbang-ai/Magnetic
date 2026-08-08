@@ -177,6 +177,8 @@ export default function App() {
   const [gridding, setGridding] = useState(false);
   const [boundaryMode, setBoundaryMode] = useState(false);
   const [boundaryPolygon, setBoundaryPolygon] = useState(null);
+  const [boundaryFilename, setBoundaryFilename] = useState("boundary.json");
+  const [nearestIntermagnetCsvFilename, setNearestIntermagnetCsvFilename] = useState("intermagnet_nearest_estimate.csv");
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
   const [loadingProject, setLoadingProject] = useState(false);
@@ -187,6 +189,7 @@ export default function App() {
   const [overlay, setOverlay] = useState(null);
   const [inspectMode, setInspectMode] = useState(false);
   const [inspectPoints, setInspectPoints] = useState([]);
+  const [flyToTarget, setFlyToTarget] = useState(null);
   const [error, setError] = useState(null);
   const [cmapName, setCmapName] = useState("RdYlBu_r");
   const [manualRange, setManualRange] = useState({ enabled: false, vmin: null, vmax: null });
@@ -461,7 +464,8 @@ export default function App() {
 
   const handleExportNearestIntermagnetCsv = async () => {
     try {
-      await api.exportNearestIntermagnetCsv(projectId, "intermagnet_nearest_estimate.csv");
+      const base = nearestIntermagnetCsvFilename.trim().replace(/\.csv$/i, "") || "intermagnet_nearest_estimate";
+      await api.exportNearestIntermagnetCsv(projectId, `${base}.csv`);
     } catch (e) {
       setNearestIntermagnetError(e.message || String(e));
     }
@@ -769,7 +773,8 @@ export default function App() {
   // same physical area - without having to redraw the polygon by hand.
   const handleExportBoundary = () => {
     if (!boundaryPolygon) return;
-    api.downloadJson({ polygon: boundaryPolygon }, "boundary.json");
+    const base = boundaryFilename.trim().replace(/\.json$/i, "") || "boundary";
+    api.downloadJson({ polygon: boundaryPolygon }, `${base}.json`);
   };
 
   const handleImportBoundaryFile = async (file) => {
@@ -803,6 +808,19 @@ export default function App() {
     } catch (e) {
       handleError(e);
     }
+  };
+
+  // "최댓값/최솟값 위치로 이동" - clicking the exact extreme cell by hand is
+  // genuinely hard once cells are only a few screen pixels wide at typical
+  // map zoom, so this flies the map straight to the backend-reported
+  // extremum and drops an inspect pin there instead of relying on the
+  // user's click precision.
+  const handleJumpToExtremum = (which) => {
+    const loc = overlay?.extrema?.[which];
+    if (!loc) return;
+    setFlyToTarget({ lat: loc.lat, lon: loc.lon, nonce: Date.now() });
+    setInspectMode(true);
+    handleInspectClick(loc.lat, loc.lon);
   };
 
   const handleTransform = async (name) => {
@@ -1822,6 +1840,8 @@ export default function App() {
           onApplyNearestIntermagnet={handleApplyNearestIntermagnet}
           onCancelNearestIntermagnetPreview={handleCancelNearestIntermagnetPreview}
           onExportNearestIntermagnetCsv={handleExportNearestIntermagnetCsv}
+          nearestIntermagnetCsvFilename={nearestIntermagnetCsvFilename}
+          setNearestIntermagnetCsvFilename={setNearestIntermagnetCsvFilename}
           onShowNearestIntermagnetComparison={handleShowNearestIntermagnetComparison}
           nearestIntermagnetPreview={nearestIntermagnetPreview}
           nearestIntermagnetLoading={nearestIntermagnetLoading}
@@ -1874,6 +1894,8 @@ export default function App() {
           boundaryPolygon={boundaryPolygon}
           onClearBoundary={handleClearBoundary}
           onExportBoundary={handleExportBoundary}
+          boundaryFilename={boundaryFilename}
+          setBoundaryFilename={setBoundaryFilename}
           onImportBoundaryFile={handleImportBoundaryFile}
           inspectMode={inspectMode}
           onToggleInspectMode={toggleInspectMode}
@@ -1939,6 +1961,7 @@ export default function App() {
           boundaryMode={boundaryMode}
           boundaryPolygon={boundaryPolygon}
           onBoundaryDrawn={handleBoundaryDrawn}
+          flyToTarget={flyToTarget}
         />
         {volumeData && (
           <Suspense
@@ -2314,6 +2337,8 @@ export default function App() {
           onManualRangeChange={setManualRange}
           stats={legendStats}
           hoverPoint={hoverPoint}
+          extrema={overlay?.extrema}
+          onJumpToExtremum={handleJumpToExtremum}
         />
         {overlay?.cell_size_guideline_warning && (
           <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>

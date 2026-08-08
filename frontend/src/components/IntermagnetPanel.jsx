@@ -33,6 +33,8 @@ export default function IntermagnetPanel({
   onApplyNearestIntermagnet,
   onCancelNearestPreview,
   onExportNearestCsv,
+  nearestCsvFilename,
+  onNearestCsvFilenameChange,
   onShowNearestComparison,
   nearestPreview,
   nearestLoading,
@@ -198,9 +200,19 @@ export default function IntermagnetPanel({
                   {nearestApplying ? "적용 중..." : "이 자료를 베이스 자료로 사용"}
                 </button>
                 {onExportNearestCsv && (
-                  <button style={buttonStyle} onClick={onExportNearestCsv}>
-                    CSV로 파일 저장
-                  </button>
+                  <>
+                    <input
+                      type="text"
+                      value={nearestCsvFilename}
+                      onChange={(e) => onNearestCsvFilenameChange(e.target.value)}
+                      placeholder="저장할 파일명"
+                      title="다른 프로젝트에서 베이스 자료로 재사용할 때 알아보기 쉬운 이름으로 바꿀 수 있습니다"
+                      style={{ ...inputStyle, width: 220 }}
+                    />
+                    <button style={buttonStyle} onClick={onExportNearestCsv}>
+                      CSV로 파일 저장
+                    </button>
+                  </>
                 )}
                 <button style={buttonStyle} disabled={nearestApplying} onClick={onCancelNearestPreview}>
                   취소
