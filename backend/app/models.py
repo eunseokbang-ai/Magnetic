@@ -624,6 +624,44 @@ class SpectralDepthRequest(BaseModel):
     max_distance_m: Optional[float] = None
 
 
+class ContactDetectionRequest(BaseModel):
+    """Magnetic contact detection - see processing/contacts.py. Reuses
+    multiscale_edges.py's per-height THDR ridge points but keeps only
+    those that persist across several heights, then vectorizes them into
+    contact segments (distinct from LineamentRequest's single-height
+    structural-trend extraction)."""
+    value: ValueField = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    heights_m: list[float] = Field(default_factory=lambda: [0.0, 20.0, 40.0, 60.0, 80.0])
+    percentile_threshold: float = Field(80.0, gt=0, lt=100)
+    min_persistence: float = Field(0.5, gt=0, le=1.0)
+    min_segment_points: int = Field(4, ge=2)
+    min_length_m: float = Field(0.0, ge=0)
+    max_gap_cells: float = Field(3.0, gt=0)
+
+
+class ProspectivityRequest(BaseModel):
+    """Rule-based mineral prospectivity ("target score") mapping - see
+    processing/prospectivity.py. Weights a set of normalized magnetic-
+    derivative/structural layers into one 0-1 score grid and reports
+    ranked, auto-explained local-maximum targets. purpose selects a
+    preset weighting ("magnetite_fe" | "skarn" | "ni_cu_pge"); pass
+    purpose="custom" with weights to set your own."""
+    value: str = "anomaly"
+    cell_size_m: float = Field(10.0, gt=0)
+    method: GridMethod = "nearest"
+    max_distance_m: Optional[float] = None
+    purpose: Literal["magnetite_fe", "skarn", "ni_cu_pge", "custom"] = "magnetite_fe"
+    weights: Optional[dict[str, float]] = None
+    decay_length_m: float = Field(200.0, gt=0)
+    score_threshold: float = Field(0.6, ge=0, le=1)
+    max_targets: int = Field(20, ge=1, le=200)
+    min_target_separation_m: Optional[float] = None
+    colormap: str = "viridis"
+
+
 class GridConfidenceRequest(BaseModel):
     """Requests a companion "how much should I trust this cell" layer for
     an already-gridded result - see processing/gridding.py::grid_confidence

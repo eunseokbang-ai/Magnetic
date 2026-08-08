@@ -17,6 +17,7 @@ from .chat import ChatError
 from .models import (
     AnalyticSignalDepthRequest,
     ChatRequest,
+    ContactDetectionRequest,
     EulerDeconvolutionRequest,
     GridConfidenceRequest,
     GridRequest,
@@ -35,6 +36,7 @@ from .models import (
     PolygonExportRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    ProspectivityRequest,
     QcCertificateRequest,
     SpectralDepthRequest,
     StructureScanRequest,
@@ -513,6 +515,24 @@ def analytic_signal_depth(project_id: str, req: AnalyticSignalDepthRequest):
 def spectral_depth(project_id: str, req: SpectralDepthRequest):
     project = store.get(project_id)
     return project.run_spectral_depth(req)
+
+
+@app.post("/api/projects/{project_id}/contacts")
+def magnetic_contacts(project_id: str, req: ContactDetectionRequest):
+    project = store.get(project_id)
+    return project.run_magnetic_contact_detection(req)
+
+
+@app.post("/api/projects/{project_id}/prospectivity")
+def prospectivity(project_id: str, req: ProspectivityRequest):
+    project = store.get(project_id)
+    return project.run_prospectivity(req)
+
+
+@app.get("/api/projects/{project_id}/prospectivity/overlay")
+def prospectivity_overlay(project_id: str, colormap: str = "viridis"):
+    project = store.get(project_id)
+    return project.get_prospectivity_overlay(colormap)
 
 
 @app.post("/api/projects/{project_id}/spectrum")

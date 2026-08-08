@@ -31,6 +31,8 @@ import QcCertificatePanel from "./components/QcCertificatePanel";
 import LineamentPanel from "./components/LineamentPanel";
 import DepthEstimationPanel from "./components/DepthEstimationPanel";
 import StructureDistortionPanel from "./components/StructureDistortionPanel";
+import ContactPanel from "./components/ContactPanel";
+import ProspectivityPanel from "./components/ProspectivityPanel";
 
 const toggleButtonStyle = {
   width: 36,
@@ -86,6 +88,29 @@ const DEFAULT_LINEAMENT_PARAMS = {
 
 const DEFAULT_TILT_DEPTH_PARAMS = { min_depth_m: 1.0, max_depth_m: 500.0 };
 const DEFAULT_AS_DEPTH_PARAMS = { percentile_threshold: 90.0, search_radius_cells: 15 };
+
+const DEFAULT_CONTACT_PARAMS = {
+  value: "anomaly",
+  cell_size_m: 10.0,
+  method: "nearest",
+  heights_m: [0.0, 20.0, 40.0, 60.0, 80.0],
+  percentile_threshold: 80.0,
+  min_persistence: 0.5,
+  min_segment_points: 4,
+  min_length_m: 0.0,
+  max_gap_cells: 3.0,
+};
+
+const DEFAULT_PROSPECTIVITY_PARAMS = {
+  value: "anomaly",
+  cell_size_m: 10.0,
+  method: "nearest",
+  purpose: "magnetite_fe",
+  weights: { asa: 0.3, thd: 0.2, structure: 0.2, contact: 0.2, susceptibility: 0.1 },
+  decay_length_m: 200.0,
+  score_threshold: 0.6,
+  max_targets: 20,
+};
 
 const DEFAULT_STRUCTURE_SCAN_PARAMS = {
   cell_size_m: 2.0,
@@ -386,6 +411,18 @@ export default function App() {
   const [spectralDepthRunning, setSpectralDepthRunning] = useState(false);
   const [spectralDepthResult, setSpectralDepthResult] = useState(null);
   const [spectralDepthError, setSpectralDepthError] = useState(null);
+  const [contactParams, setContactParams] = useState(DEFAULT_CONTACT_PARAMS);
+  const [contactRunning, setContactRunning] = useState(false);
+  const [contactResult, setContactResult] = useState(null);
+  const [contactError, setContactError] = useState(null);
+  const [showContacts, setShowContacts] = useState(true);
+  const [prospectivityParams, setProspectivityParams] = useState(DEFAULT_PROSPECTIVITY_PARAMS);
+  const [prospectivityRunning, setProspectivityRunning] = useState(false);
+  const [prospectivityResult, setProspectivityResult] = useState(null);
+  const [prospectivityError, setProspectivityError] = useState(null);
+  const [showProspectivityTargets, setShowProspectivityTargets] = useState(true);
+  const [showProspectivityOverlay, setShowProspectivityOverlay] = useState(false);
+  const [prospectivityOverlay, setProspectivityOverlay] = useState(null);
   const [structureScanParams, setStructureScanParams] = useState(DEFAULT_STRUCTURE_SCAN_PARAMS);
   const [structureScanRunning, setStructureScanRunning] = useState(false);
   const [structureScanResult, setStructureScanResult] = useState(null);
@@ -1514,6 +1551,38 @@ export default function App() {
     }
   };
 
+  const handleRunContactDetection = async () => {
+    try {
+      setContactError(null);
+      setContactRunning(true);
+      const resp = await api.runContactDetection(projectId, contactParams);
+      setContactResult(resp);
+    } catch (e) {
+      setContactError(e.message || String(e));
+    } finally {
+      setContactRunning(false);
+    }
+  };
+
+  const handleRunProspectivity = async () => {
+    try {
+      setProspectivityError(null);
+      setProspectivityRunning(true);
+      const resp = await api.runProspectivity(projectId, prospectivityParams);
+      setProspectivityResult(resp);
+      if (resp.available) {
+        const overlay = await api.getProspectivityOverlay(projectId, "viridis");
+        setProspectivityOverlay(overlay);
+      } else {
+        setProspectivityOverlay(null);
+      }
+    } catch (e) {
+      setProspectivityError(e.message || String(e));
+    } finally {
+      setProspectivityRunning(false);
+    }
+  };
+
   const handleRunStructureScan = async () => {
     try {
       setStructureScanError(null);
@@ -2108,6 +2177,9 @@ export default function App() {
           lineaments={showLineaments ? lineamentResult?.lineaments : null}
           tiltDepthPoints={showTiltDepth ? tiltDepthResult?.points : null}
           analyticSignalDepthPoints={showAsDepth ? asDepthResult?.points : null}
+          contacts={showContacts ? contactResult?.contacts : null}
+          prospectivityTargets={showProspectivityTargets ? prospectivityResult?.targets : null}
+          prospectivityOverlay={showProspectivityOverlay ? prospectivityOverlay : null}
           onBoundsChange={handleMapBoundsChange}
           inspectMode={inspectMode}
           inspectPoints={inspectPoints}
@@ -2372,6 +2444,34 @@ export default function App() {
             result: spectralDepthResult,
             error: spectralDepthError,
           }}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-5. 자성 접촉면 탐지 (Magnetic Contact Detection)</h2>
+        <ContactPanel
+          ready={!!processSummary}
+          params={contactParams}
+          setParams={setContactParams}
+          onRun={handleRunContactDetection}
+          running={contactRunning}
+          result={contactResult}
+          error={contactError}
+          showOnMap={showContacts}
+          setShowOnMap={setShowContacts}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-6. 프로스펙티비티 분석 (광물 타깃 스코어링)</h2>
+        <ProspectivityPanel
+          ready={!!processSummary}
+          params={prospectivityParams}
+          setParams={setProspectivityParams}
+          onRun={handleRunProspectivity}
+          running={prospectivityRunning}
+          result={prospectivityResult}
+          error={prospectivityError}
+          showTargetsOnMap={showProspectivityTargets}
+          setShowTargetsOnMap={setShowProspectivityTargets}
+          showOverlay={showProspectivityOverlay}
+          setShowOverlay={setShowProspectivityOverlay}
         />
 
         <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>

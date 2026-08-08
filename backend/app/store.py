@@ -13,11 +13,13 @@ import pandas as pd
 import rasterio
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
+from scipy.interpolate import RegularGridInterpolator
 
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
 from .models import (
     AnalyticSignalDepthRequest,
+    ContactDetectionRequest,
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
     GridConfidenceRequest,
@@ -31,6 +33,7 @@ from .models import (
     MultiscaleEdgeRequest,
     PowerSpectrumRequest,
     ProcessParams,
+    ProspectivityRequest,
     QcCertificateRequest,
     SpectralDepthRequest,
     StructureScanRequest,
@@ -130,9 +133,11 @@ from .processing.depth_estimation import (
     spectral_depth_diagnostic,
     tilt_depth_estimates,
 )
+from .processing.contacts import detect_magnetic_contacts
 from .processing.lineaments import extract_lineaments
 from .processing.microlevel import apply_microleveling
 from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
+from .processing.prospectivity import compute_prospectivity
 from .processing.noise_qc import compute_difference_qc
 from .processing.repeatability import analyze_repeatability
 from .processing.sampling_qc import compute_sampling_distance_qc
@@ -237,6 +242,12 @@ class Project:
     tilt_depth_cache: dict | None = None
     as_depth_cache: dict | None = None
     spectral_depth_cache: dict | None = None
+    contact_summary_cache: dict | None = None
+    prospectivity_summary_cache: dict | None = None
+    prospectivity_score_grid: np.ndarray | None = None
+    prospectivity_score_easting: np.ndarray | None = None
+    prospectivity_score_northing: np.ndarray | None = None
+    prospectivity_score_cell_size_m: float | None = None
     inversion_summary_cache: dict | None = None
     euler_summary_cache: dict | None = None
     target_summary_cache: dict | None = None
@@ -1866,6 +1877,32 @@ class Project:
         self.multiscale_edges_summary_cache = summary
         return summary
 
+    def run_magnetic_contact_detection(self, req: ContactDetectionRequest) -> dict:
+        """Magnetic contact detection - see processing/contacts.py. Reuses
+        the same multi-height THDR worming as run_multiscale_edges, but
+        keeps only ridge points that persist across several heights and
+        vectorizes them into contact segments (a proxy for geological
+        contacts/rock-unit boundaries), meant to be compared against an
+        uploaded geological-map reference layer."""
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        result = detect_magnetic_contacts(
+            grid.values,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            self.utm_epsg,
+            heights_m=tuple(req.heights_m),
+            percentile_threshold=req.percentile_threshold,
+            min_persistence=req.min_persistence,
+            min_segment_points=req.min_segment_points,
+            min_length_m=req.min_length_m,
+            max_gap_cells=req.max_gap_cells,
+        )
+        self.contact_summary_cache = result
+        return result
+
     def run_lineament_extraction(self, req: LineamentRequest) -> dict:
         """Magnetic lineament extraction + rose-diagram structural
         statistics - see processing/lineaments.py. Along-line smoothing
@@ -1928,6 +1965,99 @@ class Project:
         result = spectral_depth_diagnostic(grid.values, grid.cell_size_m)
         self.spectral_depth_cache = result
         return result
+
+    def _near_surface_susceptibility_grid(self, easting: np.ndarray, northing: np.ndarray) -> np.ndarray | None:
+        """Average susceptibility over the shallowest 2 layers of the most
+        recent 3D inversion (index 0 = shallowest, see processing/
+        inversion.py), resampled from the (coarse) inversion mesh onto the
+        current display grid's easting/northing via linear interpolation -
+        the same coarse-grid-and-interpolate pattern processing/igrf.py
+        uses for IGRF, since the inversion mesh is far coarser than a
+        typical display grid. Returns None (rather than raising) when no
+        inversion has been run yet - susceptibility is an optional
+        prospectivity layer, not a required one."""
+        if self.inversion_result is None:
+            return None
+        mesh = self.inversion_result.mesh
+        n_layers = min(2, mesh.z_centers.size)
+        near_surface = np.nanmean(self.inversion_result.susceptibility[:, :, :n_layers], axis=2)
+        if mesh.x_centers.size < 2 or mesh.y_centers.size < 2:
+            return None
+        interpolator = RegularGridInterpolator(
+            (mesh.y_centers, mesh.x_centers), near_surface, bounds_error=False, fill_value=np.nan
+        )
+        x2d, y2d = np.meshgrid(easting, northing)
+        return interpolator(np.column_stack([y2d.ravel(), x2d.ravel()])).reshape(x2d.shape)
+
+    def run_prospectivity(self, req: ProspectivityRequest) -> dict:
+        """Rule-based mineral prospectivity ("target score") mapping - see
+        processing/prospectivity.py. Combines ASA/THD with (if already
+        computed) structural-lineament and magnetic-contact proximity, and
+        (if a 3D inversion has been run) near-surface susceptibility, into
+        one weighted 0-1 score grid, then reports ranked, explained
+        local-maximum targets."""
+        if self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        asa_grid = analytic_signal(grid.values, grid.cell_size_m)
+        thd_grid = total_horizontal_derivative(grid.values, grid.cell_size_m)
+        finite_mask = np.isfinite(grid.values)
+
+        lineament_points = None
+        if self.lineament_summary_cache and self.lineament_summary_cache.get("available"):
+            lineament_points = [p for l in self.lineament_summary_cache["lineaments"] for p in l["points_latlon"]]
+        contact_points = None
+        if self.contact_summary_cache and self.contact_summary_cache.get("available"):
+            contact_points = [p for c in self.contact_summary_cache["contacts"] for p in c["points_latlon"]]
+        susceptibility_grid = self._near_surface_susceptibility_grid(grid.easting, grid.northing)
+
+        result = compute_prospectivity(
+            asa_grid,
+            thd_grid,
+            finite_mask,
+            grid.easting,
+            grid.northing,
+            self.utm_epsg,
+            lineament_points_latlon=lineament_points,
+            contact_points_latlon=contact_points,
+            susceptibility_grid=susceptibility_grid,
+            purpose=req.purpose,
+            custom_weights=req.weights,
+            decay_length_m=req.decay_length_m,
+            score_threshold=req.score_threshold,
+            max_targets=req.max_targets,
+            min_target_separation_m=req.min_target_separation_m,
+        )
+        score_grid = result.pop("score_grid", None)
+        if score_grid is not None:
+            self.prospectivity_score_grid = score_grid
+            self.prospectivity_score_easting = grid.easting
+            self.prospectivity_score_northing = grid.northing
+            self.prospectivity_score_cell_size_m = grid.cell_size_m
+        self.prospectivity_summary_cache = result
+        return result
+
+    def get_prospectivity_overlay(self, colormap: str = "Viridis") -> dict:
+        """PNG overlay of the most recent run_prospectivity() score grid -
+        same rendering pattern as get_grid_confidence_overlay, since the
+        0-1 score grid isn't a value the generic get_grid_overlay/
+        get_transform_overlay cache keys already cover."""
+        if self.prospectivity_score_grid is None:
+            raise ProjectError("프로스펙티비티 분석을 먼저 실행하세요.")
+        overlay = grid_to_png_overlay(
+            self.prospectivity_score_grid,
+            self.prospectivity_score_easting,
+            self.prospectivity_score_northing,
+            self.utm_epsg,
+            cmap_name=colormap,
+            symmetric=False,
+            vmin=0.0,
+            vmax=1.0,
+            cell_size_m=self.prospectivity_score_cell_size_m,
+        )
+        overlay["stats"] = _stats(pd.Series(self.prospectivity_score_grid.ravel()))
+        overlay["cell_size_m"] = self.prospectivity_score_cell_size_m
+        return overlay
 
     def get_power_spectrum(self, req: PowerSpectrumRequest) -> dict:
         if self.processed is None:

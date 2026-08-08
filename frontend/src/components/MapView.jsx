@@ -571,6 +571,74 @@ function DepthEstimationLayer({ points, color }) {
   return null;
 }
 
+// Magnetic contact segments (processing/contacts.py) - colored on a
+// yellow(barely persistent)-to-purple(persists across every upward-
+// continued height) scale, distinct from LineamentLayer's strike-hue
+// coloring since a contact has no single strike, only a persistence
+// confidence.
+function ContactLayer({ contacts }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    (contacts || []).forEach((c, i) => {
+      const color = `hsl(${45 + 240 * c.mean_persistence}, 70%, 45%)`;
+      const line = L.polyline(c.points_latlon, { color, weight: 3, opacity: 0.85, dashArray: "6,3" });
+      line.bindTooltip(
+        `접촉면 #${i + 1}<br/>길이: ${c.length_m.toFixed(0)} m<br/>영속성: ${(c.mean_persistence * 100).toFixed(0)}%`,
+        { sticky: true }
+      );
+      group.addLayer(line);
+    });
+  }, [contacts]);
+
+  return null;
+}
+
+// Ranked, explained prospectivity targets (processing/prospectivity.py) -
+// circle markers colored/sized by score, with the auto-generated
+// per-layer breakdown text shown on hover.
+function ProspectivityTargetLayer({ targets }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    (targets || []).forEach((t) => {
+      const marker = L.circleMarker([t.lat, t.lon], {
+        radius: 8,
+        color: "#111827",
+        weight: 2,
+        fillColor: "#f97316",
+        fillOpacity: 0.3 + 0.6 * t.score,
+      });
+      marker.bindTooltip(`TARGET ${String(t.rank).padStart(2, "0")} — 점수 ${t.score.toFixed(2)}<br/>${t.explanation}`, {
+        sticky: true,
+      });
+      group.addLayer(marker);
+    });
+  }, [targets]);
+
+  return null;
+}
+
 // What Project.sample_overlay_value's "label" field (the base value field
 // or the active transform key) actually reads out as: a short Korean name
 // to disambiguate what's pinned, and the physical unit of that quantity -
@@ -724,6 +792,9 @@ export default function MapView({
   lineaments,
   tiltDepthPoints,
   analyticSignalDepthPoints,
+  contacts,
+  prospectivityTargets,
+  prospectivityOverlay,
   onBoundsChange,
   inspectMode,
   inspectPoints,
@@ -841,6 +912,20 @@ export default function MapView({
       {lineaments && <LineamentLayer lineaments={lineaments} />}
       {tiltDepthPoints && <DepthEstimationLayer points={tiltDepthPoints} color="#1d4ed8" />}
       {analyticSignalDepthPoints && <DepthEstimationLayer points={analyticSignalDepthPoints} color="#7c3aed" />}
+      {contacts && <ContactLayer contacts={contacts} />}
+      {prospectivityOverlay &&
+        (prospectivityOverlay.topleft && prospectivityOverlay.topright && prospectivityOverlay.bottomleft ? (
+          <RotatedImageOverlay
+            url={prospectivityOverlay.image_data_url}
+            topleft={prospectivityOverlay.topleft}
+            topright={prospectivityOverlay.topright}
+            bottomleft={prospectivityOverlay.bottomleft}
+            opacity={0.6}
+          />
+        ) : (
+          <ImageOverlay url={prospectivityOverlay.image_data_url} bounds={prospectivityOverlay.bounds} opacity={0.6} />
+        ))}
+      {prospectivityTargets && <ProspectivityTargetLayer targets={prospectivityTargets} />}
       {structureScanResult && (
         <StructureCandidateLayer
           result={structureScanResult}

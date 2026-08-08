@@ -171,6 +171,19 @@ export function runSpectralDepth(projectId, req) {
   return request(`/projects/${projectId}/depth-estimation/spectral`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function runContactDetection(projectId, req) {
+  return request(`/projects/${projectId}/contacts`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runProspectivity(projectId, req) {
+  return request(`/projects/${projectId}/prospectivity`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getProspectivityOverlay(projectId, colormap) {
+  const query = colormap ? `?colormap=${encodeURIComponent(colormap)}` : "";
+  return request(`/projects/${projectId}/prospectivity/overlay${query}`);
+}
+
 export function getPowerSpectrum(projectId, req) {
   return request(`/projects/${projectId}/spectrum`, { method: "POST", body: JSON.stringify(req) });
 }
