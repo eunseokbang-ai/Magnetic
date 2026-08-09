@@ -22,6 +22,8 @@ from .models import (
     ContactDetectionRequest,
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
+    GeologyUnitInput,
+    GeologyUnitUpdate,
     GridConfidenceRequest,
     GridRequest,
     InversionParams,
@@ -262,6 +264,12 @@ class Project:
     transform_cache: dict = field(default_factory=dict)
     dem_bytes: bytes | None = None
     dem_name: str | None = None
+    # User-digitized geology blocks for the inversion reference model -
+    # each: {"id": int, "name": str, "susceptibility_si": float,
+    # "path": [[lat, lon], ...]}. See run_inversion's geology reference
+    # handling and add/update/remove_geology_unit below.
+    geology_units: list = field(default_factory=list)
+    geology_unit_next_id: int = 1
     inversion_result: InversionResult | None = None
     inversion_params: InversionParams | None = None
     inversion_field_intensity_nt: float | None = None
@@ -2327,6 +2335,62 @@ class Project:
         self.dem_name = None
         return {"cleared": True}
 
+    def add_geology_unit(self, req: GeologyUnitInput) -> dict:
+        """Add one user-digitized geology block (a polygon traced over an
+        uploaded geology map, e.g. the "12. 참조 레이어" GeoTIFF, plus its
+        assigned susceptibility) to the inversion's reference model. Later-
+        added units win where polygons overlap - see run_inversion's
+        rasterization, which walks self.geology_units in order."""
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다 - 먼저 드론 자료를 업로드/처리하세요.")
+        unit = {
+            "id": self.geology_unit_next_id,
+            "name": req.name,
+            "susceptibility_si": req.susceptibility_si,
+            "path": req.path,
+        }
+        self.geology_unit_next_id += 1
+        self.geology_units.append(unit)
+        return {"unit": unit, "units": self.geology_units}
+
+    def update_geology_unit(self, unit_id: int, req: GeologyUnitUpdate) -> dict:
+        for unit in self.geology_units:
+            if unit["id"] == unit_id:
+                if req.name is not None:
+                    unit["name"] = req.name
+                if req.susceptibility_si is not None:
+                    unit["susceptibility_si"] = req.susceptibility_si
+                return {"unit": unit, "units": self.geology_units}
+        raise ProjectError(f"지질 블록 {unit_id}을(를) 찾을 수 없습니다.")
+
+    def remove_geology_unit(self, unit_id: int) -> dict:
+        before = len(self.geology_units)
+        self.geology_units = [u for u in self.geology_units if u["id"] != unit_id]
+        if len(self.geology_units) == before:
+            raise ProjectError(f"지질 블록 {unit_id}을(를) 찾을 수 없습니다.")
+        return {"units": self.geology_units}
+
+    def get_geology_units(self) -> dict:
+        return {"units": self.geology_units}
+
+    def _rasterize_geology_reference(self, x_centers: np.ndarray, y_centers: np.ndarray) -> np.ndarray:
+        """(ny, nx) array of the reference susceptibility assigned to each
+        mesh column by self.geology_units, NaN where no digitized polygon
+        covers that column - same lat/lon-to-local-UTM MplPath technique
+        already used for structure-scan polygon matching."""
+        ref = np.full((len(y_centers), len(x_centers)), np.nan)
+        if not self.geology_units:
+            return ref
+        x_grid, y_grid = np.meshgrid(x_centers, y_centers)  # (ny, nx)
+        points = np.column_stack([x_grid.ravel(), y_grid.ravel()])
+        to_local = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+        for unit in self.geology_units:
+            xs, ys = to_local.transform([p[1] for p in unit["path"]], [p[0] for p in unit["path"]])
+            poly_path = MplPath(list(zip(xs, ys)))
+            inside = poly_path.contains_points(points).reshape(ref.shape)
+            ref[inside] = unit["susceptibility_si"]
+        return ref
+
     def add_reference_layer(self, name: str, data: bytes) -> dict:
         """Keep a project-scoped copy of an uploaded reference GeoTIFF (in
         addition to the stateless preview endpoint the map layer manager
@@ -2456,6 +2520,8 @@ class Project:
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
+            "geology_units": self.geology_units,
+            "geology_unit_next_id": self.geology_unit_next_id,
         }
 
         buf = io.BytesIO()
@@ -2508,6 +2574,9 @@ class Project:
                 else:
                     self.dem_bytes = None
                     self.dem_name = None
+
+                self.geology_units = meta.get("geology_units") or []
+                self.geology_unit_next_id = meta.get("geology_unit_next_id", len(self.geology_units) + 1)
 
                 processed = False
                 if meta.get("last_params") is not None and self.base_raw is not None:
@@ -2626,15 +2695,28 @@ class Project:
         )
         self.inversion_field_intensity_nt = field_intensity_nt
 
+        m_ref_flat = None
+        geology_coverage_frac = None
         try:
             G, rows, cols, layers = build_sensitivity_matrix(
                 obs_x, obs_y, obs_z, mesh, self.inclination_deg, self.declination_deg, field_intensity_nt
             )
+            if self.geology_units and params.use_geology_reference:
+                # Repeat each digitized geology block's susceptibility
+                # straight down through every active layer in that column
+                # (a "2.5D" reference model - see GeologyUnitInput's
+                # docstring on why: early-stage geology maps rarely carry
+                # dip information to build a true 3D unit boundary from).
+                geology_ref_2d = self._rasterize_geology_reference(mesh.x_centers, mesh.y_centers)
+                ref_at_cells = geology_ref_2d[rows, cols]
+                m_ref_flat = np.where(np.isfinite(ref_at_cells), ref_at_cells, 0.0)
+                geology_coverage_frac = float(np.mean(np.isfinite(ref_at_cells))) if ref_at_cells.size else 0.0
             result = invert(
                 G, data_nt, mesh, rows, cols, layers,
                 regularization_strength=params.regularization_strength,
                 n_irls_iterations=params.n_irls_iterations,
                 assumed_noise_nt=params.assumed_noise_nt,
+                m_ref=m_ref_flat,
             )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
@@ -2673,6 +2755,9 @@ class Project:
             "layer_elevations_m": [float(z) for z in mesh.z_centers],
             "depth_resolution": result.depth_resolution,
             "depth_resolution_warning": _depth_resolution_warning(result.depth_resolution, mesh.z_centers),
+            "geology_reference_used": m_ref_flat is not None,
+            "geology_reference_coverage": geology_coverage_frac,
+            "n_geology_units": len(self.geology_units),
         }
         self.inversion_summary_cache = summary
         return summary

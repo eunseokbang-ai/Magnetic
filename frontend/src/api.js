@@ -270,6 +270,22 @@ export function sampleOverlayValue(projectId, lat, lon) {
   return request(`/projects/${projectId}/overlay/sample`, { method: "POST", body: JSON.stringify({ lat, lon }) });
 }
 
+export function listGeologyUnits(projectId) {
+  return request(`/projects/${projectId}/geology/units`);
+}
+
+export function addGeologyUnit(projectId, unit) {
+  return request(`/projects/${projectId}/geology/units`, { method: "POST", body: JSON.stringify(unit) });
+}
+
+export function updateGeologyUnit(projectId, unitId, patch) {
+  return request(`/projects/${projectId}/geology/units/${unitId}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteGeologyUnit(projectId, unitId) {
+  return request(`/projects/${projectId}/geology/units/${unitId}`, { method: "DELETE" });
+}
+
 export function uploadDem(projectId, file) {
   const form = new FormData();
   form.append("file", file);

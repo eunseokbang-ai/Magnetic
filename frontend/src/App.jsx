@@ -321,6 +321,12 @@ export default function App() {
   const [demUploading, setDemUploading] = useState(false);
   const [autoParams, setAutoParams] = useState(true);
   const [inversionParams, setInversionParams] = useState(DEFAULT_INVERSION_PARAMS);
+  // User-digitized geology blocks (polygons traced over an uploaded
+  // geology map raster, see "12. 참조 레이어") - fed into the 3D
+  // inversion as a reference model instead of always regularizing toward
+  // zero susceptibility.
+  const [geologyUnits, setGeologyUnits] = useState([]);
+  const [geologyDrawMode, setGeologyDrawMode] = useState(false);
   const [inversionRunning, setInversionRunning] = useState(false);
   const [inversionSummary, setInversionSummary] = useState(null);
   const [inversionError, setInversionError] = useState(null);
@@ -703,9 +709,16 @@ export default function App() {
       if (resp.processed) {
         setProcessSummary(resp.process_summary);
         await refreshPoints(id, valueField);
+        try {
+          const geo = await api.listGeologyUnits(id);
+          setGeologyUnits(geo.units);
+        } catch {
+          setGeologyUnits([]);
+        }
       } else {
         setProcessSummary(null);
         setPoints([]);
+        setGeologyUnits([]);
       }
       setInversionSummary(resp.inversion_summary || null);
     } catch (e) {
@@ -1763,8 +1776,54 @@ export default function App() {
       handleSectionPathDrawn(coords);
     } else if (smoothDrawMode) {
       handleSmoothPolygonDrawn(coords);
+    } else if (geologyDrawMode) {
+      handleGeologyPolygonDrawn(coords);
     } else {
       handleShapeDrawn(coords);
+    }
+  };
+
+  const handleToggleGeologyDrawMode = () => {
+    setMeasureMode(null);
+    setDrawMode(false);
+    setSmoothDrawMode(false);
+    setSectionDrawMode(false);
+    setGeologyDrawMode((v) => !v);
+  };
+
+  const handleGeologyPolygonDrawn = async (latlngCoords) => {
+    setGeologyDrawMode(false);
+    try {
+      const resp = await api.addGeologyUnit(projectId, {
+        name: `지질블록 ${geologyUnits.length + 1}`,
+        susceptibility_si: 0.01,
+        path: latlngCoords,
+      });
+      setGeologyUnits(resp.units);
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
+  const handleUpdateGeologyUnit = async (unitId, patch) => {
+    // Optimistic local update so typing in the name/SI fields feels
+    // immediate; the server response (awaited but not blocking the UI)
+    // then reconciles in case of a validation error.
+    setGeologyUnits((prev) => prev.map((u) => (u.id === unitId ? { ...u, ...patch } : u)));
+    try {
+      const resp = await api.updateGeologyUnit(projectId, unitId, patch);
+      setGeologyUnits(resp.units);
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
+  const handleDeleteGeologyUnit = async (unitId) => {
+    try {
+      const resp = await api.deleteGeologyUnit(projectId, unitId);
+      setGeologyUnits(resp.units);
+    } catch (e) {
+      handleError(e);
     }
   };
 
@@ -1776,6 +1835,7 @@ export default function App() {
     setDrawMode(false);
     setSmoothDrawMode(false);
     setSectionDrawMode(false);
+    setGeologyDrawMode(false);
   };
 
   const handleMeasureShapeDrawn = (coords) => {
@@ -2233,7 +2293,7 @@ export default function App() {
           lines={processSummary?.lines}
           showLineLabels={showLineLabels}
           onHoverPoint={setHoverPoint}
-          drawMode={drawMode || sectionDrawMode || smoothDrawMode}
+          drawMode={drawMode || sectionDrawMode || smoothDrawMode || geologyDrawMode}
           drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
           onShapeDrawn={handleMapShapeDrawn}
           eulerSolutions={showEulerSolutions ? eulerResult?.solutions : null}
@@ -2452,6 +2512,11 @@ export default function App() {
             onExportInversion={handleExportInversion}
             onExportInversionCsv={handleExportInversionCsv}
             onImportInversion={handleImportInversion}
+            geologyUnits={geologyUnits}
+            geologyDrawMode={geologyDrawMode}
+            onToggleGeologyDrawMode={handleToggleGeologyDrawMode}
+            onUpdateGeologyUnit={handleUpdateGeologyUnit}
+            onDeleteGeologyUnit={handleDeleteGeologyUnit}
           />
 
           <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14. 오일러 디컨볼루션 (빠른 심도 추정)</h2>

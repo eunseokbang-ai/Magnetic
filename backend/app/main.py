@@ -19,6 +19,8 @@ from .models import (
     ChatRequest,
     ContactDetectionRequest,
     EulerDeconvolutionRequest,
+    GeologyUnitInput,
+    GeologyUnitUpdate,
     GridConfidenceRequest,
     GridRequest,
     InversionParams,
@@ -561,6 +563,30 @@ async def upload_reference_layer(project_id: str, file: UploadFile):
 def delete_reference_layer(project_id: str, name: str):
     project = store.get(project_id)
     return project.remove_reference_layer(name)
+
+
+@app.get("/api/projects/{project_id}/geology/units")
+def list_geology_units(project_id: str):
+    project = store.get(project_id)
+    return project.get_geology_units()
+
+
+@app.post("/api/projects/{project_id}/geology/units")
+def add_geology_unit(project_id: str, req: GeologyUnitInput):
+    project = store.get(project_id)
+    return project.add_geology_unit(req)
+
+
+@app.patch("/api/projects/{project_id}/geology/units/{unit_id}")
+def update_geology_unit(project_id: str, unit_id: int, req: GeologyUnitUpdate):
+    project = store.get(project_id)
+    return project.update_geology_unit(unit_id, req)
+
+
+@app.delete("/api/projects/{project_id}/geology/units/{unit_id}")
+def remove_geology_unit(project_id: str, unit_id: int):
+    project = store.get(project_id)
+    return project.remove_geology_unit(unit_id)
 
 
 @app.post("/api/projects/{project_id}/upload/dem")

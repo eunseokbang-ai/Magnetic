@@ -78,6 +78,11 @@ export default function InversionPanel({
   onExportInversion,
   onExportInversionCsv,
   onImportInversion,
+  geologyUnits,
+  geologyDrawMode,
+  onToggleGeologyDrawMode,
+  onUpdateGeologyUnit,
+  onDeleteGeologyUnit,
 }) {
   const [demFileName, setDemFileName] = useState("");
   const nLayers = summary?.n_layers ?? params.n_layers ?? 8;
@@ -85,8 +90,9 @@ export default function InversionPanel({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 12, color: "#374151" }}>
-        given information(사전 지질정보) 없이 관측 자력이상만으로 지하 자화율(SI) 분포를 추정하는 실험적 3차원 역산입니다.
-        측선 자료 처리를 먼저 완료해야 실행할 수 있습니다.
+        관측 자력이상으로 지하 자화율(SI) 분포를 추정하는 실험적 3차원 역산입니다. 아래에서 지질도 등 given information(사전
+        지질정보)을 선택적으로 제공하면 그 정보를 반영해 더 나은 결과를 얻을 수 있습니다. 측선 자료 처리를 먼저 완료해야 실행할
+        수 있습니다.
       </div>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8 }}>
@@ -141,6 +147,65 @@ export default function InversionPanel({
             step="5"
             onChange={(v) => setParams((p) => ({ ...p, assumed_agl_m: v }))}
           />
+        )}
+      </div>
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>지질 정보 (선택 — given information)</div>
+        <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>
+          지질도 래스터가 있다면 위 "12. 참조 레이어"에 업로드해 지도에 띄운 뒤, 아래 버튼으로 그 위에 암상 경계를 폴리곤으로
+          그려 번호를 매기고 대자율(SI)을 입력하세요. 역산이 각 블록 내부에서는 0이 아니라 입력한 대자율 값을 향해 수렴하도록
+          유도되어(참조모델), 정보가 없을 때보다 더 지질학적으로 그럴듯한 결과를 얻을 확률이 높아집니다. 단면 정보가 없으므로
+          평면 경계가 깊이 방향으로 그대로 이어진다고 가정합니다(2.5D 근사).
+        </div>
+        <button
+          style={{ ...(geologyDrawMode ? btnStyle : btnStyleAlt), width: "100%", marginBottom: 8 }}
+          disabled={!ready}
+          onClick={onToggleGeologyDrawMode}
+        >
+          {geologyDrawMode ? "지도에 블록 경계를 그려주세요 (취소하려면 다시 클릭)" : "+ 지질 블록 그리기"}
+        </button>
+        {geologyUnits && geologyUnits.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {geologyUnits.map((u) => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                <span style={{ color: "#9ca3af", width: 18 }}>#{u.id}</span>
+                <input
+                  style={{ ...inputStyle, flex: 2 }}
+                  value={u.name}
+                  onChange={(e) => onUpdateGeologyUnit(u.id, { name: e.target.value })}
+                  placeholder="암상명"
+                />
+                <input
+                  type="number"
+                  style={{ ...inputStyle, flex: 1 }}
+                  value={u.susceptibility_si}
+                  step="0.001"
+                  min="0"
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!Number.isNaN(v)) onUpdateGeologyUnit(u.id, { susceptibility_si: v });
+                  }}
+                  title="대자율 (SI)"
+                />
+                <button
+                  onClick={() => onDeleteGeologyUnit(u.id)}
+                  style={{ border: "none", background: "none", color: "#dc2626", cursor: "pointer", fontSize: 12 }}
+                  title="이 블록 삭제"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 4 }}>
+              <input
+                type="checkbox"
+                checked={params.use_geology_reference !== false}
+                onChange={(e) => setParams((p) => ({ ...p, use_geology_reference: e.target.checked }))}
+              />
+              역산에 위 지질 정보 반영 (해제하면 지질 정보 없이 실행해 비교 가능)
+            </label>
+          </div>
         )}
       </div>
 
@@ -208,6 +273,14 @@ export default function InversionPanel({
           </div>
           <div>고도 범위: {summary.elevation_range_m?.[0]?.toFixed(0)} ~ {summary.elevation_range_m?.[1]?.toFixed(0)} m</div>
           <div>DEM 사용: {summary.used_dem ? "예" : "아니오 (GPS 등고비행 추정)"}</div>
+          {summary.n_geology_units > 0 && (
+            <div>
+              지질 정보 반영: {summary.geology_reference_used ? "예" : "아니오 (해제됨)"}
+              {summary.geology_reference_used &&
+                summary.geology_reference_coverage != null &&
+                ` (활성 셀의 ${(summary.geology_reference_coverage * 100).toFixed(0)}%가 지질 블록 안에 있음)`}
+            </div>
+          )}
           {summary.layer_thickness_m?.length > 1 && summary.depth_growth_factor != null && (
             <div>
               레이어 두께: 표층 {summary.layer_thickness_m[0]?.toFixed(1)} m → 최심부 {summary.layer_thickness_m.at(-1)?.toFixed(1)} m

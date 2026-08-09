@@ -229,19 +229,29 @@ def resolution_diagnostics(G: np.ndarray, layers: np.ndarray, n_layers: int) -> 
     }
 
 
-def _ridge_solve(Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, identity_obs: np.ndarray, chi_max: float) -> np.ndarray:
+def _ridge_solve(
+    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, identity_obs: np.ndarray, chi_max: float, m_ref: np.ndarray
+) -> np.ndarray:
     """One regularized normal-equations solve in data space (see invert's
     docstring for the Woodbury/dual reformulation this implements),
-    non-negativity clipped. p = 1/(depth_weight^2 * compact_weight)."""
+    non-negativity clipped. p = 1/(depth_weight^2 * compact_weight).
+    m_ref: reference model (n_active,) the solve is regularized *toward*
+    instead of toward zero - see invert()'s m_ref parameter. Substituting
+    m = m' + m_ref turns "minimize ||Gm-d||^2 + alpha*||m-m_ref||^2_P"
+    into exactly the original zero-reference problem in m', just with the
+    reference model's own forward response (G @ m_ref) subtracted from
+    the data first. Pass a zeros array for the original toward-zero
+    behavior."""
     GP = Gw * p[np.newaxis, :]
     A_reduced = GP @ Gw.T + alpha0 * identity_obs
-    lam = np.linalg.solve(A_reduced, dw)
-    m = p * (Gw.T @ lam)
-    return np.clip(m, 0.0, chi_max)
+    d_shifted = dw - Gw @ m_ref
+    lam = np.linalg.solve(A_reduced, d_shifted)
+    m_prime = p * (Gw.T @ lam)
+    return np.clip(m_prime + m_ref, 0.0, chi_max)
 
 
 def _select_regularization_strength(
-    Gw: np.ndarray, dw: np.ndarray, p0: np.ndarray, alpha_scale: float, chi_max: float, target_rms_nt: float
+    Gw: np.ndarray, dw: np.ndarray, p0: np.ndarray, alpha_scale: float, chi_max: float, target_rms_nt: float, m_ref: np.ndarray
 ) -> float:
     """Discrepancy-principle style search for the regularization_strength
     multiplier that brings the misfit under weighting p0 close to a
@@ -265,7 +275,7 @@ def _select_regularization_strength(
 
     def misfit_at(reg_strength: float) -> float:
         alpha0 = alpha_scale * reg_strength
-        m = _ridge_solve(Gw, dw, p0, alpha0, identity_obs, chi_max)
+        m = _ridge_solve(Gw, dw, p0, alpha0, identity_obs, chi_max, m_ref)
         predicted = Gw @ m
         return float(np.sqrt(np.mean((predicted - dw) ** 2)))
 
@@ -325,6 +335,7 @@ def invert(
     regularization_strength: float = 1.0,
     n_irls_iterations: int = 5,
     assumed_noise_nt: float | None = None,
+    m_ref: np.ndarray | None = None,
 ) -> InversionResult:
     """Depth-weighted Tikhonov inversion with IRLS compact/focusing
     reweighting (Li & Oldenburg 1996 + Portniaguine & Zhdanov 2002).
@@ -340,12 +351,25 @@ def invert(
     _select_regularization_strength) targeting that noise level instead
     of using the passed-in value directly.
 
+    m_ref: optional reference model (n_active,), one susceptibility value
+    per active cell in the same (rows, cols, layers) order the caller
+    used to build G - when given, every regularization term below pulls
+    the solution toward m_ref instead of toward zero, and the IRLS
+    compact/focusing weight concentrates *deviations from m_ref* into
+    blocky anomalies rather than concentrating the raw susceptibility
+    itself (Li & Oldenburg's own reference-model mechanism: given
+    external geological information - e.g. a user-digitized geology map,
+    see store.py's geology_units - reduces potential-field inversion's
+    inherent non-uniqueness by starting the answer from a geologically
+    plausible background instead of "quiet earth"). None (default)
+    reproduces the original toward-zero behavior exactly.
+
     The mesh routinely has far more voxels than there are observations
     (n_active >> n_obs), so the normal equations are solved in "data
     space" via the standard Woodbury/dual reformulation instead of
     forming and factorizing the dense n_active x n_active system
     directly: for P = diag(1/(depth_weight^2 * compact_weight)),
-        (G P Gt + alpha*I) lambda = d,   m = P Gt lambda
+        (G P Gt + alpha*I) lambda = d - G@m_ref,   m = m_ref + P Gt lambda
     which only requires an n_obs x n_obs solve - at this problem's scale
     (thousands of voxels, ~1000 observations) that is orders of
     magnitude cheaper and gives the identical m (verified against the
@@ -357,6 +381,12 @@ def invert(
 
     Gw = np.asarray(G, dtype=float)
     dw = np.asarray(data_nt, dtype=float)
+    if m_ref is None:
+        m_ref_arr = np.zeros(n_active, dtype=float)
+    else:
+        m_ref_arr = np.asarray(m_ref, dtype=float)
+        if m_ref_arr.shape[0] != n_active:
+            raise InversionError("reference model 크기가 활성 셀 수와 일치하지 않습니다.")
 
     ground_at_cell = mesh.ground_elevation[rows, cols]
     z_center = mesh.z_centers[layers]
@@ -393,22 +423,28 @@ def invert(
         # weighting shaped like what the full IRLS run will actually use.
         identity_obs_snapshot = np.eye(n_obs)
         p_flat = 1.0 / (depth_weight**2)
-        m_snapshot = _ridge_solve(Gw, dw, p_flat, alpha_scale, identity_obs_snapshot, chi_max)
-        positive_snapshot = m_snapshot[m_snapshot > 0]
-        rms_m_snapshot = float(np.sqrt(np.mean(positive_snapshot**2))) if positive_snapshot.size else 1e-6
-        eps_snapshot = max(1e-6, 0.05 * rms_m_snapshot)
-        compact_weight_snapshot = 1.0 / (m_snapshot**2 + eps_snapshot**2)
+        m_snapshot = _ridge_solve(Gw, dw, p_flat, alpha_scale, identity_obs_snapshot, chi_max, m_ref_arr)
+        # Compact/focusing weighting concentrates *deviations from the
+        # reference model* (m_ref_arr, zeros when there's no reference)
+        # into blocky anomalies, not the raw susceptibility itself - a
+        # known-magnetite unit's own background susceptibility shouldn't
+        # count against it as "not compact".
+        deviation_snapshot = m_snapshot - m_ref_arr
+        dev_nonzero_snapshot = deviation_snapshot[deviation_snapshot != 0]
+        rms_dev_snapshot = float(np.sqrt(np.mean(dev_nonzero_snapshot**2))) if dev_nonzero_snapshot.size else 1e-6
+        eps_snapshot = max(1e-6, 0.05 * rms_dev_snapshot)
+        compact_weight_snapshot = 1.0 / (deviation_snapshot**2 + eps_snapshot**2)
         compact_weight_snapshot = compact_weight_snapshot / np.max(compact_weight_snapshot)
         compact_weight_snapshot = np.clip(compact_weight_snapshot, 0.02, 1.0)
         p_snapshot = 1.0 / (depth_weight**2 * compact_weight_snapshot)
 
         regularization_strength = _select_regularization_strength(
-            Gw, dw, p_snapshot, alpha_scale, chi_max, float(assumed_noise_nt)
+            Gw, dw, p_snapshot, alpha_scale, chi_max, float(assumed_noise_nt), m_ref_arr
         )
 
     alpha0 = alpha_scale * float(regularization_strength)
 
-    m = np.zeros(n_active, dtype=float)
+    m = m_ref_arr.copy()
     compact_weight = np.ones(n_active, dtype=float)
     eps = None
     identity_obs = np.eye(n_obs)
@@ -416,11 +452,7 @@ def invert(
     for it in range(n_iter):
         wm2 = (depth_weight ** 2) * compact_weight
         p = 1.0 / wm2
-        GP = Gw * p[np.newaxis, :]
-        A_reduced = GP @ Gw.T + alpha0 * identity_obs
-        lam = np.linalg.solve(A_reduced, dw)
-        m = p * (Gw.T @ lam)
-        m = np.clip(m, 0.0, chi_max)
+        m = _ridge_solve(Gw, dw, p, alpha0, identity_obs, chi_max, m_ref_arr)
 
         # The stabilizing epsilon is fixed from the first (plain
         # depth-weighted L2) solve and held constant afterwards - if it
@@ -428,13 +460,16 @@ def invert(
         # large would keep shrinking their own regularization, creating an
         # unstable positive-feedback loop (verified empirically: rms
         # misfit diverged and chi blew past physical bounds within a few
-        # iterations without this fix).
+        # iterations without this fix). Deviation from m_ref (zeros when
+        # there's no reference model) is what "compact" means here - see
+        # the snapshot solve above.
+        deviation = m - m_ref_arr
         if eps is None:
-            positive = m[m > 0]
-            rms_m = float(np.sqrt(np.mean(positive ** 2))) if positive.size else 1e-6
-            eps = max(1e-6, 0.05 * rms_m)
+            dev_nonzero = deviation[deviation != 0]
+            rms_dev = float(np.sqrt(np.mean(dev_nonzero ** 2))) if dev_nonzero.size else 1e-6
+            eps = max(1e-6, 0.05 * rms_dev)
 
-        compact_weight = 1.0 / (m ** 2 + eps ** 2)
+        compact_weight = 1.0 / (deviation ** 2 + eps ** 2)
         compact_weight = compact_weight / np.max(compact_weight)
         compact_weight = np.clip(compact_weight, 0.02, 1.0)
 

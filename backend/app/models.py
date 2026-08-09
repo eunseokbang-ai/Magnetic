@@ -447,6 +447,31 @@ class InversionParams(BaseModel):
     # processing/inversion.py:_select_regularization_strength. Leave None
     # (default) to keep manually setting regularization_strength.
     assumed_noise_nt: Optional[float] = Field(None, gt=0)
+    # When the project has user-digitized geology blocks (see
+    # GeologyUnitInput / Project.geology_units), regularize the inversion
+    # toward their susceptibility values instead of toward zero - see
+    # processing/inversion.py:invert's m_ref parameter. True by default so
+    # digitizing geology and simply re-running "just works"; set False for
+    # a quick side-by-side comparison against the no-prior-information run.
+    use_geology_reference: bool = True
+
+
+class GeologyUnitInput(BaseModel):
+    """One user-digitized geological block for the 3D inversion's
+    reference model: a polygon (traced over an uploaded geology map
+    raster, e.g. the "12. 참조 레이어" GeoTIFF) plus the susceptibility
+    value assigned to whatever rock unit it represents. Repeated with
+    depth for every mesh column inside the polygon (a "2.5D" assumption -
+    the unit is assumed to continue straight down, since early-stage
+    geology maps rarely include cross-sections showing dip)."""
+    name: str = Field(..., min_length=1, max_length=100)
+    susceptibility_si: float = Field(..., ge=0, le=1.0)
+    path: list[list[float]] = Field(..., min_length=3)  # [[lat, lon], ...] polygon vertices
+
+
+class GeologyUnitUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    susceptibility_si: Optional[float] = Field(None, ge=0, le=1.0)
 
 
 class InversionSliceRequest(HillshadeParams):
