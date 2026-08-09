@@ -14,6 +14,7 @@ import numpy as np
 
 from app.processing.inversion import (
     InversionResult,
+    azimuth_line,
     box_faces,
     build_mesh,
     build_sensitivity_matrix,
@@ -292,6 +293,46 @@ def test_path_slice_3d_matches_vertical_section_values():
     assert np.allclose(z_grid[:, 0], mesh.z_centers)
 
 
+def test_azimuth_line_matches_ew_ns_at_mesh_center():
+    """azimuth_deg=90 (east-west trending line) through the mesh center
+    should sample only values that internal_slice's "ew" orientation at
+    position_frac=0.5 (the mesh's own center row) also sees; azimuth_deg=0
+    (north-south trending line) should agree with "ns" at position_frac=0.5
+    the same way - two different code paths computing the same physical
+    plane must agree, even though azimuth_line's own sample spacing
+    doesn't line up exactly with the mesh's discrete columns."""
+    result = _make_result_with_distinct_values()
+    mesh = result.mesh
+
+    def finite_value_set(face):
+        return set(np.round([v for v in np.array(face["value"]).ravel() if np.isfinite(v)], 6))
+
+    path_x, path_y = azimuth_line(mesh, 90.0, sample_spacing_m=20.0)
+    az_values = finite_value_set(path_slice_3d(result, path_x, path_y))
+    internal_values = finite_value_set(internal_slice(result, "ew", 0.5))
+    assert az_values, "azimuth=90 line produced no finite samples"
+    assert az_values.issubset(internal_values)
+
+    path_x2, path_y2 = azimuth_line(mesh, 0.0, sample_spacing_m=20.0)
+    az_values2 = finite_value_set(path_slice_3d(result, path_x2, path_y2))
+    internal_values2 = finite_value_set(internal_slice(result, "ns", 0.5))
+    assert az_values2, "azimuth=0 line produced no finite samples"
+    assert az_values2.issubset(internal_values2)
+
+
+def test_azimuth_line_crosses_full_mesh_diagonal():
+    """The line's endpoints should reach at least the mesh's own half-
+    diagonal distance from the center regardless of bearing - otherwise
+    a slice at some odd angle could fall short of the mesh edge."""
+    mesh = _make_mesh()
+    half_diag = 0.5 * np.hypot(mesh.x_centers.max() - mesh.x_centers.min(), mesh.y_centers.max() - mesh.y_centers.min())
+    for az in (0.0, 45.0, 90.0, 135.0):
+        path_x, path_y = azimuth_line(mesh, az, sample_spacing_m=10.0)
+        cx, cy = float(mesh.x_centers.mean()), float(mesh.y_centers.mean())
+        dist_from_center = np.hypot(path_x - cx, path_y - cy)
+        assert dist_from_center.max() >= half_diag - 1e-6
+
+
 if __name__ == "__main__":
     test_inversion_recovers_synthetic_block_location()
     test_auto_regularization_targets_assumed_noise()
@@ -304,4 +345,6 @@ if __name__ == "__main__":
     test_internal_slice_boundary_matches_box_faces_walls()
     test_internal_slice_interior_position_matches_expected_row()
     test_path_slice_3d_matches_vertical_section_values()
+    test_azimuth_line_matches_ew_ns_at_mesh_center()
+    test_azimuth_line_crosses_full_mesh_diagonal()
     print("ALL CHECKS PASSED")

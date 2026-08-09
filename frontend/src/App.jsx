@@ -341,16 +341,13 @@ export default function App() {
   const [boxTopLayerIndex, setBoxTopLayerIndex] = useState(0);
   const [boxFacesLoading, setBoxFacesLoading] = useState(false);
   // Interior section planes shown together with the isosurface "blob" in
-  // one combined 3D scene (volume + simultaneous EW/NS/자유선 sections) -
-  // "자유선" reuses whatever path was last drawn for the 2D 수직 섹션 뷰.
+  // one combined 3D scene (volume + any number of simultaneous EW/NS/
+  // 기울기(azimuth)/자유선 sections) - "자유선" reuses whatever path was
+  // last drawn for the 2D 수직 섹션 뷰. Each entry:
+  // {id, orientation, positionFrac, azimuthDeg, path, data, loading}.
   const [lastCustomSectionPath, setLastCustomSectionPath] = useState(null);
-  const [volumeEwSliceOn, setVolumeEwSliceOn] = useState(false);
-  const [volumeEwPositionFrac, setVolumeEwPositionFrac] = useState(0.5);
-  const [volumeNsSliceOn, setVolumeNsSliceOn] = useState(false);
-  const [volumeNsPositionFrac, setVolumeNsPositionFrac] = useState(0.5);
-  const [volumeCustomSliceOn, setVolumeCustomSliceOn] = useState(false);
-  const [volumeSliceData, setVolumeSliceData] = useState({ ew: null, ns: null, custom: null });
-  const [volumeSliceLoading, setVolumeSliceLoading] = useState({ ew: false, ns: false, custom: false });
+  const [volumeSlices, setVolumeSlices] = useState([]);
+  const [volumeOpacity, setVolumeOpacity] = useState(1.0);
 
   const [eulerStructuralIndex, setEulerStructuralIndex] = useState(1.0);
   const [eulerWindowSize, setEulerWindowSize] = useState(100.0);
@@ -1817,6 +1814,7 @@ export default function App() {
       const resp = await api.getInversionVolume(projectId, threshold, thresholdMax);
       setVolumeData({ ...resp, threshold, thresholdMax });
       setBoxFacesData(null);
+      setVolumeSlices([]);
     } catch (e) {
       setInversionError(e.message || String(e));
     }
@@ -1835,48 +1833,56 @@ export default function App() {
     }
   };
 
-  // Fetches one interior section plane (동서/남북/자유선) to overlay on top
-  // of the isosurface "blob" in the same 3D scene - orientation is "ew",
-  // "ns", or "custom" (자유선, using the last path drawn for the 2D 수직
-  // 섹션 뷰). Continuous SI coloring, no threshold gating, matching the
-  // "박스" view's convention so the section reads as full context rather
-  // than being clipped to whatever range the isosurface threshold uses.
-  const fetchVolumeSlice = async (orientation, positionFrac) => {
-    if (orientation === "custom" && !lastCustomSectionPath) return;
-    setVolumeSliceLoading((s) => ({ ...s, [orientation]: true }));
+  // Fetches one interior section plane (동서/남북/기울기/자유선) for the
+  // given slice spec and stores the result back onto that spec by id -
+  // any number of these can be added at once to overlay on the
+  // isosurface "blob" in the same 3D scene. Continuous SI coloring, no
+  // threshold gating, matching the "박스" view's convention so each
+  // section reads as full context rather than being clipped to whatever
+  // range the isosurface threshold uses.
+  const fetchVolumeSliceData = async (spec) => {
+    setVolumeSlices((prev) => prev.map((s) => (s.id === spec.id ? { ...s, loading: true } : s)));
     try {
       const body =
-        orientation === "custom"
-          ? { orientation: "custom", path: lastCustomSectionPath }
-          : { orientation, position_frac: positionFrac };
+        spec.orientation === "custom"
+          ? { orientation: "custom", path: spec.path }
+          : spec.orientation === "azimuth"
+          ? { orientation: "azimuth", azimuth_deg: spec.azimuthDeg }
+          : { orientation: spec.orientation, position_frac: spec.positionFrac };
       const resp = await api.getInversionSlice3D(projectId, body);
-      setVolumeSliceData((s) => ({ ...s, [orientation]: resp }));
+      setVolumeSlices((prev) => prev.map((s) => (s.id === spec.id ? { ...s, data: resp, loading: false } : s)));
     } catch (e) {
       setInversionError(e.message || String(e));
-    } finally {
-      setVolumeSliceLoading((s) => ({ ...s, [orientation]: false }));
+      setVolumeSlices((prev) => prev.map((s) => (s.id === spec.id ? { ...s, loading: false } : s)));
     }
   };
 
-  const handleToggleVolumeEwSlice = (on) => {
-    setVolumeEwSliceOn(on);
-    if (on) fetchVolumeSlice("ew", volumeEwPositionFrac);
+  const handleAddVolumeSlice = (orientation) => {
+    if (orientation === "custom" && !lastCustomSectionPath) return;
+    const spec = {
+      id: `${orientation}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      orientation,
+      positionFrac: 0.5,
+      azimuthDeg: 45,
+      path: orientation === "custom" ? lastCustomSectionPath : null,
+      data: null,
+      loading: false,
+    };
+    setVolumeSlices((prev) => [...prev, spec]);
+    fetchVolumeSliceData(spec);
   };
-  const handleVolumeEwPositionChange = (frac) => {
-    setVolumeEwPositionFrac(frac);
-    if (volumeEwSliceOn) fetchVolumeSlice("ew", frac);
+
+  const handleRemoveVolumeSlice = (id) => {
+    setVolumeSlices((prev) => prev.filter((s) => s.id !== id));
   };
-  const handleToggleVolumeNsSlice = (on) => {
-    setVolumeNsSliceOn(on);
-    if (on) fetchVolumeSlice("ns", volumeNsPositionFrac);
-  };
-  const handleVolumeNsPositionChange = (frac) => {
-    setVolumeNsPositionFrac(frac);
-    if (volumeNsSliceOn) fetchVolumeSlice("ns", frac);
-  };
-  const handleToggleVolumeCustomSlice = (on) => {
-    setVolumeCustomSliceOn(on);
-    if (on) fetchVolumeSlice("custom");
+
+  const handleUpdateVolumeSlice = (id, patch) => {
+    setVolumeSlices((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, ...patch } : s));
+      const updated = next.find((s) => s.id === id);
+      if (updated) fetchVolumeSliceData(updated);
+      return next;
+    });
   };
 
   const handleExportInversion = async () => {
@@ -2281,16 +2287,13 @@ export default function App() {
               onBoxTopLayerIndexChange={handleLoadBoxFaces}
               boxLoading={boxFacesLoading}
               nLayers={inversionSummary?.n_layers}
-              slice3D={{
-                ew: { on: volumeEwSliceOn, positionFrac: volumeEwPositionFrac, data: volumeSliceData.ew, loading: volumeSliceLoading.ew },
-                ns: { on: volumeNsSliceOn, positionFrac: volumeNsPositionFrac, data: volumeSliceData.ns, loading: volumeSliceLoading.ns },
-                custom: { on: volumeCustomSliceOn, data: volumeSliceData.custom, loading: volumeSliceLoading.custom, available: !!lastCustomSectionPath },
-              }}
-              onToggleEwSlice={handleToggleVolumeEwSlice}
-              onEwPositionChange={handleVolumeEwPositionChange}
-              onToggleNsSlice={handleToggleVolumeNsSlice}
-              onNsPositionChange={handleVolumeNsPositionChange}
-              onToggleCustomSlice={handleToggleVolumeCustomSlice}
+              slices={volumeSlices}
+              onAddSlice={handleAddVolumeSlice}
+              onRemoveSlice={handleRemoveVolumeSlice}
+              onUpdateSlice={handleUpdateVolumeSlice}
+              customSliceAvailable={!!lastCustomSectionPath}
+              opacity={volumeOpacity}
+              onOpacityChange={setVolumeOpacity}
             />
           </Suspense>
         )}

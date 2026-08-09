@@ -560,6 +560,27 @@ def _sample_along_path(mesh: InversionMesh, path_x: np.ndarray, path_y: np.ndarr
     return row_idx, col_idx
 
 
+def azimuth_line(mesh: InversionMesh, azimuth_deg: float, sample_spacing_m: float = 10.0):
+    """A densified (path_x, path_y) straight line crossing the full mesh
+    through its own center at an arbitrary compass bearing (0 = a
+    north-south trending line, 90 = an east-west trending line) - lets a
+    user sweep an oblique section plane with just a slider instead of
+    having to hand-draw a path on the map, for internal_slice's ew/ns
+    orientations' natural third option. Feed the result into
+    path_slice_3d (interactive 3D plane) or vertical_section (2D
+    distance-vs-depth PNG) exactly like a hand-drawn custom path."""
+    az = np.radians(azimuth_deg)
+    dx, dy = float(np.sin(az)), float(np.cos(az))
+    cx = float(mesh.x_centers.mean())
+    cy = float(mesh.y_centers.mean())
+    # Half-length spans the mesh's own diagonal, so the line always
+    # crosses the full mesh regardless of bearing.
+    half_len = 0.5 * float(np.hypot(mesh.x_centers.max() - mesh.x_centers.min(), mesh.y_centers.max() - mesh.y_centers.min()))
+    n_samples = max(2, int(2 * half_len / sample_spacing_m) + 1)
+    t = np.linspace(-half_len, half_len, n_samples)
+    return cx + t * dx, cy + t * dy
+
+
 def vertical_section(
     result: InversionResult,
     path_x: np.ndarray,

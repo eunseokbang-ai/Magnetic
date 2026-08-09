@@ -66,6 +66,7 @@ from .processing.inversion import (
     InversionError,
     InversionMesh,
     InversionResult,
+    azimuth_line,
     box_faces,
     build_mesh,
     build_sensitivity_matrix,
@@ -2854,6 +2855,16 @@ class Project:
             except InversionError as exc:
                 raise ProjectError(str(exc)) from exc
             face["orientation"] = "custom"
+        elif req.orientation == "azimuth":
+            if req.azimuth_deg is None:
+                raise ProjectError("자유방향 단면을 위해서는 azimuth_deg가 필요합니다.")
+            path_x, path_y = azimuth_line(mesh, req.azimuth_deg, req.sample_spacing_m)
+            try:
+                face = _inversion_path_slice_3d(self.inversion_result, path_x, path_y, req.threshold, req.threshold_max)
+            except InversionError as exc:
+                raise ProjectError(str(exc)) from exc
+            face["orientation"] = "azimuth"
+            face["azimuth_deg"] = req.azimuth_deg
         else:
             if req.position_frac is None:
                 raise ProjectError("동서/남북 단면을 위해서는 position_frac이 필요합니다.")

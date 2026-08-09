@@ -473,15 +473,25 @@ class InversionSectionRequest(BaseModel):
     sample_spacing_m: float = Field(10.0, gt=0)
 
 
+Slice3DOrientation = Literal["custom", "ew", "ns", "azimuth"]
+
+
 class InversionSlice3DRequest(BaseModel):
     """One interior cutting plane through the 3D inversion mesh, for the
     combined "isosurface volume + several simultaneous section planes"
     3D view - see store.py:get_inversion_slice_3d. "ew"/"ns" cut at an
     arbitrary interior position_frac (0-1) instead of only the mesh
-    boundary; "custom" follows an arbitrary-direction path (same
-    [[lat, lon], ...] convention as InversionSectionRequest.path)."""
-    orientation: SectionProfile = "custom"
+    boundary; "azimuth" cuts through the mesh's own center at an
+    arbitrary compass bearing (no map drawing needed - just a slider);
+    "custom" follows an arbitrary-direction path (same [[lat, lon], ...]
+    convention as InversionSectionRequest.path)."""
+    orientation: Slice3DOrientation = "custom"
     position_frac: Optional[float] = Field(None, ge=0, le=1)  # required for ew/ns
+    # Compass bearing (degrees, 0=north-south trending line, 90=east-west
+    # trending line) of the section line through the mesh center -
+    # required for "azimuth". 0-180 covers every distinct line direction
+    # (a line at az and az+180 is the same line).
+    azimuth_deg: Optional[float] = Field(None, ge=0, lt=180)
     path: Optional[list[list[float]]] = Field(None, min_length=2)  # [[lat, lon], ...], required for custom
     threshold: Optional[float] = None
     threshold_max: Optional[float] = None

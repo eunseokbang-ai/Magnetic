@@ -34,28 +34,47 @@ function sliceToTrace(face, name, showscale) {
   };
 }
 
-// Checkbox + optional position slider for one interior section plane
-// toggle, shared by the ew/ns/custom controls in the "blob" view's
-// header bar.
-function SliceToggle({ label, on, onToggle, positionFrac, onPositionChange, loading, disabled, disabledHint }) {
+const SLICE_ORIENTATION_LABELS = { ew: "동서", ns: "남북", azimuth: "기울기", custom: "자유선" };
+
+// One row in the active-slice list: a small inline control (position or
+// azimuth) plus a remove button, shown for each plane currently added
+// to the combined 3D scene.
+function SliceRow({ slice, onUpdate, onRemove }) {
+  const label = SLICE_ORIENTATION_LABELS[slice.orientation] || slice.orientation;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: disabled ? "not-allowed" : "pointer", color: disabled ? "#9ca3af" : "inherit" }} title={disabled ? disabledHint : undefined}>
-        <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onToggle(e.target.checked)} />
-        {label}
-      </label>
-      {on && onPositionChange && (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "white", border: "1px solid #e5e7eb", borderRadius: 5, padding: "2px 6px" }}>
+      <span>{label} 단면</span>
+      {(slice.orientation === "ew" || slice.orientation === "ns") && (
         <input
           type="range"
           min="0"
           max="1"
           step="0.02"
-          value={positionFrac}
-          onChange={(e) => onPositionChange(parseFloat(e.target.value))}
+          value={slice.positionFrac}
+          onChange={(e) => onUpdate(slice.id, { positionFrac: parseFloat(e.target.value) })}
           style={{ width: 70 }}
         />
       )}
-      {on && loading && <span style={{ color: "#9ca3af" }}>...</span>}
+      {slice.orientation === "azimuth" && (
+        <input
+          type="range"
+          min="0"
+          max="179"
+          step="1"
+          value={slice.azimuthDeg}
+          title={`${slice.azimuthDeg}°`}
+          onChange={(e) => onUpdate(slice.id, { azimuthDeg: parseFloat(e.target.value) })}
+          style={{ width: 70 }}
+        />
+      )}
+      {slice.loading && <span style={{ color: "#9ca3af" }}>...</span>}
+      <button
+        onClick={() => onRemove(slice.id)}
+        style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 13, padding: 0, lineHeight: 1 }}
+        title="이 단면 제거"
+      >
+        ✕
+      </button>
     </div>
   );
 }
@@ -68,12 +87,13 @@ export default function InversionVolumeView({
   onBoxTopLayerIndexChange,
   boxLoading,
   nLayers,
-  slice3D,
-  onToggleEwSlice,
-  onEwPositionChange,
-  onToggleNsSlice,
-  onNsPositionChange,
-  onToggleCustomSlice,
+  slices,
+  onAddSlice,
+  onRemoveSlice,
+  onUpdateSlice,
+  customSliceAvailable,
+  opacity,
+  onOpacityChange,
 }) {
   const [showTop, setShowTop] = useState(true);
   const [mode, setMode] = useState("blob");
@@ -115,7 +135,7 @@ export default function InversionVolumeView({
       // bodies read as solid, smoothly-bounded "blobs" the way
       // UBC/Geosoft-style inversion figures show them.
       surface: { count: 1, fill: 1 },
-      opacity: 1,
+      opacity: opacity ?? 1,
       colorscale: "Turbo",
       caps: { x: { show: false }, y: { show: false }, z: { show: false } },
       colorbar: { title: { text: "SI" }, x: 1.02, len: 0.4, y: 0.78 },
@@ -141,16 +161,16 @@ export default function InversionVolumeView({
     });
   }
 
-  // Interior 동서/남북/자유선 section planes shown together with the
-  // isosurface volume in this same scene (see App.jsx's slice3D state +
-  // fetchVolumeSlice) - one shared colorbar since they all use the same
-  // continuous SI scale (0 to the model's own max, no threshold gating).
-  const sliceSpecs = [];
-  if (slice3D?.ew?.on && slice3D.ew.data) sliceSpecs.push([slice3D.ew.data, "동서 단면"]);
-  if (slice3D?.ns?.on && slice3D.ns.data) sliceSpecs.push([slice3D.ns.data, "남북 단면"]);
-  if (slice3D?.custom?.on && slice3D.custom.data) sliceSpecs.push([slice3D.custom.data, "자유선 단면"]);
-  sliceSpecs.forEach(([face, name], i) => {
-    const trace = sliceToTrace(face, name, i === 0);
+  // Any number of interior 동서/남북/기울기/자유선 section planes shown
+  // together with the isosurface volume in this same scene (see
+  // App.jsx's volumeSlices state) - one shared colorbar since they all
+  // use the same continuous SI scale (0 to the model's own max, no
+  // threshold gating), matching the multi-panel "volume + several
+  // simultaneous section planes" presentation this view is modeled on.
+  const activeSlices = (slices || []).filter((s) => s.data);
+  activeSlices.forEach((slice, i) => {
+    const name = `${SLICE_ORIENTATION_LABELS[slice.orientation] || slice.orientation} 단면`;
+    const trace = sliceToTrace(slice.data, name, i === 0);
     if (trace) traces.push(trace);
   });
 
@@ -174,6 +194,20 @@ export default function InversionVolumeView({
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>3차원 자화율 이상대 (SI, 지정한 범위만 표시)</div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {onOpacityChange && (
+            <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }} title="이상대를 반투명하게 하면 내부 단면이 함께 보입니다">
+              투명도
+              <input
+                type="range"
+                min="0.15"
+                max="1"
+                step="0.05"
+                value={opacity ?? 1}
+                onChange={(e) => onOpacityChange(parseFloat(e.target.value))}
+                style={{ width: 70 }}
+              />
+            </label>
+          )}
           {top && (
             <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
               <input type="checkbox" checked={showTop} onChange={(e) => setShowTop(e.target.checked)} />
@@ -198,38 +232,43 @@ export default function InversionVolumeView({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 16,
+          gap: 8,
           padding: "6px 12px",
           borderBottom: "1px solid #e5e7eb",
           background: "#f9fafb",
           flexWrap: "wrap",
         }}
       >
-        <span style={{ fontSize: 11, color: "#6b7280" }}>이상대와 함께 표시할 단면:</span>
-        <SliceToggle
-          label="동서 단면"
-          on={slice3D?.ew?.on ?? false}
-          onToggle={onToggleEwSlice}
-          positionFrac={slice3D?.ew?.positionFrac ?? 0.5}
-          onPositionChange={onEwPositionChange}
-          loading={slice3D?.ew?.loading}
-        />
-        <SliceToggle
-          label="남북 단면"
-          on={slice3D?.ns?.on ?? false}
-          onToggle={onToggleNsSlice}
-          positionFrac={slice3D?.ns?.positionFrac ?? 0.5}
-          onPositionChange={onNsPositionChange}
-          loading={slice3D?.ns?.loading}
-        />
-        <SliceToggle
-          label="자유선 단면 (마지막으로 그린 선)"
-          on={slice3D?.custom?.on ?? false}
-          onToggle={onToggleCustomSlice}
-          loading={slice3D?.custom?.loading}
-          disabled={!slice3D?.custom?.available}
-          disabledHint="먼저 '수직 섹션 뷰'에서 자유선을 그려주세요"
-        />
+        <span style={{ fontSize: 11, color: "#6b7280" }}>단면 추가:</span>
+        <button onClick={() => onAddSlice?.("ew")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+          + 동서
+        </button>
+        <button onClick={() => onAddSlice?.("ns")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+          + 남북
+        </button>
+        <button onClick={() => onAddSlice?.("azimuth")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+          + 기울기(자유방향)
+        </button>
+        <button
+          onClick={() => onAddSlice?.("custom")}
+          disabled={!customSliceAvailable}
+          title={customSliceAvailable ? undefined : "먼저 '수직 섹션 뷰'에서 자유선을 그려주세요"}
+          style={{
+            border: "1px solid #d1d5db",
+            background: "white",
+            borderRadius: 5,
+            padding: "2px 8px",
+            fontSize: 12,
+            cursor: customSliceAvailable ? "pointer" : "not-allowed",
+            color: customSliceAvailable ? "inherit" : "#9ca3af",
+          }}
+        >
+          + 자유선(마지막으로 그린 선)
+        </button>
+        {(slices || []).length > 0 && <span style={{ width: 1, alignSelf: "stretch", background: "#e5e7eb" }} />}
+        {(slices || []).map((slice) => (
+          <SliceRow key={slice.id} slice={slice} onUpdate={onUpdateSlice} onRemove={onRemoveSlice} />
+        ))}
       </div>
       <div style={{ flex: 1 }}>
         <Plot
