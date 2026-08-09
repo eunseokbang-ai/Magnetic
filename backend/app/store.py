@@ -74,7 +74,7 @@ from .processing.inversion import (
     upsample_susceptibility,
 )
 from .processing.inversion import vertical_section as _inversion_vertical_section
-from .processing.inversion_auto import suggest_mesh_params
+from .processing.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
 from .processing.lines import (
     LineDetectionParams,
@@ -2592,10 +2592,12 @@ class Project:
             )
             ground_elev = ground_result.values
 
+        growth_factor = params.depth_growth_factor or DEFAULT_DEPTH_GROWTH_FACTOR
         try:
             mesh = build_mesh(
                 obs_grid.easting, obs_grid.northing, ground_elev,
                 cell_size_m=obs_cell_size_m, depth_extent_m=depth_extent_m, n_layers=n_layers,
+                growth_factor=growth_factor,
             )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
@@ -2648,7 +2650,8 @@ class Project:
             "obs_cell_size_m": obs_cell_size_m,
             "depth_extent_m": depth_extent_m,
             "cell_size_m": mesh.cell_size_m,
-            "layer_thickness_m": mesh.layer_thickness_m,
+            "layer_thickness_m": [float(t) for t in mesh.layer_thickness_m],
+            "depth_growth_factor": growth_factor,
             "elevation_range_m": [float(mesh.z_centers.min()), float(mesh.z_centers.max())],
             "field": {
                 "inclination_deg": self.inclination_deg,
@@ -2874,7 +2877,7 @@ class Project:
                     y_centers=npz["y_centers"],
                     z_centers=npz["z_centers"],
                     cell_size_m=float(npz["cell_size_m"]),
-                    layer_thickness_m=float(npz["layer_thickness_m"]),
+                    layer_thickness_m=np.atleast_1d(npz["layer_thickness_m"]).astype(float),
                     ground_elevation=npz["ground_elevation"],
                     active=npz["active"],
                 )
@@ -2922,9 +2925,9 @@ class Project:
             "iterations": result.iterations,
             "n_layers": int(mesh.active.shape[2]),
             "obs_cell_size_m": mesh.cell_size_m,
-            "depth_extent_m": mesh.layer_thickness_m * mesh.active.shape[2],
+            "depth_extent_m": float(np.sum(mesh.layer_thickness_m)),
             "cell_size_m": mesh.cell_size_m,
-            "layer_thickness_m": mesh.layer_thickness_m,
+            "layer_thickness_m": [float(t) for t in mesh.layer_thickness_m],
             "elevation_range_m": [float(mesh.z_centers.min()), float(mesh.z_centers.max())],
             "field": {
                 "inclination_deg": self.inclination_deg,

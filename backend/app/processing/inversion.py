@@ -35,7 +35,7 @@ import matplotlib.patches
 import numpy as np
 from choclo.prism import magnetic_field
 from numba import njit, prange
-from scipy.ndimage import zoom as ndi_zoom
+from scipy.interpolate import RegularGridInterpolator
 
 MU0 = 4.0 * np.pi * 1e-7
 
@@ -48,9 +48,9 @@ class InversionError(ValueError):
 class InversionMesh:
     x_centers: np.ndarray  # (nx,) easting, ascending, local UTM meters
     y_centers: np.ndarray  # (ny,) northing, ascending, local UTM meters
-    z_centers: np.ndarray  # (nz,) elevation, index 0 = shallowest layer
+    z_centers: np.ndarray  # (nz,) elevation, index 0 = shallowest layer, descending
     cell_size_m: float
-    layer_thickness_m: float
+    layer_thickness_m: np.ndarray  # (nz,) per-layer thickness, index 0 = shallowest (see build_mesh's growth_factor)
     ground_elevation: np.ndarray  # (ny, nx)
     active: np.ndarray  # (ny, nx, nz) bool - False = air/inactive cell
 
@@ -76,15 +76,38 @@ def build_mesh(
     cell_size_m: float,
     depth_extent_m: float,
     n_layers: int,
+    growth_factor: float = 1.0,
 ) -> InversionMesh:
+    """growth_factor grades the per-layer thickness geometrically with
+    depth (thickness_k = thickness_0 * growth_factor^k, k=0 = shallowest)
+    instead of dividing depth_extent_m into n_layers equal slabs - the
+    standard UBC-GIF/SimPEG "core mesh" scheme (Li & Oldenburg's own
+    published meshes use exactly this grading): finer cells near the
+    surface, where the survey geometry can actually resolve detail and
+    where the recovered top-of-body shape matters most for reading off
+    real terrain/near-surface structure, coarser cells at depth, where
+    potential-field data's inherent falloff with distance means no
+    survey resolves fine structure there regardless of how small the
+    cells are made. growth_factor=1.0 (the default) reproduces the
+    original uniform-thickness mesh exactly."""
     if ground_elevation.shape != (len(y_centers), len(x_centers)):
         raise InversionError("지형 격자와 역산 격자의 크기가 일치하지 않습니다.")
     if not np.isfinite(ground_elevation).any():
         raise InversionError("유효한 지형 고도 값이 없습니다.")
 
     z_top = float(np.nanmax(ground_elevation))
-    layer_thickness = float(depth_extent_m) / int(n_layers)
-    z_centers = z_top - layer_thickness * (np.arange(n_layers) + 0.5)
+    n_layers = int(n_layers)
+    growth_factor = float(growth_factor)
+    if abs(growth_factor - 1.0) < 1e-9:
+        layer_thickness = np.full(n_layers, float(depth_extent_m) / n_layers)
+    else:
+        # Geometric series: depth_extent_m = t0 * (r^n - 1) / (r - 1),
+        # solved for t0 given the requested growth ratio r and layer count n.
+        t0 = float(depth_extent_m) * (growth_factor - 1.0) / (growth_factor**n_layers - 1.0)
+        layer_thickness = t0 * growth_factor ** np.arange(n_layers)
+    layer_bottom_depth = np.cumsum(layer_thickness)
+    layer_top_depth = np.concatenate([[0.0], layer_bottom_depth[:-1]])
+    z_centers = z_top - 0.5 * (layer_top_depth + layer_bottom_depth)
 
     ny, nx = ground_elevation.shape
     active = np.empty((ny, nx, n_layers), dtype=bool)
@@ -108,11 +131,11 @@ def _active_prism_bounds(mesh: InversionMesh):
     (west, east, south, north, bottom, top) plus their (row, col, layer)
     grid indices for reassembling results back into the 3D array."""
     dx = mesh.cell_size_m / 2.0
-    dz = mesh.layer_thickness_m / 2.0
     rows, cols, layers = np.nonzero(mesh.active)
     x_c = mesh.x_centers[cols]
     y_c = mesh.y_centers[rows]
     z_c = mesh.z_centers[layers]
+    dz = mesh.layer_thickness_m[layers] / 2.0  # per-layer thickness (graded mesh - see build_mesh)
     bounds = np.column_stack([x_c - dx, x_c + dx, y_c - dx, y_c + dx, z_c - dz, z_c + dz])
     return bounds, rows, cols, layers
 
@@ -338,7 +361,13 @@ def invert(
     ground_at_cell = mesh.ground_elevation[rows, cols]
     z_center = mesh.z_centers[layers]
     depth_below_surface = np.clip(ground_at_cell - z_center, 0.0, None)
-    z0 = 0.5 * mesh.cell_size_m
+    # Reference offset in the standard Li & Oldenburg depth-weighting
+    # formula 1/(z+z0)^1.5 - conventionally the mesh's own near-surface
+    # cell dimension, to avoid a singularity right at zero depth. Uses
+    # the shallowest layer's thickness (not the horizontal cell size)
+    # since a graded mesh's finest cells - the ones this offset is meant
+    # to represent - now sit in z, not x/y (see build_mesh's growth_factor).
+    z0 = 0.5 * float(np.min(mesh.layer_thickness_m))
     depth_weight = 1.0 / np.power(depth_below_surface + z0, 1.5)
     depth_weight = depth_weight / np.max(depth_weight)
 
@@ -447,7 +476,14 @@ def upsample_susceptibility(
     Order-1 (trilinear) interpolation is used deliberately over a cubic
     spline: it can't overshoot past the local min/max, so it can't invent
     isosurface lobes that aren't supported by the actual solved model.
-    Returns (x_centers, y_centers, z_centers, fine_chi) on the finer grid.
+    Interpolates by real physical position (scipy.interpolate.
+    RegularGridInterpolator over the mesh's actual x/y/z center
+    coordinates) rather than by array index (the previous
+    scipy.ndimage.zoom implementation) - with a depth-graded mesh
+    (build_mesh's growth_factor) z_centers is no longer evenly spaced, so
+    interpolating by index would silently misplace values relative to
+    their true depth. Returns (x_centers, y_centers, z_centers, fine_chi)
+    on a finer grid, uniformly spaced in x/y/z for a clean render.
     """
     ny, nx, nz = chi.shape
     total_cells = max(ny * nx * nz, 1)
@@ -456,11 +492,26 @@ def upsample_susceptibility(
     if factor <= 1.0:
         return mesh.x_centers, mesh.y_centers, mesh.z_centers, chi
 
-    fine_chi = ndi_zoom(chi, zoom=factor, order=1, mode="nearest")
-    fine_ny, fine_nx, fine_nz = fine_chi.shape
+    fine_nx = max(nx, int(round(nx * factor)))
+    fine_ny = max(ny, int(round(ny * factor)))
+    fine_nz = max(nz, int(round(nz * factor)))
     x_centers = np.linspace(mesh.x_centers[0], mesh.x_centers[-1], fine_nx)
     y_centers = np.linspace(mesh.y_centers[0], mesh.y_centers[-1], fine_ny)
     z_centers = np.linspace(mesh.z_centers[0], mesh.z_centers[-1], fine_nz)
+
+    # mesh.z_centers runs descending (index 0 = shallowest/highest
+    # elevation - see InversionMesh); RegularGridInterpolator requires
+    # each axis strictly ascending, so flip both the axis and the data
+    # to match before building the interpolator.
+    z_axis_asc = mesh.z_centers[::-1]
+    chi_asc = chi[:, :, ::-1]
+    interpolator = RegularGridInterpolator(
+        (mesh.y_centers, mesh.x_centers, z_axis_asc), chi_asc,
+        method="linear", bounds_error=False, fill_value=0.0,
+    )
+    Yq, Xq, Zq = np.meshgrid(y_centers, x_centers, z_centers, indexing="ij")
+    query = np.stack([Yq.ravel(), Xq.ravel(), Zq.ravel()], axis=-1)
+    fine_chi = interpolator(query).reshape(fine_ny, fine_nx, fine_nz)
     return x_centers, y_centers, z_centers, fine_chi
 
 
@@ -532,12 +583,23 @@ def vertical_section(
 
 def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
     """Assemble a "fence diagram" style box for 3D display: the top
-    horizontal slice plus susceptibility on the 4 vertical boundary
-    walls of the inversion mesh (south/north/west/east), all continuous
-    (no threshold gating) and sharing one SI colorscale - mirrors the
-    standard published-figure style of a colored box with a distinct
-    top surface and 4 colored side faces, as an alternative to the
-    single-threshold isosurface "blob" view."""
+    surface plus susceptibility on the 4 vertical boundary walls of the
+    inversion mesh (south/north/west/east), all continuous (no threshold
+    gating) and sharing one SI colorscale - mirrors the standard
+    published-figure style of a colored box with a distinct top surface
+    and 4 colored side faces, as an alternative to the single-threshold
+    isosurface "blob" view.
+
+    The top surface follows the real terrain at every column - each
+    column starts from its own shallowest ACTIVE layer (immediately
+    below that column's local ground elevation) and steps
+    top_layer_index layers deeper from there, so the slider that used to
+    pick one fixed elevation shared by the whole mesh instead explores
+    progressively deeper "sheets" that still hug the true terrain shape.
+    A single shared elevation only reproduces the actual ground surface
+    where the terrain happens to sit exactly at that height - everywhere
+    else it was a flat plane cutting through empty air or through rock,
+    not the surface a user asking to "see the 3D terrain shape" wants."""
     mesh = result.mesh
     chi = result.susceptibility
     active = mesh.active
@@ -551,11 +613,21 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
         return out
 
     x_grid, y_grid = np.meshgrid(x, y)  # (ny, nx)
+
+    has_active = active.any(axis=2)
+    # First True along the depth axis (index 0 = shallowest) - the layer
+    # immediately below this column's real ground elevation.
+    first_active = np.argmax(active, axis=2)
+    col_layer = np.clip(first_active + top_layer_index, 0, nz - 1)
+    top_chi = np.take_along_axis(chi, col_layer[:, :, None], axis=2)[:, :, 0]
+    top_chi = np.where(has_active, top_chi, np.nan)
+    top_z = np.where(has_active, z[col_layer], mesh.ground_elevation)
+
     top = {
         "x": x_grid.tolist(),
         "y": y_grid.tolist(),
-        "z": np.full_like(x_grid, float(z[top_layer_index])).tolist(),
-        "value": masked(chi[:, :, top_layer_index], active[:, :, top_layer_index]).tolist(),
+        "z": top_z.tolist(),
+        "value": top_chi.tolist(),
     }
 
     def wall_along_x(row_idx: int) -> dict:
@@ -592,7 +664,7 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
         "vmin": 0.0,
         "vmax": float(active_chi.max()) if active_chi.size else 1.0,
         "top_layer_index": top_layer_index,
-        "top_elevation_m": float(z[top_layer_index]),
+        "top_elevation_m": float(np.nanmean(top_z)) if has_active.any() else float(z[top_layer_index]),
         "n_layers": int(nz),
     }
 
@@ -648,7 +720,13 @@ def render_section_png(
         section, extent=[0.0, dist_max, z_lo, z_hi], origin="upper", aspect="auto",
         cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest",
     )
-    ax.plot(distance_m, ground_elevation_m, color="black", linewidth=1.2, label="지표면")
+    # Above-ground cells are already NaN (transparent) in `section`, so the
+    # axes' own white background already reads as "air" - the fill just
+    # makes that reading unambiguous even when the terrain relief is a
+    # small fraction of the plotted depth range (a thin line alone can
+    # look like a flat cutoff near the top of a tall, mostly-empty plot).
+    ax.fill_between(distance_m, ground_elevation_m, z_hi, color="white", zorder=2)
+    ax.plot(distance_m, ground_elevation_m, color="black", linewidth=2.2, zorder=3, label="지표면")
     ax.set_xlabel("측선을 따른 거리 (m)")
     ax.set_ylabel("고도 (m)")
     profile_label = _PROFILE_LABELS.get(profile, profile)

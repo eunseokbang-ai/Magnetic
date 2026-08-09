@@ -154,7 +154,15 @@ export default function InversionPanel({
           <>
             <NumberField label="관측/메쉬 격자 크기 (m)" value={params.obs_cell_size_m} step="5" onChange={(v) => setParams((p) => ({ ...p, obs_cell_size_m: v }))} />
             <NumberField label="탐사 심도 (m)" value={params.depth_extent_m} step="10" onChange={(v) => setParams((p) => ({ ...p, depth_extent_m: v }))} />
-            <NumberField label="깊이 레이어 수" value={params.n_layers} step="1" min="1" max="50" onChange={(v) => setParams((p) => ({ ...p, n_layers: v }))} />
+            <NumberField label="깊이 레이어 수" value={params.n_layers} step="1" min="1" max="80" onChange={(v) => setParams((p) => ({ ...p, n_layers: v }))} />
+            <NumberField
+              label="깊이별 셀 두께 증가율 (1.0=균일, 클수록 표층은 얇고 심부는 두꺼움)"
+              value={params.depth_growth_factor ?? 1.15}
+              step="0.05"
+              min="1"
+              max="2"
+              onChange={(v) => setParams((p) => ({ ...p, depth_growth_factor: v }))}
+            />
           </>
         )}
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 8 }}>
@@ -200,6 +208,12 @@ export default function InversionPanel({
           </div>
           <div>고도 범위: {summary.elevation_range_m?.[0]?.toFixed(0)} ~ {summary.elevation_range_m?.[1]?.toFixed(0)} m</div>
           <div>DEM 사용: {summary.used_dem ? "예" : "아니오 (GPS 등고비행 추정)"}</div>
+          {summary.layer_thickness_m?.length > 1 && summary.depth_growth_factor != null && (
+            <div>
+              레이어 두께: 표층 {summary.layer_thickness_m[0]?.toFixed(1)} m → 최심부 {summary.layer_thickness_m.at(-1)?.toFixed(1)} m
+              (증가율 ×{summary.depth_growth_factor.toFixed(2)})
+            </div>
+          )}
           {summary.auto_params && (
             <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px dashed #d1d5db" }}>
               <div>자동 선택된 격자 크기: {summary.obs_cell_size_m?.toFixed(1)} m</div>

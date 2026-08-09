@@ -13,6 +13,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from app.processing.inversion import (
+    InversionResult,
+    box_faces,
     build_mesh,
     build_sensitivity_matrix,
     invert,
@@ -135,10 +137,77 @@ def test_resolution_diagnostics_flags_poorly_resolved_layers():
     assert diag["poorly_resolved_layers"] == [2]
 
 
+def test_build_mesh_growth_factor_one_is_uniform():
+    """growth_factor=1.0 (the default) must reproduce the original
+    uniform-thickness mesh exactly - no behavior change for existing
+    callers that never pass growth_factor."""
+    x_centers = np.arange(-100.0, 101.0, 20.0)
+    y_centers = np.arange(-100.0, 101.0, 20.0)
+    ground_elevation = np.full((len(y_centers), len(x_centers)), 50.0)
+    mesh = build_mesh(x_centers, y_centers, ground_elevation, cell_size_m=20.0, depth_extent_m=100.0, n_layers=5)
+    assert np.allclose(mesh.layer_thickness_m, 20.0)
+    assert np.allclose(np.diff(mesh.z_centers), -20.0)
+
+
+def test_build_mesh_graded_thickness_increases_with_depth():
+    """growth_factor > 1.0 should give a strictly increasing per-layer
+    thickness schedule (index 0 = shallowest/thinnest), summing back to
+    the requested depth_extent_m - the UBC-GIF/SimPEG "core mesh" grading
+    this feature implements."""
+    x_centers = np.arange(-100.0, 101.0, 20.0)
+    y_centers = np.arange(-100.0, 101.0, 20.0)
+    ground_elevation = np.full((len(y_centers), len(x_centers)), 50.0)
+    depth_extent_m = 200.0
+    mesh = build_mesh(
+        x_centers, y_centers, ground_elevation, cell_size_m=20.0,
+        depth_extent_m=depth_extent_m, n_layers=8, growth_factor=1.15,
+    )
+    thickness = mesh.layer_thickness_m
+    print("graded layer thickness:", thickness)
+    assert len(thickness) == 8
+    assert all(thickness[i + 1] > thickness[i] for i in range(len(thickness) - 1))
+    assert np.isclose(float(np.sum(thickness)), depth_extent_m)
+    # shallowest layer should hug the surface much finer than the old
+    # uniform 200/8=25m slabs would have.
+    assert thickness[0] < 25.0
+
+
+def test_box_faces_top_follows_sloped_terrain():
+    """box_faces()'s top surface must vary with each column's real ground
+    elevation - a single flat top (the bug this session fixed) would mean
+    every finite top_z value is identical even though the input terrain
+    genuinely slopes."""
+    x_centers = np.arange(-100.0, 101.0, 20.0)  # 11 columns
+    y_centers = np.arange(-100.0, 101.0, 20.0)  # 11 rows
+    # A real east-west slope: 40m of relief across the mesh.
+    ground_elevation = 50.0 + 2.0 * x_centers[np.newaxis, :] / 10.0
+    ground_elevation = np.broadcast_to(ground_elevation, (len(y_centers), len(x_centers))).copy()
+    mesh = build_mesh(
+        x_centers, y_centers, ground_elevation, cell_size_m=20.0,
+        depth_extent_m=120.0, n_layers=10, growth_factor=1.15,
+    )
+    susceptibility = np.zeros(mesh.active.shape, dtype=float)
+    result = InversionResult(
+        mesh=mesh, susceptibility=susceptibility,
+        predicted_nt=np.zeros(1), observed_nt=np.zeros(1),
+        rms_misfit_nt=0.0, n_active_cells=int(mesh.active.sum()), n_obs=1, iterations=1,
+    )
+    faces = box_faces(result, top_layer_index=0)
+    top_z = np.array(faces["top"]["z"])
+    finite = top_z[np.isfinite(top_z)]
+    print("top_z unique finite values:", np.unique(finite))
+    assert len(np.unique(np.round(finite, 3))) > 1, "top surface should vary across columns for sloped terrain"
+    # the west edge (lowest x) should sit lower than the east edge (highest x)
+    assert np.nanmean(top_z[:, 0]) < np.nanmean(top_z[:, -1])
+
+
 if __name__ == "__main__":
     test_inversion_recovers_synthetic_block_location()
     test_auto_regularization_targets_assumed_noise()
     test_stronger_target_noise_yields_larger_regularization()
     test_resolution_diagnostics_decreases_with_depth()
     test_resolution_diagnostics_flags_poorly_resolved_layers()
+    test_build_mesh_growth_factor_one_is_uniform()
+    test_build_mesh_graded_thickness_increases_with_depth()
+    test_box_faces_top_follows_sloped_terrain()
     print("ALL CHECKS PASSED")

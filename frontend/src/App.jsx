@@ -50,6 +50,7 @@ const DEFAULT_INVERSION_PARAMS = {
   obs_cell_size_m: 30.0,
   depth_extent_m: 150.0,
   n_layers: 8,
+  depth_growth_factor: null,
   assumed_agl_m: 50.0,
   regularization_strength: 1.0,
   n_irls_iterations: 6,

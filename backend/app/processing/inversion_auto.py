@@ -14,12 +14,27 @@ Horizontal cell size: bounded below by half the flight line spacing
 (the survey's own crosstrack resolution limit) and above by whatever
 keeps the observation grid and mesh within the size caps enforced in
 store.run_inversion.
+
+Depth layers: graded (see processing/inversion.py:build_mesh's
+growth_factor) with a near-surface thickness independent of the
+horizontal cell size - vertical and horizontal resolution are different
+design choices, and picking the near-surface layer thickness as some
+factor of the (often much coarser, cap-limited) horizontal cell size
+under-resolves depth for no reason. n_layers is instead solved from the
+geometric-series relationship between a target near-surface thickness,
+DEFAULT_DEPTH_GROWTH_FACTOR, and the requested depth_extent_m.
 """
 from __future__ import annotations
 
 import numpy as np
 
 from .gridding import grid_points
+
+# Per-layer thickness grows by this ratio with each layer down (see
+# processing/inversion.py:build_mesh) - 1.1-1.3 is the standard UBC-GIF/
+# SimPEG "core mesh" grading range; 1.15 is a moderate middle-of-the-road
+# default (about 4x thicker at layer 10 than at the surface).
+DEFAULT_DEPTH_GROWTH_FACTOR = 1.15
 
 
 def spectral_depth_diagnostics(grid_values: np.ndarray, cell_size_m: float) -> dict | None:
@@ -165,11 +180,21 @@ def suggest_mesh_params(
     else:
         depth_extent_m = float(np.clip(4.0 * depth_estimate, 60.0, 600.0))
 
-    # cell size floor so nx*ny*n_layers stays within the active-cell cap,
-    # given n_layers ~= depth_extent_m / cell_size_m (roughly cube-shaped
-    # voxels): cell^3 >= area * depth / cap.
+    # Graded layer count (see module docstring): pick a near-surface
+    # thickness target independent of the horizontal cell size, then
+    # solve how many layers a growth_factor schedule needs to reach
+    # depth_extent_m from that starting thickness - the geometric-series
+    # inverse of build_mesh's own thickness_k = t0 * growth_factor^k.
+    target_top_thickness_m = max(2.0, depth_extent_m / 60.0)
+    r = DEFAULT_DEPTH_GROWTH_FACTOR
+    n_layers_graded = np.log1p(depth_extent_m * (r - 1.0) / target_top_thickness_m) / np.log(r)
+    n_layers = int(np.clip(round(n_layers_graded), 4, 80))
+
+    # cell size floor so nx*ny*n_layers stays within the active-cell cap
+    # (nx*ny from area/cell^2, times the now depth-independent n_layers
+    # picked above): cell^2 >= area * n_layers / cap.
     cap_margin = 0.75  # safety margin under the hard cap enforced in store.py
-    cell_for_active_cap = (area * depth_extent_m / (n_active_cap * cap_margin)) ** (1.0 / 3.0)
+    cell_for_active_cap = np.sqrt(area * n_layers / (n_active_cap * cap_margin))
     obs_cell_size_m = max(obs_cell_size_m, cell_for_active_cap)
 
     # Belt-and-suspenders: verify against the actual discrete grid shape
@@ -183,8 +208,6 @@ def suggest_mesh_params(
         if nx * ny <= n_obs_cap:
             break
         obs_cell_size_m *= 1.05
-
-    n_layers = int(np.clip(round(depth_extent_m / obs_cell_size_m), 4, 50))
 
     return {
         "obs_cell_size_m": float(obs_cell_size_m),

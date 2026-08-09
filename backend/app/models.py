@@ -432,7 +432,12 @@ class InversionParams(BaseModel):
     # processing/inversion_auto.py.
     obs_cell_size_m: Optional[float] = Field(None, gt=0)
     depth_extent_m: Optional[float] = Field(None, gt=0)
-    n_layers: Optional[int] = Field(None, ge=1, le=50)
+    n_layers: Optional[int] = Field(None, ge=1, le=80)
+    # Per-layer thickness growth ratio with depth (thickness_k = thickness_0
+    # * depth_growth_factor^k) - see processing/inversion.py:build_mesh.
+    # None (default) uses processing/inversion_auto.DEFAULT_DEPTH_GROWTH_FACTOR.
+    # 1.0 reproduces the old uniform-thickness mesh.
+    depth_growth_factor: Optional[float] = Field(None, ge=1.0, le=2.0)
     assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
     regularization_strength: float = Field(1.0, gt=0)
     n_irls_iterations: int = Field(6, ge=1, le=30)
