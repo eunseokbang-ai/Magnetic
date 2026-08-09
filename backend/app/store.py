@@ -26,6 +26,7 @@ from .models import (
     GridRequest,
     InversionParams,
     InversionSectionRequest,
+    InversionSlice3DRequest,
     InversionSliceRequest,
     LineamentRequest,
     ManualExcludeRequest,
@@ -69,10 +70,12 @@ from .processing.inversion import (
     build_mesh,
     build_sensitivity_matrix,
     horizontal_slice,
+    internal_slice,
     invert,
     render_section_png,
     upsample_susceptibility,
 )
+from .processing.inversion import path_slice_3d as _inversion_path_slice_3d
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
@@ -2820,6 +2823,51 @@ class Project:
             face["x"] = (np.asarray(face["x"]) - x0).tolist()
             face["y"] = (np.asarray(face["y"]) - y0).tolist()
         return faces
+
+    def get_inversion_slice_3d(self, req: InversionSlice3DRequest) -> dict:
+        """One interior cutting plane (ew/ns at an arbitrary interior
+        position, or an arbitrary-direction custom path) in the same
+        mesh-centered local coordinates as get_inversion_volume's
+        isosurface and get_inversion_box_faces' walls, so it can be added
+        as an extra Plotly surface trace into the same 3D scene - the
+        "volume + several simultaneous section planes at once" combined
+        view (mirrors the standard multi-panel presentation in
+        mining-industry 3D modeling packages)."""
+        if self.inversion_result is None:
+            raise ProjectError("역산을 먼저 실행하세요.")
+        mesh = self.inversion_result.mesh
+        x0 = float(mesh.x_centers.mean())
+        y0 = float(mesh.y_centers.mean())
+
+        if req.orientation == "custom":
+            if not req.path or len(req.path) < 2:
+                raise ProjectError("자유선 단면을 위해서는 경로(path)가 필요합니다.")
+            if self.utm_epsg is None:
+                raise ProjectError("좌표계 정보가 없습니다.")
+            transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            lats = [pt[0] for pt in req.path]
+            lons = [pt[1] for pt in req.path]
+            vx, vy = transformer.transform(lons, lats)
+            path_x, path_y = _densify_path(np.asarray(vx), np.asarray(vy), req.sample_spacing_m)
+            try:
+                face = _inversion_path_slice_3d(self.inversion_result, path_x, path_y, req.threshold, req.threshold_max)
+            except InversionError as exc:
+                raise ProjectError(str(exc)) from exc
+            face["orientation"] = "custom"
+        else:
+            if req.position_frac is None:
+                raise ProjectError("동서/남북 단면을 위해서는 position_frac이 필요합니다.")
+            try:
+                face = internal_slice(self.inversion_result, req.orientation, req.position_frac, req.threshold, req.threshold_max)
+            except InversionError as exc:
+                raise ProjectError(str(exc)) from exc
+
+        face["x"] = (np.asarray(face["x"]) - x0).tolist()
+        face["y"] = (np.asarray(face["y"]) - y0).tolist()
+        active_chi = self.inversion_result.susceptibility[self.inversion_result.susceptibility > 0]
+        face["vmin"] = 0.0
+        face["vmax"] = float(active_chi.max()) if active_chi.size else 1.0
+        return face
 
     def export_inversion_npz(self) -> bytes:
         """Serialize the mesh + solved model (and enough context to

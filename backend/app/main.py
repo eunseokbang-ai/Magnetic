@@ -23,6 +23,7 @@ from .models import (
     GridRequest,
     InversionParams,
     InversionSectionRequest,
+    InversionSlice3DRequest,
     InversionSliceRequest,
     IntermagnetFetchRequest,
     LineamentRequest,
@@ -611,6 +612,12 @@ def inversion_volume(project_id: str, threshold: float | None = None, threshold_
 def inversion_box_faces(project_id: str, top_layer_index: int = 0):
     project = store.get(project_id)
     return _fast_json_response(project.get_inversion_box_faces(top_layer_index))
+
+
+@app.post("/api/projects/{project_id}/inversion/slice_3d")
+def inversion_slice_3d(project_id: str, req: InversionSlice3DRequest):
+    project = store.get(project_id)
+    return _fast_json_response(project.get_inversion_slice_3d(req))
 
 
 @app.get("/api/projects/{project_id}/inversion/export")

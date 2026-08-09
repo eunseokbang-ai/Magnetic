@@ -307,6 +307,10 @@ export function getInversionBoxFaces(projectId, topLayerIndex) {
   return request(`/projects/${projectId}/inversion/box_faces${q}`);
 }
 
+export function getInversionSlice3D(projectId, req) {
+  return request(`/projects/${projectId}/inversion/slice_3d`, { method: "POST", body: JSON.stringify(req) });
+}
+
 async function requestBlob(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },

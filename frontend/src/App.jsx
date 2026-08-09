@@ -340,6 +340,17 @@ export default function App() {
   const [boxFacesData, setBoxFacesData] = useState(null);
   const [boxTopLayerIndex, setBoxTopLayerIndex] = useState(0);
   const [boxFacesLoading, setBoxFacesLoading] = useState(false);
+  // Interior section planes shown together with the isosurface "blob" in
+  // one combined 3D scene (volume + simultaneous EW/NS/자유선 sections) -
+  // "자유선" reuses whatever path was last drawn for the 2D 수직 섹션 뷰.
+  const [lastCustomSectionPath, setLastCustomSectionPath] = useState(null);
+  const [volumeEwSliceOn, setVolumeEwSliceOn] = useState(false);
+  const [volumeEwPositionFrac, setVolumeEwPositionFrac] = useState(0.5);
+  const [volumeNsSliceOn, setVolumeNsSliceOn] = useState(false);
+  const [volumeNsPositionFrac, setVolumeNsPositionFrac] = useState(0.5);
+  const [volumeCustomSliceOn, setVolumeCustomSliceOn] = useState(false);
+  const [volumeSliceData, setVolumeSliceData] = useState({ ew: null, ns: null, custom: null });
+  const [volumeSliceLoading, setVolumeSliceLoading] = useState({ ew: false, ns: false, custom: false });
 
   const [eulerStructuralIndex, setEulerStructuralIndex] = useState(1.0);
   const [eulerWindowSize, setEulerWindowSize] = useState(100.0);
@@ -1695,6 +1706,7 @@ export default function App() {
 
   const handleSectionPathDrawn = async (latlngCoords) => {
     setSectionDrawMode(false);
+    setLastCustomSectionPath(latlngCoords);
     try {
       setInversionError(null);
       setSectionLoading(true);
@@ -1821,6 +1833,50 @@ export default function App() {
     } finally {
       setBoxFacesLoading(false);
     }
+  };
+
+  // Fetches one interior section plane (동서/남북/자유선) to overlay on top
+  // of the isosurface "blob" in the same 3D scene - orientation is "ew",
+  // "ns", or "custom" (자유선, using the last path drawn for the 2D 수직
+  // 섹션 뷰). Continuous SI coloring, no threshold gating, matching the
+  // "박스" view's convention so the section reads as full context rather
+  // than being clipped to whatever range the isosurface threshold uses.
+  const fetchVolumeSlice = async (orientation, positionFrac) => {
+    if (orientation === "custom" && !lastCustomSectionPath) return;
+    setVolumeSliceLoading((s) => ({ ...s, [orientation]: true }));
+    try {
+      const body =
+        orientation === "custom"
+          ? { orientation: "custom", path: lastCustomSectionPath }
+          : { orientation, position_frac: positionFrac };
+      const resp = await api.getInversionSlice3D(projectId, body);
+      setVolumeSliceData((s) => ({ ...s, [orientation]: resp }));
+    } catch (e) {
+      setInversionError(e.message || String(e));
+    } finally {
+      setVolumeSliceLoading((s) => ({ ...s, [orientation]: false }));
+    }
+  };
+
+  const handleToggleVolumeEwSlice = (on) => {
+    setVolumeEwSliceOn(on);
+    if (on) fetchVolumeSlice("ew", volumeEwPositionFrac);
+  };
+  const handleVolumeEwPositionChange = (frac) => {
+    setVolumeEwPositionFrac(frac);
+    if (volumeEwSliceOn) fetchVolumeSlice("ew", frac);
+  };
+  const handleToggleVolumeNsSlice = (on) => {
+    setVolumeNsSliceOn(on);
+    if (on) fetchVolumeSlice("ns", volumeNsPositionFrac);
+  };
+  const handleVolumeNsPositionChange = (frac) => {
+    setVolumeNsPositionFrac(frac);
+    if (volumeNsSliceOn) fetchVolumeSlice("ns", frac);
+  };
+  const handleToggleVolumeCustomSlice = (on) => {
+    setVolumeCustomSliceOn(on);
+    if (on) fetchVolumeSlice("custom");
   };
 
   const handleExportInversion = async () => {
@@ -2225,6 +2281,16 @@ export default function App() {
               onBoxTopLayerIndexChange={handleLoadBoxFaces}
               boxLoading={boxFacesLoading}
               nLayers={inversionSummary?.n_layers}
+              slice3D={{
+                ew: { on: volumeEwSliceOn, positionFrac: volumeEwPositionFrac, data: volumeSliceData.ew, loading: volumeSliceLoading.ew },
+                ns: { on: volumeNsSliceOn, positionFrac: volumeNsPositionFrac, data: volumeSliceData.ns, loading: volumeSliceLoading.ns },
+                custom: { on: volumeCustomSliceOn, data: volumeSliceData.custom, loading: volumeSliceLoading.custom, available: !!lastCustomSectionPath },
+              }}
+              onToggleEwSlice={handleToggleVolumeEwSlice}
+              onEwPositionChange={handleVolumeEwPositionChange}
+              onToggleNsSlice={handleToggleVolumeNsSlice}
+              onNsPositionChange={handleVolumeNsPositionChange}
+              onToggleCustomSlice={handleToggleVolumeCustomSlice}
             />
           </Suspense>
         )}

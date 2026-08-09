@@ -473,6 +473,21 @@ class InversionSectionRequest(BaseModel):
     sample_spacing_m: float = Field(10.0, gt=0)
 
 
+class InversionSlice3DRequest(BaseModel):
+    """One interior cutting plane through the 3D inversion mesh, for the
+    combined "isosurface volume + several simultaneous section planes"
+    3D view - see store.py:get_inversion_slice_3d. "ew"/"ns" cut at an
+    arbitrary interior position_frac (0-1) instead of only the mesh
+    boundary; "custom" follows an arbitrary-direction path (same
+    [[lat, lon], ...] convention as InversionSectionRequest.path)."""
+    orientation: SectionProfile = "custom"
+    position_frac: Optional[float] = Field(None, ge=0, le=1)  # required for ew/ns
+    path: Optional[list[list[float]]] = Field(None, min_length=2)  # [[lat, lon], ...], required for custom
+    threshold: Optional[float] = None
+    threshold_max: Optional[float] = None
+    sample_spacing_m: float = Field(10.0, gt=0)
+
+
 class EulerDeconvolutionRequest(BaseModel):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)

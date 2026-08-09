@@ -7,6 +7,59 @@ const Plot = createPlotlyComponent(Plotly);
 // Full plotly.js is ~6Mb; plotly.js-dist-min + the factory API keeps the
 // bundle to just what the isosurface/surface traces need, self-contained
 // (no CDN).
+// One interior section plane (동서/남북/자유선), rendered as its own
+// Plotly surface trace at its true 3D position - added on top of the
+// isosurface "blob" trace so the combined scene shows the thresholded
+// anomaly volume and one or more full-context cross-sections at once,
+// the way mining-industry 3D modeling packages (GOCAD/Leapfrog-style)
+// present a volume together with several simultaneous section planes.
+function sliceToTrace(face, name, showscale) {
+  if (!face) return null;
+  return {
+    type: "surface",
+    name,
+    x: face.x,
+    y: face.y,
+    z: face.z,
+    surfacecolor: face.value,
+    cmin: face.vmin ?? 0,
+    cmax: face.vmax ?? 1,
+    colorscale: "Turbo",
+    showscale,
+    colorbar: showscale ? { title: { text: "자화율 (SI)" }, x: 1.02, len: 0.4, y: 0.5 } : undefined,
+    connectgaps: false,
+    opacity: 0.97,
+    lighting: { ambient: 0.85, diffuse: 0.5, specular: 0.1 },
+    hovertemplate: `${name}<br>동서: %{x:.0f} m<br>남북: %{y:.0f} m<br>고도: %{z:.0f} m<br>SI: %{surfacecolor:.4f}<extra></extra>`,
+  };
+}
+
+// Checkbox + optional position slider for one interior section plane
+// toggle, shared by the ew/ns/custom controls in the "blob" view's
+// header bar.
+function SliceToggle({ label, on, onToggle, positionFrac, onPositionChange, loading, disabled, disabledHint }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, cursor: disabled ? "not-allowed" : "pointer", color: disabled ? "#9ca3af" : "inherit" }} title={disabled ? disabledHint : undefined}>
+        <input type="checkbox" checked={on} disabled={disabled} onChange={(e) => onToggle(e.target.checked)} />
+        {label}
+      </label>
+      {on && onPositionChange && (
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.02"
+          value={positionFrac}
+          onChange={(e) => onPositionChange(parseFloat(e.target.value))}
+          style={{ width: 70 }}
+        />
+      )}
+      {on && loading && <span style={{ color: "#9ca3af" }}>...</span>}
+    </div>
+  );
+}
+
 export default function InversionVolumeView({
   data,
   onClose,
@@ -15,6 +68,12 @@ export default function InversionVolumeView({
   onBoxTopLayerIndexChange,
   boxLoading,
   nLayers,
+  slice3D,
+  onToggleEwSlice,
+  onEwPositionChange,
+  onToggleNsSlice,
+  onNsPositionChange,
+  onToggleCustomSlice,
 }) {
   const [showTop, setShowTop] = useState(true);
   const [mode, setMode] = useState("blob");
@@ -82,6 +141,19 @@ export default function InversionVolumeView({
     });
   }
 
+  // Interior 동서/남북/자유선 section planes shown together with the
+  // isosurface volume in this same scene (see App.jsx's slice3D state +
+  // fetchVolumeSlice) - one shared colorbar since they all use the same
+  // continuous SI scale (0 to the model's own max, no threshold gating).
+  const sliceSpecs = [];
+  if (slice3D?.ew?.on && slice3D.ew.data) sliceSpecs.push([slice3D.ew.data, "동서 단면"]);
+  if (slice3D?.ns?.on && slice3D.ns.data) sliceSpecs.push([slice3D.ns.data, "남북 단면"]);
+  if (slice3D?.custom?.on && slice3D.custom.data) sliceSpecs.push([slice3D.custom.data, "자유선 단면"]);
+  sliceSpecs.forEach(([face, name], i) => {
+    const trace = sliceToTrace(face, name, i === 0);
+    if (trace) traces.push(trace);
+  });
+
   return (
     <div
       style={{
@@ -121,6 +193,43 @@ export default function InversionVolumeView({
             ✕ 닫기
           </button>
         </div>
+      </div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          padding: "6px 12px",
+          borderBottom: "1px solid #e5e7eb",
+          background: "#f9fafb",
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ fontSize: 11, color: "#6b7280" }}>이상대와 함께 표시할 단면:</span>
+        <SliceToggle
+          label="동서 단면"
+          on={slice3D?.ew?.on ?? false}
+          onToggle={onToggleEwSlice}
+          positionFrac={slice3D?.ew?.positionFrac ?? 0.5}
+          onPositionChange={onEwPositionChange}
+          loading={slice3D?.ew?.loading}
+        />
+        <SliceToggle
+          label="남북 단면"
+          on={slice3D?.ns?.on ?? false}
+          onToggle={onToggleNsSlice}
+          positionFrac={slice3D?.ns?.positionFrac ?? 0.5}
+          onPositionChange={onNsPositionChange}
+          loading={slice3D?.ns?.loading}
+        />
+        <SliceToggle
+          label="자유선 단면 (마지막으로 그린 선)"
+          on={slice3D?.custom?.on ?? false}
+          onToggle={onToggleCustomSlice}
+          loading={slice3D?.custom?.loading}
+          disabled={!slice3D?.custom?.available}
+          disabledHint="먼저 '수직 섹션 뷰'에서 자유선을 그려주세요"
+        />
       </div>
       <div style={{ flex: 1 }}>
         <Plot

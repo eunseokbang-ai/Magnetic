@@ -546,6 +546,20 @@ def horizontal_slice(
     return slice_2d
 
 
+def _sample_along_path(mesh: InversionMesh, path_x: np.ndarray, path_y: np.ndarray):
+    """Nearest mesh column (row_idx, col_idx) for each point of an
+    arbitrary-direction path, in local UTM meters - the shared lookup
+    behind vertical_section (2D distance-vs-depth PNG) and path_slice_3d
+    (interactive 3D plane at the path's true x/y position)."""
+    path_x = np.asarray(path_x, dtype=float)
+    path_y = np.asarray(path_y, dtype=float)
+    if len(path_x) < 2:
+        raise InversionError("수직 단면을 위해서는 2개 이상의 경로 점이 필요합니다.")
+    col_idx = np.argmin(np.abs(mesh.x_centers[None, :] - path_x[:, None]), axis=1)
+    row_idx = np.argmin(np.abs(mesh.y_centers[None, :] - path_y[:, None]), axis=1)
+    return row_idx, col_idx
+
+
 def vertical_section(
     result: InversionResult,
     path_x: np.ndarray,
@@ -563,14 +577,10 @@ def vertical_section(
     mesh = result.mesh
     path_x = np.asarray(path_x, dtype=float)
     path_y = np.asarray(path_y, dtype=float)
-    if len(path_x) < 2:
-        raise InversionError("수직 단면을 위해서는 2개 이상의 경로 점이 필요합니다.")
+    row_idx, col_idx = _sample_along_path(mesh, path_x, path_y)
 
     seg_len = np.hypot(np.diff(path_x), np.diff(path_y))
     distance = np.concatenate([[0.0], np.cumsum(seg_len)])
-
-    col_idx = np.argmin(np.abs(mesh.x_centers[None, :] - path_x[:, None]), axis=1)
-    row_idx = np.argmin(np.abs(mesh.y_centers[None, :] - path_y[:, None]), axis=1)
 
     section = result.susceptibility[row_idx, col_idx, :].T  # (n_layers, n_samples)
     active = mesh.active[row_idx, col_idx, :].T
@@ -579,6 +589,119 @@ def vertical_section(
     ground_elevation = mesh.ground_elevation[row_idx, col_idx]
 
     return section, distance, ground_elevation
+
+
+def path_slice_3d(
+    result: InversionResult,
+    path_x: np.ndarray,
+    path_y: np.ndarray,
+    threshold: float | None = None,
+    threshold_max: float | None = None,
+) -> dict:
+    """Like vertical_section, but returns the plane in real 3D (x, y, z)
+    coordinates instead of collapsing it to along-path distance - so an
+    arbitrary-direction section can be rendered as its own Plotly surface
+    trace positioned correctly inside the same 3D scene as the isosurface
+    "blob" and the orthogonal ew/ns slices from internal_slice(), the way
+    mining-industry 3D modeling packages combine a thresholded volume with
+    several simultaneous cross-cutting section planes in one view."""
+    mesh = result.mesh
+    path_x = np.asarray(path_x, dtype=float)
+    path_y = np.asarray(path_y, dtype=float)
+    row_idx, col_idx = _sample_along_path(mesh, path_x, path_y)
+
+    section = result.susceptibility[row_idx, col_idx, :].T  # (n_layers, n_samples)
+    active = mesh.active[row_idx, col_idx, :].T
+    section = np.where(active, section, np.nan)
+    section = _apply_range(section, threshold, threshold_max)
+
+    n_layers, n_samples = section.shape
+    x_grid = np.tile(path_x, (n_layers, 1))
+    y_grid = np.tile(path_y, (n_layers, 1))
+    z_grid = np.tile(mesh.z_centers[:, np.newaxis], (1, n_samples))
+    return {
+        "x": x_grid.tolist(),
+        "y": y_grid.tolist(),
+        "z": z_grid.tolist(),
+        "value": section.tolist(),
+    }
+
+
+def _wall_along_x(result: InversionResult, row_idx: int) -> dict:
+    """Vertical plane at a fixed north-south position (row_idx): distance
+    runs east-west, so the coordinate grid is (x, z). Shared by box_faces
+    (called at the row 0 / ny-1 mesh boundary) and internal_slice
+    (called at an arbitrary interior row for an "ew"-oriented cut)."""
+    mesh = result.mesh
+    chi = result.susceptibility
+    x, z = mesh.x_centers, mesh.z_centers
+    x_grid_w, z_grid_w = np.meshgrid(x, z)  # (nz, nx)
+    val = chi[row_idx, :, :].T.astype(float).copy()
+    val[~mesh.active[row_idx, :, :].T] = np.nan
+    return {
+        "x": x_grid_w.tolist(),
+        "y": np.full_like(x_grid_w, float(mesh.y_centers[row_idx])).tolist(),
+        "z": z_grid_w.tolist(),
+        "value": val.tolist(),
+    }
+
+
+def _wall_along_y(result: InversionResult, col_idx: int) -> dict:
+    """Vertical plane at a fixed east-west position (col_idx): distance
+    runs north-south, so the coordinate grid is (y, z). Shared by
+    box_faces (mesh boundary) and internal_slice (arbitrary interior
+    column for an "ns"-oriented cut)."""
+    mesh = result.mesh
+    chi = result.susceptibility
+    y, z = mesh.y_centers, mesh.z_centers
+    y_grid_w, z_grid_w = np.meshgrid(y, z)  # (nz, ny)
+    val = chi[:, col_idx, :].T.astype(float).copy()
+    val[~mesh.active[:, col_idx, :].T] = np.nan
+    return {
+        "x": np.full_like(y_grid_w, float(mesh.x_centers[col_idx])).tolist(),
+        "y": y_grid_w.tolist(),
+        "z": z_grid_w.tolist(),
+        "value": val.tolist(),
+    }
+
+
+def internal_slice(
+    result: InversionResult,
+    orientation: str,
+    position_frac: float,
+    threshold: float | None = None,
+    threshold_max: float | None = None,
+) -> dict:
+    """A single interior vertical cutting plane through the mesh, at an
+    arbitrary position instead of only the mesh boundary (see box_faces'
+    south/north/west/east walls, which are this function's endpoints):
+    "ew" cuts across east-west at some north-south position_frac (0=south
+    edge, 1=north edge), "ns" cuts across north-south at some east-west
+    position_frac (0=west edge, 1=east edge). continuous SI-colored
+    (masked NaN for inactive/air cells), for combining with the
+    isosurface "blob" and/or a path_slice_3d into one multi-panel 3D
+    scene showing the volume and several simultaneous section planes at
+    once (the standard presentation in mining-industry 3D modeling
+    packages such as GOCAD/Leapfrog)."""
+    mesh = result.mesh
+    ny, nx, _ = result.susceptibility.shape
+    position_frac = float(np.clip(position_frac, 0.0, 1.0))
+    if orientation == "ew":
+        row_idx = int(round(position_frac * (ny - 1)))
+        face = _wall_along_x(result, row_idx)
+        face["position_m"] = float(mesh.y_centers[row_idx])
+    elif orientation == "ns":
+        col_idx = int(round(position_frac * (nx - 1)))
+        face = _wall_along_y(result, col_idx)
+        face["position_m"] = float(mesh.x_centers[col_idx])
+    else:
+        raise InversionError(f"알 수 없는 단면 방향입니다: {orientation}")
+
+    value = _apply_range(np.asarray(face["value"], dtype=float), threshold, threshold_max)
+    face["value"] = value.tolist()
+    face["orientation"] = orientation
+    face["position_frac"] = position_frac
+    return face
 
 
 def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
@@ -607,11 +730,6 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
     ny, nx, nz = chi.shape
     top_layer_index = int(np.clip(top_layer_index, 0, nz - 1))
 
-    def masked(values, mask):
-        out = values.astype(float).copy()
-        out[~mask] = np.nan
-        return out
-
     x_grid, y_grid = np.meshgrid(x, y)  # (ny, nx)
 
     has_active = active.any(axis=2)
@@ -630,37 +748,13 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
         "value": top_chi.tolist(),
     }
 
-    def wall_along_x(row_idx: int) -> dict:
-        # a vertical wall at fixed y (south/north boundary): distance runs
-        # east-west, so the coordinate grid is (x, z).
-        x_grid_w, z_grid_w = np.meshgrid(x, z)  # (nz, nx)
-        val = masked(chi[row_idx, :, :].T, active[row_idx, :, :].T)  # (nz, nx)
-        return {
-            "x": x_grid_w.tolist(),
-            "y": np.full_like(x_grid_w, float(y[row_idx])).tolist(),
-            "z": z_grid_w.tolist(),
-            "value": val.tolist(),
-        }
-
-    def wall_along_y(col_idx: int) -> dict:
-        # a vertical wall at fixed x (west/east boundary): distance runs
-        # north-south, so the coordinate grid is (y, z).
-        y_grid_w, z_grid_w = np.meshgrid(y, z)  # (nz, ny)
-        val = masked(chi[:, col_idx, :].T, active[:, col_idx, :].T)  # (nz, ny)
-        return {
-            "x": np.full_like(y_grid_w, float(x[col_idx])).tolist(),
-            "y": y_grid_w.tolist(),
-            "z": z_grid_w.tolist(),
-            "value": val.tolist(),
-        }
-
     active_chi = chi[chi > 0]
     return {
         "top": top,
-        "south": wall_along_x(0),
-        "north": wall_along_x(ny - 1),
-        "west": wall_along_y(0),
-        "east": wall_along_y(nx - 1),
+        "south": _wall_along_x(result, 0),
+        "north": _wall_along_x(result, ny - 1),
+        "west": _wall_along_y(result, 0),
+        "east": _wall_along_y(result, nx - 1),
         "vmin": 0.0,
         "vmax": float(active_chi.max()) if active_chi.size else 1.0,
         "top_layer_index": top_layer_index,

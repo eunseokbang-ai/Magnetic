@@ -17,8 +17,11 @@ from app.processing.inversion import (
     box_faces,
     build_mesh,
     build_sensitivity_matrix,
+    internal_slice,
     invert,
+    path_slice_3d,
     resolution_diagnostics,
+    vertical_section,
 )
 
 RNG = np.random.default_rng(0)
@@ -201,6 +204,94 @@ def test_box_faces_top_follows_sloped_terrain():
     assert np.nanmean(top_z[:, 0]) < np.nanmean(top_z[:, -1])
 
 
+def _make_result_with_distinct_values():
+    """A zero-forward-model InversionResult whose susceptibility encodes
+    its own (row, col, layer) index, so a slice function's output can be
+    checked against the exact cells it's supposed to have picked out -
+    not just "some plausible-looking numbers"."""
+    mesh = _make_mesh()
+    susceptibility = np.zeros(mesh.active.shape, dtype=float)
+    ny, nx, nz = mesh.active.shape
+    for r in range(ny):
+        for c in range(nx):
+            for k in range(nz):
+                if mesh.active[r, c, k]:
+                    susceptibility[r, c, k] = 0.001 * (r * 1000 + c * 10 + k)
+    return InversionResult(
+        mesh=mesh, susceptibility=susceptibility,
+        predicted_nt=np.zeros(1), observed_nt=np.zeros(1),
+        rms_misfit_nt=0.0, n_active_cells=int(mesh.active.sum()), n_obs=1, iterations=1,
+    )
+
+
+def test_internal_slice_boundary_matches_box_faces_walls():
+    """internal_slice at position_frac 0.0/1.0 is the same plane as
+    box_faces' boundary walls - the interior-slice feature is meant to
+    be a strict generalization of the boundary-only walls, not a
+    different code path that could silently disagree at the edges."""
+    result = _make_result_with_distinct_values()
+    faces = box_faces(result, top_layer_index=0)
+
+    south = internal_slice(result, "ew", 0.0)
+    north = internal_slice(result, "ew", 1.0)
+    west = internal_slice(result, "ns", 0.0)
+    east = internal_slice(result, "ns", 1.0)
+
+    assert np.allclose(np.nan_to_num(np.array(south["value"])), np.nan_to_num(np.array(faces["south"]["value"])))
+    assert np.allclose(np.nan_to_num(np.array(north["value"])), np.nan_to_num(np.array(faces["north"]["value"])))
+    assert np.allclose(np.nan_to_num(np.array(west["value"])), np.nan_to_num(np.array(faces["west"]["value"])))
+    assert np.allclose(np.nan_to_num(np.array(east["value"])), np.nan_to_num(np.array(faces["east"]["value"])))
+
+
+def test_internal_slice_interior_position_matches_expected_row():
+    """A mid-mesh position_frac should extract exactly the mesh row/col
+    at that fractional position - the whole point of internal_slice over
+    box_faces' boundary-only walls."""
+    result = _make_result_with_distinct_values()
+    mesh = result.mesh
+    ny, nx, nz = result.susceptibility.shape
+
+    face = internal_slice(result, "ew", 0.5)
+    row_idx = int(round(0.5 * (ny - 1)))
+    expected = result.susceptibility[row_idx, :, :].T
+    expected = np.where(mesh.active[row_idx, :, :].T, expected, np.nan)
+    assert np.allclose(np.nan_to_num(np.array(face["value"])), np.nan_to_num(expected))
+    assert np.isclose(face["position_m"], mesh.y_centers[row_idx])
+
+    face_ns = internal_slice(result, "ns", 0.25)
+    col_idx = int(round(0.25 * (nx - 1)))
+    expected_ns = result.susceptibility[:, col_idx, :].T
+    expected_ns = np.where(mesh.active[:, col_idx, :].T, expected_ns, np.nan)
+    assert np.allclose(np.nan_to_num(np.array(face_ns["value"])), np.nan_to_num(expected_ns))
+    assert np.isclose(face_ns["position_m"], mesh.x_centers[col_idx])
+
+
+def test_path_slice_3d_matches_vertical_section_values():
+    """path_slice_3d (the interactive 3D-embedded arbitrary-direction
+    plane) must carry the exact same susceptibility values as
+    vertical_section (the distance-vs-depth PNG version) for the same
+    path - they share the same underlying nearest-cell sampling, just
+    packaged differently (real x/y/z vs. along-path distance)."""
+    result = _make_result_with_distinct_values()
+    mesh = result.mesh
+    path_x = np.linspace(mesh.x_centers.min(), mesh.x_centers.max(), 9)
+    path_y = np.linspace(mesh.y_centers.min(), mesh.y_centers.max(), 9)
+
+    section, _distance, _ground_elev = vertical_section(result, path_x, path_y)
+    face = path_slice_3d(result, path_x, path_y)
+
+    got_value = np.array(face["value"])
+    assert got_value.shape == section.shape
+    assert np.allclose(np.nan_to_num(got_value), np.nan_to_num(section))
+
+    x_grid = np.array(face["x"])
+    y_grid = np.array(face["y"])
+    z_grid = np.array(face["z"])
+    assert np.allclose(x_grid[0], path_x)
+    assert np.allclose(y_grid[0], path_y)
+    assert np.allclose(z_grid[:, 0], mesh.z_centers)
+
+
 if __name__ == "__main__":
     test_inversion_recovers_synthetic_block_location()
     test_auto_regularization_targets_assumed_noise()
@@ -210,4 +301,7 @@ if __name__ == "__main__":
     test_build_mesh_growth_factor_one_is_uniform()
     test_build_mesh_graded_thickness_increases_with_depth()
     test_box_faces_top_follows_sloped_terrain()
+    test_internal_slice_boundary_matches_box_faces_walls()
+    test_internal_slice_interior_position_matches_expected_row()
+    test_path_slice_3d_matches_vertical_section_values()
     print("ALL CHECKS PASSED")
