@@ -52,6 +52,7 @@ export default function IntermagnetPanel({
   const [nearestStartDate, setNearestStartDate] = useState("");
   const [nearestEndDate, setNearestEndDate] = useState("");
   const [nStations, setNStations] = useState(4);
+  const [maxDistanceKm, setMaxDistanceKm] = useState(2000);
 
   const hasFlightDates = flightDates?.length > 0;
   const dateModeToggle = (mode, setMode) => (
@@ -125,7 +126,7 @@ export default function IntermagnetPanel({
           )}
           <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }}>관측소 수</span>
+              <span style={{ color: "#4b5563" }}>관측소 수 (최대)</span>
               <input
                 type="number"
                 min="1"
@@ -135,6 +136,19 @@ export default function IntermagnetPanel({
                 onChange={(e) => setNStations(parseInt(e.target.value, 10) || 1)}
               />
             </label>
+            <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{ color: "#4b5563" }} title="이 거리보다 먼 관측소는 아예 후보에서 제외합니다 - 방향(사분면)당 근처에 후보가 없으면 관측소 수보다 적게 선택될 수 있습니다">
+                최대 거리 (km)
+              </span>
+              <input
+                type="number"
+                min="1"
+                style={{ ...inputStyle, width: 80 }}
+                value={maxDistanceKm}
+                onChange={(e) => setMaxDistanceKm(e.target.value === "" ? "" : parseInt(e.target.value, 10) || 1)}
+                placeholder="제한없음"
+              />
+            </label>
             <button
               style={buttonStyle}
               disabled={nearestLoading || (nearestDateMode === "manual" && (!nearestStartDate || !nearestEndDate))}
@@ -142,6 +156,7 @@ export default function IntermagnetPanel({
                 onFetchNearestIntermagnet({
                   ...(nearestDateMode === "manual" ? { start_date: nearestStartDate, end_date: nearestEndDate } : {}),
                   n_stations: nStations,
+                  max_distance_km: maxDistanceKm === "" ? null : maxDistanceKm,
                 })
               }
             >
@@ -150,7 +165,8 @@ export default function IntermagnetPanel({
           </div>
           <div style={{ color: "#9ca3af" }}>
             요청한 날짜 중 아직 게시되지 않은 자료나 특정일에 결측된 자료는, 그 전날과 다음날 자료로 추정하여
-            채웁니다.
+            채웁니다. 너무 먼 관측소는 일변화 위상/진폭이 달라질 수 있어(경도차 ≈ 지방시차, 위도차 ≈ 다른 자기위도대) 최대
+            거리를 벗어난 후보는 자동 제외됩니다 - 빈칸으로 두면 거리 제한 없이 방향당 가장 가까운 관측소를 찾습니다.
           </div>
 
           {nearestHasResult && onShowNearestComparison && (
@@ -178,6 +194,14 @@ export default function IntermagnetPanel({
               }}
             >
               <div style={{ fontWeight: 600 }}>선택된 관측소 {nearestPreview.stations?.length}개</div>
+              {nearestPreview.n_requested != null &&
+                nearestPreview.stations?.length < nearestPreview.n_requested && (
+                  <div style={{ color: "#b45309" }}>
+                    요청한 {nearestPreview.n_requested}개 중 최대 거리
+                    {nearestPreview.max_distance_km != null ? ` ${nearestPreview.max_distance_km}km` : ""} 조건 안에
+                    드는 관측소가 {nearestPreview.stations?.length}개뿐이어서 그만큼만 선택됐습니다.
+                  </div>
+                )}
               <ul style={{ margin: 0, paddingLeft: 16 }}>
                 {nearestPreview.stations?.map((s) => (
                   <li key={s.iaga_code}>

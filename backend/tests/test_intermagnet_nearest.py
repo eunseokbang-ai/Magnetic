@@ -156,6 +156,43 @@ def test_select_nearest_observatories_drops_a_date_with_no_data_anywhere_nearby(
         assert s.iaga_code not in estimated_dates_by_code
 
 
+def test_select_nearest_observatories_respects_max_distance_km():
+    # KAK (~1100km) and BMT (~1103km) are both well inside 2000km but
+    # outside 500km, IRT (~2537km) and GZH (~2044km) are outside 2000km
+    # too - a tight 500km cutoff should leave only CYG (~99km) even
+    # though n_stations=4 asks for more.
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        stations, _ = select_nearest_observatories(
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=60, max_distance_km=500.0
+        )
+    assert {s.iaga_code for s in stations} == {"CYG"}
+
+
+def test_select_nearest_observatories_default_cutoff_excludes_far_mock_stations():
+    # IRT (~2537km) and GZH (~2044km) both sit outside the default
+    # DEFAULT_MAX_STATION_DISTANCE_KM (2000km) cutoff - requesting all 5
+    # mock stations should come back with only the 3 within range even
+    # though n_stations=5 is requested.
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        stations, _ = select_nearest_observatories(
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=5, max_candidates=60
+        )
+    codes = {s.iaga_code for s in stations}
+    assert codes == {"CYG", "KAK", "BMT"}
+    assert "IRT" not in codes and "GZH" not in codes
+
+
+def test_select_nearest_observatories_max_distance_none_reaches_far_stations():
+    # explicitly disabling the cutoff should restore the old
+    # reach-as-far-as-needed behavior, picking up IRT/GZH too.
+    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+        stations, _ = select_nearest_observatories(
+            _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=5, max_candidates=60, max_distance_km=None
+        )
+    codes = {s.iaga_code for s in stations}
+    assert codes == set(_MOCK_STATIONS)
+
+
 def test_select_nearest_observatories_raises_clear_error_when_nothing_found():
     def _all_404(url, params=None, timeout=None):
         resp = MagicMock(status_code=404, text="not found")

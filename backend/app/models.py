@@ -392,10 +392,19 @@ class NearestIntermagnetRequest(BaseModel):
 
     start_date/end_date behave exactly as in IntermagnetFetchRequest -
     leave both unset to auto-target the project's own survey flight
-    dates, or set both for an explicit override range."""
+    dates, or set both for an explicit override range.
+
+    max_distance_km caps how far a candidate observatory may be from the
+    target point and still be picked (see select_nearest_observatories's
+    docstring for why very distant stations - beyond mid-latitude Sq
+    phase/amplitude coherence - are more a liability than a help once a
+    nearer station has a gap); n_stations then becomes a ceiling rather
+    than a guaranteed count if fewer stations exist within the cutoff.
+    Set to null to disable the cutoff and reach as far as needed."""
     start_date: str | None = None  # "YYYY-MM-DD"; omit with end_date for survey-date auto-detect
     end_date: str | None = None  # "YYYY-MM-DD", inclusive
     n_stations: int = Field(4, ge=1, le=8)
+    max_distance_km: float | None = Field(2000.0, gt=0)
     target_lat: float | None = None
     target_lon: float | None = None
 

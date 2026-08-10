@@ -47,6 +47,7 @@ from .models import (
 from .processing.base_qc import process_base_station
 from .processing.manual_smooth import apply_manual_smoothing
 from .processing.intermagnet import (
+    DEFAULT_MAX_STATION_DISTANCE_KM,
     IagaParseError,
     IntermagnetFetchError,
     _bearing_deg,
@@ -373,6 +374,7 @@ class Project:
         n_stations: int = 4,
         target_lat: float | None = None,
         target_lon: float | None = None,
+        max_distance_km: float | None = DEFAULT_MAX_STATION_DISTANCE_KM,
     ) -> dict:
         """Auto-select a directionally spread set of nearby INTERMAGNET
         observatories (defaulting to the survey's own average GPS
@@ -387,7 +389,13 @@ class Project:
         that comes back entirely or mostly missing for a selected station
         is estimated from its own immediate neighbors - see
         select_nearest_observatories's docstring and the per-station
-        estimated_dates in the returned preview."""
+        estimated_dates in the returned preview.
+
+        max_distance_km caps candidate distance (see
+        select_nearest_observatories's docstring) - n_stations selected
+        may come back fewer than requested if the cutoff leaves fewer
+        than n_stations candidates; the returned dict's n_requested vs.
+        len(stations) tells the caller whether that happened."""
         if target_lat is None or target_lon is None:
             centroid = self._survey_centroid()
             if centroid is None:
@@ -395,7 +403,7 @@ class Project:
             target_lat, target_lon = centroid
         try:
             stations, estimated_dates_by_code = select_nearest_observatories(
-                target_lat, target_lon, dates, n_stations=n_stations
+                target_lat, target_lon, dates, n_stations=n_stations, max_distance_km=max_distance_km
             )
             combined = estimate_base_from_observatories(stations, target_lat, target_lon)
         except IntermagnetFetchError as exc:
@@ -425,6 +433,8 @@ class Project:
                 }
                 for s in stations
             ],
+            "n_requested": n_stations,
+            "max_distance_km": max_distance_km,
             "n_points": len(combined),
             "time_range": [combined["timestamp"].min().isoformat(), combined["timestamp"].max().isoformat()],
         }

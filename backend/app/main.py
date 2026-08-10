@@ -262,7 +262,9 @@ def apply_intermagnet(project_id: str):
 def fetch_nearest_intermagnet(project_id: str, req: NearestIntermagnetRequest):
     project = store.get(project_id)
     dates = _resolve_requested_dates(project, req.start_date, req.end_date)
-    return project.fetch_nearest_intermagnet_preview(dates, req.n_stations, req.target_lat, req.target_lon)
+    return project.fetch_nearest_intermagnet_preview(
+        dates, req.n_stations, req.target_lat, req.target_lon, req.max_distance_km
+    )
 
 
 @app.post("/api/projects/{project_id}/base/intermagnet/nearest/apply")

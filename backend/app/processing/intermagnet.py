@@ -451,6 +451,24 @@ def fetch_observatory_dates(
     return replace(header, df=combined), estimated_dates
 
 
+DEFAULT_MAX_STATION_DISTANCE_KM = 2000.0
+"""Recommended cutoff for how far an INTERMAGNET observatory can be from the
+survey area and still be trusted for diurnal correction. The IDW combine
+weight (~1/distance**2, see estimate_base_from_observatories) already makes
+distant stations nearly irrelevant most of the time, but on exactly the days
+a *nearby* station has a gap, a distant substitute's own signal is used
+almost undiluted for that stretch - and a very distant station's diurnal
+(Sq) curve isn't just a weaker copy of the local one, it can be shifted
+in both phase and amplitude: Sq peaks near local solar noon, so an east-west
+separation shows up as a peak-time offset (~1h per ~15 degrees of longitude,
+i.e. roughly one hour of shift per ~1300km at mid-latitudes), and Sq
+amplitude itself depends strongly on geomagnetic latitude (auroral/
+equatorial electrojet zones a swing away). 2000km keeps that phase/latitude
+drift modest for typical mid-latitude surveys while still reaching most of a
+region's INTERMAGNET network; it is a default, not a hard physical
+threshold - callers can loosen or disable it (max_distance_km=None)."""
+
+
 def select_nearest_observatories(
     target_lat: float,
     target_lon: float,
@@ -458,6 +476,7 @@ def select_nearest_observatories(
     n_stations: int = 4,
     max_candidates: int = 20,
     timeout_seconds: float = 15.0,
+    max_distance_km: float | None = DEFAULT_MAX_STATION_DISTANCE_KM,
 ) -> tuple[list[IagaObservatoryData], dict[str, list[str]]]:
     """Finds up to n_stations INTERMAGNET observatories spread around
     (target_lat, target_lon), for combining into a substitute base series
@@ -493,7 +512,16 @@ def select_nearest_observatories(
 
     This makes up to max_candidates + a handful of requests per selected
     station live outbound HTTPS requests - see fetch_iaga2002_text's
-    docstring on network reachability."""
+    docstring on network reachability.
+
+    max_distance_km (default DEFAULT_MAX_STATION_DISTANCE_KM) drops any
+    candidate farther than that from (target_lat, target_lon) BEFORE the
+    direction-diverse pick runs, so a quadrant with no truly nearby
+    observatory simply contributes fewer than n_stations rather than
+    reaching arbitrarily far to fill its slot - i.e. n_stations is a
+    ceiling, not a guaranteed count, whenever the cutoff binds. Pass
+    max_distance_km=None to disable the cutoff and restore the old
+    reach-as-far-as-needed behavior."""
     candidates = _candidates_by_rough_distance(target_lat, target_lon, max_candidates)
     probed: list[tuple[float, float, IagaObservatoryData]] = []
     for probe_date in dates:
@@ -506,15 +534,20 @@ def select_nearest_observatories(
             if data.lat is None or data.lon is None:
                 continue
             d = haversine_km(target_lat, target_lon, data.lat, data.lon)
+            if max_distance_km is not None and d > max_distance_km:
+                continue
             bearing = _bearing_deg(target_lat, target_lon, data.lat, data.lon)
             probed.append((d, bearing, data))
         if probed:
             break  # found real coordinates for at least one candidate on this date - no need to try later dates too
 
     if not probed:
+        distance_note = (
+            f" (최대 거리 {max_distance_km:.0f}km 이내 관측소가 없었을 수 있습니다)" if max_distance_km is not None else ""
+        )
         raise IntermagnetFetchError(
             "근처 INTERMAGNET 관측소 자료를 하나도 받아오지 못했습니다 (네트워크 접근이 막혀 있거나, "
-            "해당 날짜 자료가 아직 게시되지 않았을 수 있습니다)."
+            f"해당 날짜 자료가 아직 게시되지 않았을 수 있습니다){distance_note}."
         )
 
     selected = _pick_direction_diverse(probed, n_stations)
