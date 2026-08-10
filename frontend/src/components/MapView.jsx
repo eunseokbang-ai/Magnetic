@@ -810,11 +810,11 @@ export default function MapView({
   onBoundaryDrawn,
   flyToTarget,
 }) {
-  const center = useMemo(() => [46.5, 106.27], []);
+  const center = useMemo(() => [36.3, 127.8], []);
   const pointsVisible = !overlay || showPointsOverGrid;
 
   return (
-    <MapContainer center={center} zoom={13} style={{ height: "100%", width: "100%" }} preferCanvas>
+    <MapContainer center={center} zoom={7} style={{ height: "100%", width: "100%" }} preferCanvas>
       {onBoundsChange && <BoundsWatcher onBoundsChange={onBoundsChange} />}
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="OpenStreetMap">
