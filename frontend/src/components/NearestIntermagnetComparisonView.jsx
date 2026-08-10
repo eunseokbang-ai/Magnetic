@@ -8,9 +8,9 @@
 const STATION_COLORS = ["#f59e0b", "#10b981", "#8b5cf6", "#ef4444", "#0ea5e9", "#ec4899", "#84cc16", "#f97316"];
 
 function Panel({ title, color, seconds, values, xMax, fmtSeconds }) {
-  const width = 420;
-  const height = 190;
-  const padding = { left: 62, right: 14, top: 10, bottom: 30 };
+  const width = 1200;
+  const height = 160;
+  const padding = { left: 70, right: 16, top: 10, bottom: 30 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
 
@@ -103,8 +103,8 @@ export default function NearestIntermagnetComparisonView({ data, onClose }) {
         </div>
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))",
+            display: "flex",
+            flexDirection: "column",
             gap: 12,
           }}
         >
