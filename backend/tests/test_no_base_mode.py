@@ -96,9 +96,66 @@ def test_assume_constant_mode_matches_zero_diurnal_correction(client):
         assert no_base_points[pid] == pytest.approx(const_base_points[pid], abs=1e-6)
 
 
+def test_assume_constant_mode_honored_even_with_a_base_file_uploaded(client):
+    """Regression test: a base file being present used to silently
+    override the user's explicit "베이스 자료 없이 진행" choice (the
+    condition was `mode == "assume_constant" and self.base_raw is None`)
+    - so a user who uploaded a base log, found it unusable, and ticked
+    the checkbox anyway (without first removing the file) got the full
+    base-station correction applied against their own explicit wishes,
+    with the summary even lying about which mode ran. The mode the user
+    picked must govern on its own."""
+    project_id = _new_project_with_drone(client)
+    base_path = FIXTURES / "sample_base_station.csv"
+    with open(base_path, "rb") as f:
+        r = client.post(f"/api/projects/{project_id}/upload/base", files={"files": (base_path.name, f, "text/csv")})
+    assert r.status_code == 200, r.text
+
+    r = client.post(
+        f"/api/projects/{project_id}/process",
+        json={"diurnal_params": {"mode": "assume_constant"}},
+    )
+    assert r.status_code == 200, r.text
+    summary = r.json()
+    assert summary["diurnal"]["mode"] == "assume_constant"
+    assert summary["diurnal"]["has_overlap"] is False
+    assert summary["base_qc"] is None
+
+
+def test_saved_no_base_project_reloads_already_processed(client):
+    """Regression test: a project saved after processing in assume_constant
+    mode with no base file at all used to reload as unprocessed (blank
+    map, cleared summary), because the reload replay was gated on
+    base_raw being present - a condition a legitimately-saved no-base
+    project can never satisfy."""
+    project_id = _new_project_with_drone(client)
+    r = client.post(
+        f"/api/projects/{project_id}/process",
+        json={"diurnal_params": {"mode": "assume_constant"}},
+    )
+    assert r.status_code == 200, r.text
+
+    r = client.get(f"/api/projects/{project_id}/save")
+    assert r.status_code == 200, r.text
+    bundle = r.content
+
+    r = client.post("/api/projects")
+    fresh_id = r.json()["project_id"]
+    r = client.post(f"/api/projects/{fresh_id}/load", files={"file": ("project.zip", bundle, "application/zip")})
+    assert r.status_code == 200, r.text
+    resp = r.json()
+    assert resp["processed"] is True
+
+    r = client.get(f"/api/projects/{fresh_id}/points", params={"value": "tmi"})
+    assert r.status_code == 200, r.text
+    assert len(r.json()) > 0
+
+
 if __name__ == "__main__":
     c = TestClient(app)
     test_process_without_base_requires_assume_constant_mode(c)
     test_process_without_base_succeeds_in_assume_constant_mode(c)
     test_assume_constant_mode_matches_zero_diurnal_correction(c)
+    test_assume_constant_mode_honored_even_with_a_base_file_uploaded(c)
+    test_saved_no_base_project_reloads_already_processed(c)
     print("ALL CHECKS PASSED")

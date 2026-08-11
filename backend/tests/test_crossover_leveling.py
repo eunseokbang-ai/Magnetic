@@ -9,6 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app.processing.crossover_leveling import compute_crossover_leveling
 from app.processing.lines import LineDetectionParams, detect_lines, detect_tie_lines
@@ -196,7 +197,42 @@ def test_polynomial_leveling_recovers_linear_error():
     assert np.std(resid_after) < np.std(resid_before) * 0.3
 
 
+def test_iterative_leveling_anchors_on_zero_mean_survey_shift_not_pooled():
+    """Regression test: the iterative network adjustment's per-pass anchor
+    used to subtract the mean of survey+tie shifts POOLED together, even
+    though only the survey shifts are ever added back to the real data
+    (apply_crossover_leveling never touches tie-line points). That let a
+    net DC offset - however the pass happened to split it between the two
+    line families - leak into the leveled data as a side effect of an
+    anchor that's only supposed to fix leveling's one true degree of
+    freedom (a constant added to every line, survey and tie alike,
+    doesn't change any crossover difference).
+
+    Two survey lines cross one tie line, with crossover differences of
+    +10 and 0 (the same numbers used to illustrate the bug) - the fix
+    should converge the two survey shifts to +5/-5 (mean exactly 0), not
+    the old code's ~+6.67/-3.33 (mean ~+1.67, which was quietly shifting
+    the whole leveled survey up by that amount)."""
+    df = pd.DataFrame({
+        "x": [-5.0, 5.0, 15.0, 25.0, 0.0, 0.0, 0.0, 10.0, 10.0, 10.0],
+        "y": [0.0, 0.0, 0.0, 0.0, -5.0, 0.0, 5.0, -5.0, 0.0, 5.0],
+        "line_id": [-1, -1, -1, -1, 0, 0, 0, 1, 1, 1],
+        "value": [0.0, 0.0, 0.0, 0.0, -10.0, -10.0, -10.0, 0.0, 0.0, 0.0],
+    })
+    tie_line_id = pd.Series([0, 0, 0, 0, -1, -1, -1, -1, -1, -1])
+
+    result = compute_crossover_leveling(df, tie_line_id, "value", max_crossover_distance_m=15.0, iterative=True)
+    assert result.applied, result.reason
+    assert set(result.line_shifts) == {0, 1}
+
+    shifts = np.array(list(result.line_shifts.values()))
+    assert abs(float(np.mean(shifts))) < 1e-6, f"survey shifts should average to zero, got {result.line_shifts}"
+    assert result.line_shifts[0] == pytest.approx(5.0, abs=0.01)
+    assert result.line_shifts[1] == pytest.approx(-5.0, abs=0.01)
+
+
 if __name__ == "__main__":
     test_crossover_leveling_recovers_injected_shifts()
     test_polynomial_leveling_recovers_linear_error()
+    test_iterative_leveling_anchors_on_zero_mean_survey_shift_not_pooled()
     print("ALL CHECKS PASSED")

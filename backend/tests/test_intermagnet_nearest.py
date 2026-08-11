@@ -106,6 +106,30 @@ def test_pick_direction_diverse_fills_remaining_slots_from_same_quadrant():
     assert codes == {"N1", "N2", "E1"}
 
 
+def test_pick_direction_diverse_fills_remaining_slots_by_true_distance_not_probe_order():
+    """Regression test: the fallback fill used to walk `probed` in its own
+    iteration order (which follows _candidates_by_rough_distance's coarse
+    country-centroid ranking, not the accurate header-derived distance
+    already sitting in each entry's own `d`), so a station that's
+    actually closer but was probed later could lose a slot to one probed
+    earlier but farther away."""
+    def _entry(code, d, bearing):
+        return (d, bearing, IagaObservatoryData(code, code, 0.0, 0.0, 0.0, "F", pd.DataFrame()))
+
+    # single quadrant (all bearing ~10, N) so by_quadrant only ever keeps
+    # one winner there, and every other candidate falls to the fallback
+    # fill - probed in an order that DISAGREES with true distance: FAR
+    # (d=500) appears before NEAR (d=50) and MID (d=200).
+    probed = [_entry("CLOSEST", 10, 10), _entry("FAR", 500, 11), _entry("NEAR", 50, 12), _entry("MID", 200, 13)]
+    selected = _pick_direction_diverse(probed, n_stations=3)
+    codes = [data.iaga_code for _, _, data in selected]
+    # CLOSEST wins its quadrant; the fallback fill (2 more slots) must
+    # pick NEAR then MID (the true two nearest of the rest), not FAR.
+    assert codes[0] == "CLOSEST"
+    assert set(codes[1:]) == {"NEAR", "MID"}
+    assert "FAR" not in codes
+
+
 def test_select_nearest_observatories_picks_real_station_near_target():
     with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, estimated_dates_by_code = select_nearest_observatories(

@@ -68,6 +68,18 @@ class GridResult:
     northing: np.ndarray  # 1D, y/northing coordinate of each row
     cell_size_m: float
     region: tuple  # (west, east, south, north) in local meters
+    # The nearest-point-distance field and auto-mask (see _nearest_distance/
+    # _resolve_auto_mask) this result's own NaN mask was built from - a
+    # cKDTree build/query plus (in auto mode) the per-line local-gap
+    # computation, the dominant cost of grid_points itself. Cached here
+    # (None if the caller didn't ask grid_points to keep them) so
+    # grid_confidence can reuse them instead of repeating that same work
+    # from scratch when confidence is requested for the same point set/
+    # parameters this GridResult was already built with - see store.py's
+    # get_grid_confidence_overlay.
+    tree_dist: np.ndarray | None = None
+    max_distance_grid: np.ndarray | float | None = None
+    hull_mask: np.ndarray | bool | None = None
 
 
 def _along_line_lowpass(
@@ -214,7 +226,19 @@ def grid_points(
     reducer = vd.BlockReduce(reduction="mean", spacing=cell_size_m)
     (x_r, y_r), values_r = reducer.filter((x, y), values)
 
-    shape_coords = vd.grid_coordinates(region, spacing=cell_size_m)
+    # adjust="region" (not verde's default "spacing") keeps the actual
+    # node spacing along BOTH axes exactly equal to cell_size_m, nudging
+    # the region's outer edge outward by less than one cell instead -
+    # the default adjusts spacing itself to fit the exact region, which
+    # can differ from cell_size_m by a small amount and, since region
+    # width/height aren't generally equal, differently on each axis. This
+    # grid's own cell_size_m/easting/northing get reused as if exact by
+    # every FFT-based derivative transform downstream (processing/
+    # transforms.py's wavenumber axes) as well as this function's own
+    # max_distance_m auto-mode math - a silent mismatch there would
+    # introduce a small systematic anisotropy into every RTP/RTE/THDR/
+    # tilt/theta result.
+    shape_coords = vd.grid_coordinates(region, spacing=cell_size_m, adjust="region")
     easting_2d, northing_2d = shape_coords
 
     if method == "nearest":
@@ -271,6 +295,9 @@ def grid_points(
         northing=northing_2d[:, 0],
         cell_size_m=cell_size_m,
         region=tuple(region),
+        tree_dist=tree_dist,
+        max_distance_grid=max_distance_grid,
+        hull_mask=hull_mask,
     )
 
 
@@ -323,6 +350,9 @@ def grid_confidence(
     max_distance_m: float | None = None,
     line_id: np.ndarray | None = None,
     typical_line_spacing_m: float | None = None,
+    tree_dist: np.ndarray | None = None,
+    max_distance_grid: np.ndarray | float | None = None,
+    hull_mask: np.ndarray | bool | None = None,
 ) -> np.ndarray:
     """Continuous 0-1 "how much should this cell be trusted" companion to
     grid_points' binary nodata mask: 1.0 exactly at a real data point,
@@ -340,7 +370,16 @@ def grid_confidence(
     real data far more directly in the first case - this fills that gap
     for interpretation (e.g. "the northeast corner shows an anomaly, but
     it's in a low-confidence zone barely reached by the nearest line - fly
-    it again before drawing conclusions from it")."""
+    it again before drawing conclusions from it").
+
+    tree_dist/max_distance_grid/hull_mask: pass the same-named fields
+    already sitting on a GridResult built from this exact point set/
+    cell_size_m/max_distance_m/line_id/typical_line_spacing_m (see
+    grid_points) to reuse that work instead of repeating the cKDTree
+    build/query and (in auto mode) the per-line local-gap computation -
+    together the dominant cost of grid_points itself. Leave all three
+    None (default) to compute them fresh, e.g. for a standalone call not
+    backed by an existing GridResult."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     finite = np.isfinite(x) & np.isfinite(y)
@@ -348,10 +387,11 @@ def grid_confidence(
     if line_id is not None:
         line_id = np.asarray(line_id)[finite]
 
-    tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
-    max_distance_grid, hull_mask = _resolve_auto_mask(
-        easting_2d, northing_2d, x, y, cell_size_m, max_distance_m, line_id, typical_line_spacing_m
-    )
+    if tree_dist is None or max_distance_grid is None or hull_mask is None:
+        tree_dist = _nearest_distance(easting_2d, northing_2d, x, y)
+        max_distance_grid, hull_mask = _resolve_auto_mask(
+            easting_2d, northing_2d, x, y, cell_size_m, max_distance_m, line_id, typical_line_spacing_m
+        )
     confidence = np.clip(1.0 - tree_dist / np.maximum(max_distance_grid, 1e-9), 0.0, 1.0)
     within_reach = tree_dist <= max_distance_grid
     return np.where(within_reach & hull_mask, confidence, np.nan)

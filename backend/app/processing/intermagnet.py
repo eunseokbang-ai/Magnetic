@@ -268,7 +268,12 @@ def _pick_direction_diverse(
     selected = sorted(by_quadrant.values(), key=lambda t: t[0])[:n_stations]
     selected_codes = {data.iaga_code for _, _, data in selected}
     if len(selected) < n_stations:
-        for d, bearing, data in probed:
+        # Fill remaining slots by TRUE (header-derived) distance, nearest
+        # first - not by probed's own iteration order, which just follows
+        # _candidates_by_rough_distance's coarse country-centroid ranking
+        # and can disagree with the real distance now on hand for every
+        # candidate.
+        for d, bearing, data in sorted(probed, key=lambda t: t[0]):
             if data.iaga_code in selected_codes:
                 continue
             selected.append((d, bearing, data))

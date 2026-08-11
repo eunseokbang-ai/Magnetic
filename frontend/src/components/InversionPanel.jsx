@@ -148,6 +148,16 @@ export default function InversionPanel({
             onChange={(v) => setParams((p) => ({ ...p, assumed_agl_m: v }))}
           />
         )}
+        {demStatus && (
+          <div title="대부분의 DEM은 정표고(orthometric, 지오이드 기준)이고 드론 GPS 고도는 타원체고(ellipsoidal, WGS84 기준)입니다 - 두 기준이 다르면(한국은 대략 +25m 정도 차이) 지형과 비행고도가 서로 다른 기준면에 놓여 심도가 그만큼 오차가 생깁니다. 이 지역의 지오이드고(N, m)를 알고 있다면 입력하세요 (h_타원체 = H_정표고 + N).">
+            <NumberField
+              label="DEM 지오이드 보정 (m, 선택)"
+              value={params.dem_geoid_offset_m ?? 0}
+              step="1"
+              onChange={(v) => setParams((p) => ({ ...p, dem_geoid_offset_m: v }))}
+            />
+          </div>
+        )}
       </div>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8 }}>

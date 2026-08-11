@@ -459,6 +459,24 @@ class InversionParams(BaseModel):
     # 1.0 reproduces the old uniform-thickness mesh.
     depth_growth_factor: Optional[float] = Field(None, ge=1.0, le=2.0)
     assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
+    # Most published DEMs report orthometric height (above the geoid,
+    # i.e. mean sea level) while the drone's own GPS records ellipsoidal
+    # height (above the WGS84 reference ellipsoid) - the two differ by
+    # the local geoid undulation N (h_ellipsoidal = H_orthometric + N),
+    # which is tens of meters in many regions (e.g. roughly +25m across
+    # South Korea). Left uncorrected, the mesh's DEM-derived ground
+    # surface and the drone's own recorded flight altitude sit in two
+    # different vertical datums, silently offsetting the active-cell
+    # mask and every reported depth by that same amount whenever a DEM
+    # is uploaded (the no-DEM path, which derives ground purely from the
+    # drone's own ellipsoidal altitude, has no such mismatch since both
+    # sides already share one datum). Added here, not applied
+    # automatically - the true local N depends on both location and the
+    # specific DEM's own datum, which callers must determine themselves
+    # (e.g. from the DEM's metadata or a geoid calculator for the
+    # survey's coordinates). 0.0 (default) reproduces the original
+    # uncorrected behavior. Only used when a DEM is uploaded.
+    dem_geoid_offset_m: float = 0.0
     regularization_strength: float = Field(1.0, gt=0)
     n_irls_iterations: int = Field(6, ge=1, le=30)
     # When set, overrides regularization_strength via a discrepancy-

@@ -78,6 +78,11 @@ def main():
     print("lines:", summary["lines"])
     assert summary["n_lines"] >= 1
     assert summary["diurnal"]["has_overlap"] is False  # known clock mismatch in sample data
+    # has_overlap False means zero coverage, so every point's correction
+    # was boundary-clamped (see DiurnalResult.extrapolated_mask) - the
+    # n_extrapolated/pct_extrapolated diagnostic should reflect that.
+    assert summary["diurnal"]["n_extrapolated"] == summary["n_points"]
+    assert abs(summary["diurnal"]["pct_extrapolated"] - 100.0) < 1e-6
     assert summary["line_spacing_m"] is not None and summary["line_spacing_m"] > 0
     assert summary["heading_correction"]["applied"] is True, summary["heading_correction"]
     assert summary["heading_correction"]["offset_nt"] is not None

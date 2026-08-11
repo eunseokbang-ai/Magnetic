@@ -163,6 +163,35 @@ def test_grid_confidence_is_high_at_data_and_fades_toward_midline():
     assert np.nanmax(confidence) <= 1.0 and np.nanmin(confidence) >= 0.0
 
 
+def test_grid_confidence_reuses_grid_points_cached_auto_mask():
+    """Regression/perf test: grid_points already computes the nearest-
+    point-distance field and auto-mask (tree_dist/max_distance_grid/
+    hull_mask) to build its own NaN mask - the dominant cost of gridding
+    a survey (a cKDTree build/query plus, in auto mode, the per-line
+    local-gap computation). grid_confidence used to always redo that
+    same work from scratch even when called right after grid_points for
+    the identical point set/parameters. Confirms GridResult actually
+    carries those fields, and that passing them through gives byte-
+    identical output to the from-scratch path (so reusing them is safe,
+    not just faster)."""
+    x, y, values, line_id = _two_line_survey(line_spacing_m=50.0)
+    cell_size_m = 5.0
+    grid = grid_points(x, y, values, cell_size_m, method="nearest", line_id=line_id)
+    assert grid.tree_dist is not None
+    assert grid.max_distance_grid is not None
+    assert grid.hull_mask is not None
+
+    easting_2d, northing_2d = np.meshgrid(grid.easting, grid.northing)
+    from_scratch = grid_confidence(x, y, easting_2d, northing_2d, cell_size_m, line_id=line_id)
+    reused = grid_confidence(
+        x, y, easting_2d, northing_2d, cell_size_m, line_id=line_id,
+        tree_dist=grid.tree_dist, max_distance_grid=grid.max_distance_grid, hull_mask=grid.hull_mask,
+    )
+    assert np.array_equal(np.isnan(from_scratch), np.isnan(reused))
+    finite = ~np.isnan(from_scratch)
+    assert np.allclose(from_scratch[finite], reused[finite])
+
+
 def test_grid_confidence_overlay_endpoint_via_api():
     client, project_id = _make_processed_project()
     r = client.post(

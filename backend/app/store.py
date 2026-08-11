@@ -754,11 +754,16 @@ class Project:
 
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
-        if params.diurnal_params.mode == "assume_constant" and self.base_raw is None:
-            # No base station was measured at all: assume the Earth's field
-            # was steady over the (short) survey window, so there is no
-            # diurnal (solar-driven) variation to remove - the drone's own
-            # filtered reading is used as-is. Mathematically identical to a
+        if params.diurnal_params.mode == "assume_constant":
+            # The user explicitly chose to proceed without diurnal
+            # correction (checked "베이스 자료 없이 진행"): assume the
+            # Earth's field was steady over the (short) survey window, so
+            # there is no diurnal (solar-driven) variation to remove - the
+            # drone's own filtered reading is used as-is. This governs on
+            # its own regardless of whether a base file happens to be
+            # uploaded (e.g. the user uploaded one, found it unusable -
+            # no time overlap with the flight - and ticked this instead of
+            # removing the file) - mathematically identical to a
             # base-station correction against a perfectly constant base
             # value (the correction term collapses to zero everywhere).
             self.base_processed = None
@@ -803,6 +808,7 @@ class Project:
                 reference=params.diurnal_params.reference,
             )
             df["mag_diurnal_corrected"] = diurnal_result.corrected
+            n_extrapolated = int(diurnal_result.extrapolated_mask.sum())
             self.diurnal_info = {
                 "mode": "base_station",
                 "coverage_pct": diurnal_result.coverage_pct,
@@ -810,6 +816,12 @@ class Project:
                 "base_reference_value": diurnal_result.base_reference_value,
                 "base_time_range": [str(diurnal_result.base_time_range[0]), str(diurnal_result.base_time_range[1])],
                 "drone_time_range": [str(diurnal_result.drone_time_range[0]), str(diurnal_result.drone_time_range[1])],
+                # Points whose timestamp falls outside the base station's
+                # own coverage window get a boundary-clamped (not truly
+                # extrapolated) correction - see DiurnalResult.extrapolated_mask.
+                "n_extrapolated": n_extrapolated,
+                "pct_extrapolated": float(100.0 * n_extrapolated / len(diurnal_result.extrapolated_mask))
+                if len(diurnal_result.extrapolated_mask) else 0.0,
             }
 
         hec = params.heading_effect_calibration
@@ -1484,10 +1496,12 @@ class Project:
         for what the 0-1 score means. Deliberately grids at the same cell
         size/method/max_distance the caller would use for the value layer
         itself (and shares its cache via _grid_for) so the two overlays
-        line up cell-for-cell, but recomputes the confidence score fresh
-        rather than trying to derive it from the already-masked GridResult
-        (which only carries the final NaN/value array, not the distance
-        field the score is built from)."""
+        line up cell-for-cell; reuses that same GridResult's own cached
+        tree_dist/max_distance_grid/hull_mask (see GridResult's docstring)
+        rather than recomputing them, since grid_points already computed
+        them from this exact point set/parameters to build its own NaN
+        mask - the confidence score is the only thing genuinely computed
+        fresh here."""
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
@@ -1503,6 +1517,9 @@ class Project:
             max_distance_m=req.max_distance_m,
             line_id=df.loc[active, "line_id"].to_numpy(),
             typical_line_spacing_m=self.line_spacing_m,
+            tree_dist=grid.tree_dist,
+            max_distance_grid=grid.max_distance_grid,
+            hull_mask=grid.hull_mask,
         )
         overlay = grid_to_png_overlay(
             confidence,
@@ -2599,8 +2616,18 @@ class Project:
                 self.geology_unit_next_id = meta.get("geology_unit_next_id", len(self.geology_units) + 1)
 
                 processed = False
-                if meta.get("last_params") is not None and self.base_raw is not None:
-                    params = ProcessParams(**meta["last_params"])
+                last_params = meta.get("last_params")
+                # A saved "베이스 자료 없이 진행" (assume_constant) bundle
+                # legitimately has no base_raw at all - requiring one here
+                # meant such a project silently reloaded as unprocessed
+                # (blank map, cleared summary) even though it was saved in
+                # a perfectly valid, already-processed state.
+                can_replay = last_params is not None and (
+                    self.base_raw is not None
+                    or (last_params.get("diurnal_params") or {}).get("mode") == "assume_constant"
+                )
+                if can_replay:
+                    params = ProcessParams(**last_params)
                     self.run_pipeline(params)
                     overrides = meta.get("manual_overrides") or {}
                     if overrides:
@@ -2677,6 +2704,10 @@ class Project:
                 ground_elev = load_dem_geotiff(io.BytesIO(self.dem_bytes), obs_grid.easting, obs_grid.northing, self.utm_epsg)
             except TerrainError as exc:
                 raise ProjectError(str(exc)) from exc
+            # Reconcile the DEM's vertical datum (usually orthometric)
+            # with the drone GPS's own ellipsoidal altitude - see
+            # InversionParams.dem_geoid_offset_m's docstring.
+            ground_elev = ground_elev + params.dem_geoid_offset_m
         else:
             point_ground = estimate_ground_elevation(sub["altitude_ellipsoidal_m"].to_numpy(), params.assumed_agl_m)
             ground_result = grid_points(

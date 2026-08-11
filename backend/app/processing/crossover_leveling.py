@@ -82,7 +82,15 @@ def compute_crossover_leveling(
     never written back into the survey grid (they're excluded from
     gridding entirely, see store.py), so only the resulting survey line
     shifts are returned/applied - the tie shifts only exist internally to
-    make those survey shifts more robust.
+    make those survey shifts more robust. The anchor subtracted each pass
+    is specifically the mean of the SURVEY shifts alone (not the mean
+    pooled across survey+tie shifts together) - the survey shifts are the
+    only ones actually added to the real data, so anchoring against the
+    pooled mean instead would let a net DC offset (however the two line
+    families happened to split it that pass) leak into the leveled
+    anomaly field, changing the survey's overall level as a side effect
+    of a correction that's only supposed to redistribute level *between*
+    lines, not shift it as a whole.
 
     iterative=False keeps the original simplified behavior: one median
     (tie value - survey value) shift per survey line against the raw,
@@ -204,7 +212,9 @@ def compute_crossover_leveling(
                 by_tie.setdefault(tid, []).append((sv + new_survey_shift[lid]) - tv)
             new_tie_shift = {tid: float(np.median(diffs)) for tid, diffs in by_tie.items()}
 
-            mean_shift = float(np.mean(list(new_survey_shift.values()) + list(new_tie_shift.values())))
+            # Anchor on the survey shifts' own mean, not the mean pooled
+            # across survey+tie together - see this function's docstring.
+            mean_shift = float(np.mean(list(new_survey_shift.values())))
             new_survey_shift = {k: v - mean_shift for k, v in new_survey_shift.items()}
             new_tie_shift = {k: v - mean_shift for k, v in new_tie_shift.items()}
 

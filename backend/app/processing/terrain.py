@@ -32,6 +32,11 @@ def load_dem_geotiff(buffer, x_centers: np.ndarray, y_centers: np.ndarray, targe
     elevation values, matching the (northing, easting) row/column
     convention used elsewhere in this app (processing/gridding.py,
     processing/render.py).
+
+    Returns the DEM's own raw values/datum as-is (typically orthometric
+    height) - callers comparing this against the drone's ellipsoidal GPS
+    altitude must reconcile the two themselves; see
+    InversionParams.dem_geoid_offset_m in models.py.
     """
     x_centers = np.asarray(x_centers, dtype=float)
     y_centers = np.asarray(y_centers, dtype=float)

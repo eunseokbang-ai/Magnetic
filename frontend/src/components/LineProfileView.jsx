@@ -14,6 +14,7 @@ export default function LineProfileView({ data, valueLabel, onClose, onApplySmoo
   const [showRaw, setShowRaw] = useState(true);
   const [dragStart, setDragStart] = useState(null);
   const [dragEnd, setDragEnd] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const svgRef = useRef(null);
 
   if (!data) return null;
@@ -60,14 +61,21 @@ export default function LineProfileView({ data, valueLabel, onClose, onApplySmoo
 
   const handleMouseDown = (e) => {
     const d = svgPointFromEvent(e);
+    setIsDragging(true);
     setDragStart(d);
     setDragEnd(d);
   };
   const handleMouseMove = (e) => {
-    if (dragStart == null) return;
+    if (!isDragging || dragStart == null) return;
     setDragEnd(svgPointFromEvent(e));
   };
   const handleMouseUp = () => {
+    // Always stop tracking the drag here - otherwise dragEnd keeps
+    // following the pointer after release (handleMouseMove only checked
+    // dragStart != null, which stays true after a real selection), so
+    // moving the mouse toward the "적용" button afterward silently
+    // changed which points would be smoothed.
+    setIsDragging(false);
     if (dragStart != null && dragEnd != null && Math.abs(dragEnd - dragStart) < xMax * 0.003) {
       // treat as a stray click, not a real selection
       setDragStart(null);
