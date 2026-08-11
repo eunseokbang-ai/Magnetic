@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
@@ -11,14 +11,14 @@ const buttonStyle = {
   color: "white",
   cursor: "pointer",
 };
-const applyButtonStyle = { ...buttonStyle, border: "1px solid #2563eb", background: "#2563eb" };
-const listStyle = { maxHeight: 240, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4, padding: "4px 6px" };
-const rowStyle = { display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid #f9fafb" };
+const applyButtonStyle = { ...buttonStyle, border: "1px solid #a9631f", background: "#a9631f" };
+const listStyle = { maxHeight: 240, overflowY: "auto", border: "1px solid #f3ecd9", borderRadius: 4, padding: "4px 6px" };
+const rowStyle = { display: "flex", alignItems: "center", gap: 6, padding: "3px 0", borderBottom: "1px solid #faf6ec" };
 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
@@ -47,7 +47,7 @@ export default function StructureDistortionPanel({
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           OpenStreetMap의 건물·도로 위치 정보와, 근지표 표적탐지와 같은 원리의 국지 이상 자동탐지를 함께 사용해 지상구조물(건물,
           도로 등)로 인한 자력 왜곡 후보를 찾습니다. 건물/도로 근처에서 실제로 뾰족한 이상이 함께 발견되면 "구조물 매칭"으로,
           매칭되는 지도상 구조물 없이 이상만 발견되면 "미매칭"(지질이상일 수 있으므로 직접 확인 필요)으로 구분해 보여줍니다.
@@ -84,7 +84,7 @@ export default function StructureDistortionPanel({
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         {result && (
-          <div style={{ color: "#374151", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ color: "#4a3d28", display: "flex", flexDirection: "column", gap: 8 }}>
             <div>
               건물 {result.n_buildings}개 / 도로 {result.n_roads}개 (버퍼 병합 후 영역 {result.n_structure_polygons}개) ·
               신호기반 이상후보 {result.n_anomalies}개 (그 중 구조물 매칭 {result.n_matched}개, 미매칭 {result.n_anomalies - result.n_matched}개)

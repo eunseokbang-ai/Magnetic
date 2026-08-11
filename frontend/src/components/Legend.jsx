@@ -1,14 +1,14 @@
 import { getColorFn, COLORMAP_OPTIONS } from "../colormap";
 
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const jumpButtonStyle = {
   marginLeft: 6,
   padding: "1px 6px",
   fontSize: 10,
   borderRadius: 4,
-  border: "1px solid #93c5fd",
-  background: "#eff6ff",
-  color: "#1d4ed8",
+  border: "1px solid #dcb37a",
+  background: "#faf0e2",
+  color: "#8a4f18",
   cursor: "pointer",
 };
 
@@ -21,7 +21,7 @@ function Gradient({ cmapName }) {
         height: 14,
         borderRadius: 4,
         background: `linear-gradient(to right, ${stops.join(",")})`,
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
       }}
     />
   );
@@ -50,7 +50,7 @@ export default function Legend({
           {label} {unit ? `(${unit})` : ""}
         </div>
         <Gradient cmapName={cmapName} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8a7a5c", marginTop: 2 }}>
           <span>{vmin != null ? vmin.toFixed(1) : "-"}</span>
           <span>{vmax != null ? vmax.toFixed(1) : "-"}</span>
         </div>
@@ -58,7 +58,7 @@ export default function Legend({
 
       <div style={{ fontSize: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
-          <span style={{ color: "#4b5563" }}>컬러맵</span>
+          <span style={{ color: "#6b5c42" }}>컬러맵</span>
           <select style={inputStyle} value={cmapName} onChange={(e) => onCmapChange(e.target.value)}>
             {COLORMAP_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -70,7 +70,7 @@ export default function Legend({
 
         <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <input type="checkbox" checked={manualRange.enabled} onChange={(e) => updateManual("enabled", e.target.checked)} />
-          <span style={{ color: "#4b5563" }}>표시 범위 수동 지정</span>
+          <span style={{ color: "#6b5c42" }}>표시 범위 수동 지정</span>
         </label>
         {manualRange.enabled && (
           <div style={{ display: "flex", gap: 6 }}>
@@ -93,7 +93,7 @@ export default function Legend({
       </div>
 
       {stats && (
-        <div style={{ fontSize: 12, color: "#374151" }}>
+        <div style={{ fontSize: 12, color: "#4a3d28" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>통계</div>
           <table style={{ width: "100%" }}>
             <tbody>
@@ -141,7 +141,7 @@ export default function Legend({
       )}
 
       {hoverPoint && (
-        <div style={{ fontSize: 12, color: "#374151", borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+        <div style={{ fontSize: 12, color: "#4a3d28", borderTop: "1px solid #e6dac0", paddingTop: 10 }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>선택 포인트 (TMI)</div>
           <div>위도: {hoverPoint.lat.toFixed(6)}</div>
           <div>경도: {hoverPoint.lon.toFixed(6)}</div>

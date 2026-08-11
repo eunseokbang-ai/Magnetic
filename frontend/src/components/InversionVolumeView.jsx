@@ -42,7 +42,7 @@ const SLICE_ORIENTATION_LABELS = { ew: "동서", ns: "남북", azimuth: "기울�
 function SliceRow({ slice, onUpdate, onRemove }) {
   const label = SLICE_ORIENTATION_LABELS[slice.orientation] || slice.orientation;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "white", border: "1px solid #e5e7eb", borderRadius: 5, padding: "2px 6px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, background: "white", border: "1px solid #e6dac0", borderRadius: 5, padding: "2px 6px" }}>
       <span>{label} 단면</span>
       {(slice.orientation === "ew" || slice.orientation === "ns") && (
         <input
@@ -67,10 +67,10 @@ function SliceRow({ slice, onUpdate, onRemove }) {
           style={{ width: 70 }}
         />
       )}
-      {slice.loading && <span style={{ color: "#9ca3af" }}>...</span>}
+      {slice.loading && <span style={{ color: "#ab9a78" }}>...</span>}
       <button
         onClick={() => onRemove(slice.id)}
-        style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 13, padding: 0, lineHeight: 1 }}
+        style={{ border: "none", background: "none", cursor: "pointer", color: "#ab9a78", fontSize: 13, padding: 0, lineHeight: 1 }}
         title="이 단면 제거"
       >
         ✕
@@ -183,7 +183,7 @@ export default function InversionVolumeView({
         bottom: 16,
         left: 16,
         background: "white",
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
         borderRadius: 8,
         boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         zIndex: 1000,
@@ -191,7 +191,7 @@ export default function InversionVolumeView({
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e6dac0" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>3차원 자화율 이상대 (SI, 지정한 범위만 표시)</div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           {onOpacityChange && (
@@ -219,7 +219,7 @@ export default function InversionVolumeView({
               setMode("box");
               if (!boxData) onBoxTopLayerIndexChange?.(boxTopLayerIndex ?? 0);
             }}
-            style={{ border: "1px solid #2563eb", background: "white", color: "#2563eb", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" }}
+            style={{ border: "1px solid #a9631f", background: "white", color: "#a9631f", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" }}
           >
             SI 연속 컬러링 박스 단면으로 보기
           </button>
@@ -234,19 +234,19 @@ export default function InversionVolumeView({
           alignItems: "center",
           gap: 8,
           padding: "6px 12px",
-          borderBottom: "1px solid #e5e7eb",
-          background: "#f9fafb",
+          borderBottom: "1px solid #e6dac0",
+          background: "#faf6ec",
           flexWrap: "wrap",
         }}
       >
-        <span style={{ fontSize: 11, color: "#6b7280" }}>단면 추가:</span>
-        <button onClick={() => onAddSlice?.("ew")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+        <span style={{ fontSize: 11, color: "#8a7a5c" }}>단면 추가:</span>
+        <button onClick={() => onAddSlice?.("ew")} style={{ border: "1px solid #ddd0b2", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
           + 동서
         </button>
-        <button onClick={() => onAddSlice?.("ns")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+        <button onClick={() => onAddSlice?.("ns")} style={{ border: "1px solid #ddd0b2", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
           + 남북
         </button>
-        <button onClick={() => onAddSlice?.("azimuth")} style={{ border: "1px solid #d1d5db", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
+        <button onClick={() => onAddSlice?.("azimuth")} style={{ border: "1px solid #ddd0b2", background: "white", borderRadius: 5, padding: "2px 8px", fontSize: 12, cursor: "pointer" }}>
           + 기울기(자유방향)
         </button>
         <button
@@ -254,18 +254,18 @@ export default function InversionVolumeView({
           disabled={!customSliceAvailable}
           title={customSliceAvailable ? undefined : "먼저 '수직 섹션 뷰'에서 자유선을 그려주세요"}
           style={{
-            border: "1px solid #d1d5db",
+            border: "1px solid #ddd0b2",
             background: "white",
             borderRadius: 5,
             padding: "2px 8px",
             fontSize: 12,
             cursor: customSliceAvailable ? "pointer" : "not-allowed",
-            color: customSliceAvailable ? "inherit" : "#9ca3af",
+            color: customSliceAvailable ? "inherit" : "#ab9a78",
           }}
         >
           + 자유선(마지막으로 그린 선)
         </button>
-        {(slices || []).length > 0 && <span style={{ width: 1, alignSelf: "stretch", background: "#e5e7eb" }} />}
+        {(slices || []).length > 0 && <span style={{ width: 1, alignSelf: "stretch", background: "#e6dac0" }} />}
         {(slices || []).map((slice) => (
           <SliceRow key={slice.id} slice={slice} onUpdate={onUpdateSlice} onRemove={onRemoveSlice} />
         ))}
@@ -277,9 +277,9 @@ export default function InversionVolumeView({
             autosize: true,
             margin: { l: 0, r: 80, t: 0, b: 0 },
             scene: {
-              xaxis: { title: { text: "동서 (m)" }, showbackground: true, backgroundcolor: "#f3f4f6", gridcolor: "#d1d5db" },
-              yaxis: { title: { text: "남북 (m)" }, showbackground: true, backgroundcolor: "#f3f4f6", gridcolor: "#d1d5db" },
-              zaxis: { title: { text: "고도 (m)" }, showbackground: true, backgroundcolor: "#e5e7eb", gridcolor: "#d1d5db" },
+              xaxis: { title: { text: "동서 (m)" }, showbackground: true, backgroundcolor: "#f3ecd9", gridcolor: "#ddd0b2" },
+              yaxis: { title: { text: "남북 (m)" }, showbackground: true, backgroundcolor: "#f3ecd9", gridcolor: "#ddd0b2" },
+              zaxis: { title: { text: "고도 (m)" }, showbackground: true, backgroundcolor: "#e6dac0", gridcolor: "#ddd0b2" },
               aspectmode: "data",
               camera: { eye: { x: 1.4, y: -1.6, z: 1.1 } },
             },
@@ -340,7 +340,7 @@ function BoxFacesView({ data, loading, topLayerIndex, onTopLayerIndexChange, nLa
         bottom: 16,
         left: 16,
         background: "white",
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
         borderRadius: 8,
         boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         zIndex: 1000,
@@ -348,12 +348,12 @@ function BoxFacesView({ data, loading, topLayerIndex, onTopLayerIndexChange, nLa
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e6dac0" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>SI 연속 컬러링 박스 단면 (상단면 + 4개 측벽, 임계값 없이 전체 표시)</div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
             상단면 깊이 레이어: {topLayerIndex ?? 0} / {Math.max(0, (nLayers ?? 1) - 1)}
-            {data?.top_elevation_m != null && <span style={{ color: "#6b7280" }}>(고도 약 {data.top_elevation_m.toFixed(0)} m)</span>}
+            {data?.top_elevation_m != null && <span style={{ color: "#8a7a5c" }}>(고도 약 {data.top_elevation_m.toFixed(0)} m)</span>}
             <input
               type="range"
               min="0"
@@ -364,7 +364,7 @@ function BoxFacesView({ data, loading, topLayerIndex, onTopLayerIndexChange, nLa
               style={{ width: 120 }}
             />
           </label>
-          <button onClick={onSwitchToBlob} style={{ border: "1px solid #2563eb", background: "white", color: "#2563eb", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" }}>
+          <button onClick={onSwitchToBlob} style={{ border: "1px solid #a9631f", background: "white", color: "#a9631f", borderRadius: 6, padding: "3px 8px", fontSize: 12, cursor: "pointer" }}>
             이상대 블롭 뷰로 돌아가기
           </button>
           <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14 }}>
@@ -374,7 +374,7 @@ function BoxFacesView({ data, loading, topLayerIndex, onTopLayerIndexChange, nLa
       </div>
       <div style={{ flex: 1, position: "relative" }}>
         {loading && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#6b7280", fontSize: 13, zIndex: 1 }}>
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#8a7a5c", fontSize: 13, zIndex: 1 }}>
             불러오는 중...
           </div>
         )}
@@ -385,9 +385,9 @@ function BoxFacesView({ data, loading, topLayerIndex, onTopLayerIndexChange, nLa
               autosize: true,
               margin: { l: 0, r: 80, t: 0, b: 0 },
               scene: {
-                xaxis: { title: { text: "동서 (m)" }, showbackground: true, backgroundcolor: "#f3f4f6", gridcolor: "#d1d5db" },
-                yaxis: { title: { text: "남북 (m)" }, showbackground: true, backgroundcolor: "#f3f4f6", gridcolor: "#d1d5db" },
-                zaxis: { title: { text: "고도 (m)" }, showbackground: true, backgroundcolor: "#e5e7eb", gridcolor: "#d1d5db" },
+                xaxis: { title: { text: "동서 (m)" }, showbackground: true, backgroundcolor: "#f3ecd9", gridcolor: "#ddd0b2" },
+                yaxis: { title: { text: "남북 (m)" }, showbackground: true, backgroundcolor: "#f3ecd9", gridcolor: "#ddd0b2" },
+                zaxis: { title: { text: "고도 (m)" }, showbackground: true, backgroundcolor: "#e6dac0", gridcolor: "#ddd0b2" },
                 aspectmode: "data",
                 camera: { eye: { x: 1.5, y: -1.7, z: 1.0 } },
               },

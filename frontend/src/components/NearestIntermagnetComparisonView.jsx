@@ -27,21 +27,21 @@ function Panel({ title, color, seconds, values, xMax, fmtSeconds }) {
   const pathD = seconds.map((s, i) => `${i === 0 ? "M" : "L"} ${xScale(s).toFixed(1)} ${yScale(values[i]).toFixed(1)}`).join(" ");
 
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: "8px 10px" }}>
+    <div style={{ border: "1px solid #e6dac0", borderRadius: 6, padding: "8px 10px" }}>
       <div style={{ fontSize: 12, fontWeight: 600, color, marginBottom: 4 }}>{title}</div>
       <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "auto", background: "white" }}>
-        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#9ca3af" strokeWidth="1" />
-        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="#9ca3af" strokeWidth="1" />
-        <text x={padding.left - 6} y={yScale(y1) + 4} fontSize="10" textAnchor="end" fill="#6b7280">
+        <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#ab9a78" strokeWidth="1" />
+        <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="#ab9a78" strokeWidth="1" />
+        <text x={padding.left - 6} y={yScale(y1) + 4} fontSize="10" textAnchor="end" fill="#8a7a5c">
           {y1.toFixed(1)}
         </text>
-        <text x={padding.left - 6} y={yScale(y0) + 4} fontSize="10" textAnchor="end" fill="#6b7280">
+        <text x={padding.left - 6} y={yScale(y0) + 4} fontSize="10" textAnchor="end" fill="#8a7a5c">
           {y0.toFixed(1)}
         </text>
-        <text x={padding.left} y={height - padding.bottom + 16} fontSize="10" fill="#6b7280">
+        <text x={padding.left} y={height - padding.bottom + 16} fontSize="10" fill="#8a7a5c">
           0s
         </text>
-        <text x={width - padding.right} y={height - padding.bottom + 16} fontSize="10" textAnchor="end" fill="#6b7280">
+        <text x={width - padding.right} y={height - padding.bottom + 16} fontSize="10" textAnchor="end" fill="#8a7a5c">
           {fmtSeconds(xMax)}
         </text>
         {seconds.length > 0 && <path d={pathD} fill="none" stroke={color} strokeWidth="1.5" />}
@@ -83,7 +83,7 @@ export default function NearestIntermagnetComparisonView({ data, onClose }) {
         bottom: 16,
         left: 16,
         background: "white",
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
         borderRadius: 8,
         boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         zIndex: 1000,
@@ -91,14 +91,14 @@ export default function NearestIntermagnetComparisonView({ data, onClose }) {
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e6dac0" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>주변 관측소 자료 vs 결합 추정 베이스 자료 비교 (창별 개별 스케일)</div>
         <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14 }}>
           ✕ 닫기
         </button>
       </div>
       <div style={{ flex: 1, padding: 16, overflow: "auto" }}>
-        <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "#8a7a5c", marginBottom: 10 }}>
           각 그래프는 자체 nT 범위로 스케일되어 있어 일변화 형태를 서로 비교하기 쉽습니다 (절대값 수준은 그래프마다 다름). 굵은 검은 테두리 그래프가 실제 사용/적용 예정인 결합 추정 자료입니다.
         </div>
         <div
@@ -124,7 +124,7 @@ export default function NearestIntermagnetComparisonView({ data, onClose }) {
           {hasCombined && (
             <Panel
               title="결합 추정(사용할 베이스 자료)"
-              color="#1f2937"
+              color="#362c1c"
               seconds={combinedSeconds}
               values={combined.mag}
               xMax={xMax}

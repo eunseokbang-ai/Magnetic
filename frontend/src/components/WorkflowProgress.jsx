@@ -51,13 +51,13 @@ export default function WorkflowProgress({ droneSummary, baseSummary, processSum
                 justifyContent: "center",
                 fontSize: 10,
                 fontWeight: 700,
-                background: isDone ? "#22c55e" : isCurrent ? "#2563eb" : "#e5e7eb",
-                color: isDone || isCurrent ? "white" : "#9ca3af",
+                background: isDone ? "#22c55e" : isCurrent ? "#a9631f" : "#e6dac0",
+                color: isDone || isCurrent ? "white" : "#ab9a78",
               }}
             >
               {isDone ? "✓" : i + 1}
             </div>
-            <span style={{ color: isDone ? "#16a34a" : isCurrent ? "#2563eb" : "#9ca3af", fontWeight: isCurrent ? 600 : 400 }}>
+            <span style={{ color: isDone ? "#16a34a" : isCurrent ? "#a9631f" : "#ab9a78", fontWeight: isCurrent ? 600 : 400 }}>
               {s.label}
             </span>
           </div>

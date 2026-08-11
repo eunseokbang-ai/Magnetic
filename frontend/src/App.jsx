@@ -38,9 +38,9 @@ const toggleButtonStyle = {
   width: 36,
   height: 36,
   borderRadius: 8,
-  border: "1px solid #d1d5db",
+  border: "1px solid #ddd0b2",
   background: "white",
-  color: "#111827",
+  color: "#2c2418",
   fontSize: 16,
   cursor: "pointer",
   boxShadow: "0 1px 4px rgba(0,0,0,0.2)",
@@ -2042,7 +2042,7 @@ export default function App() {
   const legendRange = overlay ? { vmin: overlay.vmin, vmax: overlay.vmax } : colorRange;
 
   return (
-    <div style={{ display: "flex", height: "100%", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ display: "flex", height: "100%", fontFamily: '"Pretendard", system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif' }}>
       <div
         className={`app-sidebar-backdrop${leftSidebarOpen || rightSidebarOpen ? " visible" : ""}`}
         onClick={() => {
@@ -2052,11 +2052,11 @@ export default function App() {
       />
       <div
         className={`app-sidebar-left${leftSidebarOpen ? " open" : ""}`}
-        style={{ width: 320, borderRight: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
+        style={{ width: 320, borderRight: "1px solid #e6dac0", overflowY: "auto", padding: 12, background: "#faf6ec" }}
       >
         <h1 style={{ fontSize: 16, margin: "4px 0 2px 0" }}>드론 자력탐사 자료 처리</h1>
         <div
-          style={{ fontSize: 10, color: "#9ca3af", margin: "0 0 12px 0" }}
+          style={{ fontSize: 10, color: "#ab9a78", margin: "0 0 12px 0" }}
           title="이 화면이 백엔드 서버로부터 실제로 받은 버전 정보입니다 - '분명히 고쳐달라고 한 문제가 그대로'라면 run.bat을 다시 실행해 이 커밋 해시가 바뀌는지부터 확인하세요"
         >
           {backendVersion?.commit ? `버전: ${backendVersion.commit} (${backendVersion.commit_date})` : ""}
@@ -2068,9 +2068,9 @@ export default function App() {
               padding: "6px 8px",
               fontSize: 12,
               borderRadius: 6,
-              border: purposeMode === "mineral" ? "1px solid #2563eb" : "1px solid #d1d5db",
-              background: purposeMode === "mineral" ? "#2563eb" : "white",
-              color: purposeMode === "mineral" ? "white" : "#374151",
+              border: purposeMode === "mineral" ? "1px solid #a9631f" : "1px solid #ddd0b2",
+              background: purposeMode === "mineral" ? "#a9631f" : "white",
+              color: purposeMode === "mineral" ? "white" : "#4a3d28",
               cursor: "pointer",
             }}
             onClick={() => handleSetPurposeMode("mineral")}
@@ -2084,9 +2084,9 @@ export default function App() {
               padding: "6px 8px",
               fontSize: 12,
               borderRadius: 6,
-              border: purposeMode === "target" ? "1px solid #b91c1c" : "1px solid #d1d5db",
+              border: purposeMode === "target" ? "1px solid #b91c1c" : "1px solid #ddd0b2",
               background: purposeMode === "target" ? "#b91c1c" : "white",
-              color: purposeMode === "target" ? "white" : "#374151",
+              color: purposeMode === "target" ? "white" : "#4a3d28",
               cursor: "pointer",
             }}
             onClick={() => handleSetPurposeMode("target")}
@@ -2116,7 +2116,7 @@ export default function App() {
             padding: "5px 8px",
             fontSize: 12,
             borderRadius: 6,
-            border: "1px solid #d1d5db",
+            border: "1px solid #ddd0b2",
             boxSizing: "border-box",
           }}
         />
@@ -2127,9 +2127,9 @@ export default function App() {
               padding: "6px 8px",
               fontSize: 12,
               borderRadius: 6,
-              border: "1px solid #2563eb",
+              border: "1px solid #a9631f",
               background: "white",
-              color: "#2563eb",
+              color: "#a9631f",
               cursor: droneSummary && !savingProject ? "pointer" : "default",
               opacity: droneSummary && !savingProject ? 1 : 0.5,
             }}
@@ -2145,9 +2145,9 @@ export default function App() {
               padding: "6px 8px",
               fontSize: 12,
               borderRadius: 6,
-              border: "1px solid #2563eb",
+              border: "1px solid #a9631f",
               background: "white",
-              color: "#2563eb",
+              color: "#a9631f",
               cursor: "pointer",
               textAlign: "center",
               opacity: loadingProject ? 0.5 : 1,
@@ -2176,9 +2176,9 @@ export default function App() {
             padding: "6px 8px",
             fontSize: 12,
             borderRadius: 6,
-            border: "1px solid #2563eb",
+            border: "1px solid #a9631f",
             background: "white",
-            color: "#2563eb",
+            color: "#a9631f",
             cursor: processSummary && !exportingReport ? "pointer" : "default",
             opacity: processSummary && !exportingReport ? 1 : 0.5,
           }}
@@ -2356,7 +2356,7 @@ export default function App() {
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 14,
-                  color: "#374151",
+                  color: "#4a3d28",
                 }}
               >
                 3D 뷰어 불러오는 중...
@@ -2404,7 +2404,7 @@ export default function App() {
 
       <div
         className={`app-sidebar-right${rightSidebarOpen ? " open" : ""}`}
-        style={{ width: 280, borderLeft: "1px solid #e5e7eb", overflowY: "auto", padding: 12, background: "#f9fafb" }}
+        style={{ width: 280, borderLeft: "1px solid #e6dac0", overflowY: "auto", padding: 12, background: "#faf6ec" }}
       >
         <h2 style={{ fontSize: 13, margin: "4px 0 10px 0" }}>7. 수동 측선 편집</h2>
         <LineEditor
@@ -2638,11 +2638,11 @@ export default function App() {
         />
 
         <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>
-          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#374151" }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#4a3d28" }}>
             15. UAV 자력탐사 가이드라인 진단 도구 (반복측선 · 파워스펙트럼/노치필터 · 멀티스케일 엣지)
           </summary>
           {guidelinePanelOpened && (
-          <Suspense fallback={<div style={{ fontSize: 12, color: "#6b7280", padding: 8 }}>불러오는 중...</div>}>
+          <Suspense fallback={<div style={{ fontSize: 12, color: "#8a7a5c", padding: 8 }}>불러오는 중...</div>}>
           <GuidelinePanel
             ready={!!processSummary}
             repeatability={{
@@ -2744,9 +2744,9 @@ export default function App() {
                 padding: "6px 8px",
                 fontSize: 12,
                 borderRadius: 6,
-                border: `1px solid ${measureMode === "distance" ? "#dc2626" : "#d1d5db"}`,
+                border: `1px solid ${measureMode === "distance" ? "#dc2626" : "#ddd0b2"}`,
                 background: measureMode === "distance" ? "#dc2626" : "white",
-                color: measureMode === "distance" ? "white" : "#374151",
+                color: measureMode === "distance" ? "white" : "#4a3d28",
                 cursor: "pointer",
               }}
               title="지도를 클릭해 선을 그리면(더블클릭으로 종료) 그 경로의 총 거리를 계산해 표시합니다. 이상대 길이 등을 잴 때 사용하세요. 계속 여러 선을 그릴 수 있고, 버튼을 다시 누르면 그리기 모드만 꺼집니다(측정 결과는 남습니다)."
@@ -2760,9 +2760,9 @@ export default function App() {
                 padding: "6px 8px",
                 fontSize: 12,
                 borderRadius: 6,
-                border: `1px solid ${measureMode === "area" ? "#7c3aed" : "#d1d5db"}`,
+                border: `1px solid ${measureMode === "area" ? "#7c3aed" : "#ddd0b2"}`,
                 background: measureMode === "area" ? "#7c3aed" : "white",
-                color: measureMode === "area" ? "white" : "#374151",
+                color: measureMode === "area" ? "white" : "#4a3d28",
                 cursor: "pointer",
               }}
               title="지도를 클릭해 다각형을 그리면(더블클릭 또는 시작점 클릭으로 종료) 그 영역의 면적을 계산해 표시합니다. 이상대 면적 등을 잴 때 사용하세요. 계속 여러 영역을 그릴 수 있고, 버튼을 다시 누르면 그리기 모드만 꺼집니다(측정 결과는 남습니다)."
@@ -2781,7 +2781,7 @@ export default function App() {
                     alignItems: "center",
                     fontSize: 12,
                     background: "white",
-                    border: "1px solid #e5e7eb",
+                    border: "1px solid #e6dac0",
                     borderRadius: 6,
                     padding: "4px 8px",
                   }}
@@ -2791,7 +2791,7 @@ export default function App() {
                   </span>
                   <button
                     onClick={() => handleRemoveMeasurement(m.id)}
-                    style={{ border: "none", background: "transparent", color: "#9ca3af", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
+                    style={{ border: "none", background: "transparent", color: "#ab9a78", cursor: "pointer", fontSize: 13, lineHeight: 1 }}
                     title="이 측정 삭제"
                   >
                     ✕
@@ -2800,7 +2800,7 @@ export default function App() {
               ))}
               <button
                 onClick={handleClearMeasurements}
-                style={{ alignSelf: "flex-start", fontSize: 11, color: "#6b7280", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", padding: 0 }}
+                style={{ alignSelf: "flex-start", fontSize: 11, color: "#8a7a5c", background: "transparent", border: "none", cursor: "pointer", textDecoration: "underline", padding: 0 }}
               >
                 전체 지우기
               </button>

@@ -1,13 +1,13 @@
 import { useState } from "react";
 
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "6px 10px",
   fontSize: 12,
   borderRadius: 6,
-  border: "1px solid #2563eb",
+  border: "1px solid #a9631f",
   background: "white",
-  color: "#2563eb",
+  color: "#a9631f",
   cursor: "pointer",
 };
 
@@ -70,7 +70,7 @@ export default function IntermagnetPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 8, fontSize: 12 }}>
-      <div style={{ color: "#6b7280" }}>
+      <div style={{ color: "#8a7a5c" }}>
         측정 지역의 로컬 일변화까지는 반영하지 못하지만, 태양풍 등에 의한 지역/전지구적 자기장 변화는 인근 관측소 자료로
         어느 정도 추정할 수 있습니다. INTERMAGNET(intermagnet.org)에서 직접 받은 IAGA-2002 파일을 업로드하거나, 관측소
         코드와 날짜를 입력해 서버에서 바로 받아올 수 있습니다 (서버의 아웃바운드 네트워크 정책에 따라 자동 다운로드가
@@ -80,23 +80,23 @@ export default function IntermagnetPanel({
       {onFetchNearestIntermagnet && (
         <div
           style={{
-            border: "1px solid #e5e7eb",
+            border: "1px solid #e6dac0",
             borderRadius: 6,
             padding: "8px 10px",
             display: "flex",
             flexDirection: "column",
             gap: 6,
-            background: "#fafafa",
+            background: "#faf7ef",
           }}
         >
           <div style={{ fontWeight: 600 }}>주변 관측소 자동 선택 (추천)</div>
-          <div style={{ color: "#6b7280" }}>
+          <div style={{ color: "#8a7a5c" }}>
             조사지역 평균 좌표 주변 동서남북 방향에서 가장 가까운 관측소들을 자동으로 찾아 자료를 받아온 뒤, 거리 가중
             평균(IDW)으로 결합하여 하나의 가상 베이스 자료로 만듭니다. 관측소 코드를 몰라도 됩니다.
           </div>
           {dateModeToggle(nearestDateMode, setNearestDateMode)}
           {nearestDateMode === "auto" ? (
-            <div style={{ color: hasFlightDates ? "#4b5563" : "#b45309" }}>
+            <div style={{ color: hasFlightDates ? "#6b5c42" : "#b45309" }}>
               {hasFlightDates
                 ? `인식된 측선 날짜 (${flightDates.length}일): ${flightDates.join(", ")}`
                 : "드론 자료를 먼저 업로드하면 촬영 날짜를 자동으로 인식합니다 (또는 직접 기간을 지정하세요)."}
@@ -104,7 +104,7 @@ export default function IntermagnetPanel({
           ) : (
             <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
               <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ color: "#4b5563" }}>시작일</span>
+                <span style={{ color: "#6b5c42" }}>시작일</span>
                 <input
                   type="date"
                   style={{ ...inputStyle, width: 140 }}
@@ -113,7 +113,7 @@ export default function IntermagnetPanel({
                 />
               </label>
               <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ color: "#4b5563" }}>종료일</span>
+                <span style={{ color: "#6b5c42" }}>종료일</span>
                 <input
                   type="date"
                   style={{ ...inputStyle, width: 140 }}
@@ -126,7 +126,7 @@ export default function IntermagnetPanel({
           )}
           <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }}>관측소 수 (최대)</span>
+              <span style={{ color: "#6b5c42" }}>관측소 수 (최대)</span>
               <input
                 type="number"
                 min="1"
@@ -137,7 +137,7 @@ export default function IntermagnetPanel({
               />
             </label>
             <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <span style={{ color: "#4b5563" }} title="이 거리보다 먼 관측소는 아예 후보에서 제외합니다 - 방향(사분면)당 근처에 후보가 없으면 관측소 수보다 적게 선택될 수 있습니다">
+              <span style={{ color: "#6b5c42" }} title="이 거리보다 먼 관측소는 아예 후보에서 제외합니다 - 방향(사분면)당 근처에 후보가 없으면 관측소 수보다 적게 선택될 수 있습니다">
                 최대 거리 (km)
               </span>
               <input
@@ -163,7 +163,7 @@ export default function IntermagnetPanel({
               {nearestLoading ? "탐색 중..." : "주변 관측소 탐색"}
             </button>
           </div>
-          <div style={{ color: "#9ca3af" }}>
+          <div style={{ color: "#ab9a78" }}>
             요청한 날짜 중 아직 게시되지 않은 자료나 특정일에 결측된 자료는, 그 전날과 다음날 자료로 추정하여
             채웁니다. 너무 먼 관측소는 일변화 위상/진폭이 달라질 수 있어(경도차 ≈ 지방시차, 위도차 ≈ 다른 자기위도대) 최대
             거리를 벗어난 후보는 자동 제외됩니다 - 빈칸으로 두면 거리 제한 없이 방향당 가장 가까운 관측소를 찾습니다.
@@ -184,8 +184,8 @@ export default function IntermagnetPanel({
           {nearestPreview && (
             <div
               style={{
-                border: "1px solid #bfdbfe",
-                background: "#eff6ff",
+                border: "1px solid #ecd0a3",
+                background: "#faf0e2",
                 borderRadius: 6,
                 padding: "8px 10px",
                 display: "flex",
@@ -217,7 +217,7 @@ export default function IntermagnetPanel({
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                 <button
-                  style={{ ...buttonStyle, background: "#2563eb", color: "white" }}
+                  style={{ ...buttonStyle, background: "#a9631f", color: "white" }}
                   disabled={nearestApplying}
                   onClick={onApplyNearestIntermagnet}
                 >
@@ -255,7 +255,7 @@ export default function IntermagnetPanel({
           padding: "6px 10px",
           fontSize: 12,
           borderRadius: 6,
-          border: "1px solid #d1d5db",
+          border: "1px solid #ddd0b2",
           background: "white",
           cursor: "pointer",
           textAlign: "center",
@@ -276,7 +276,7 @@ export default function IntermagnetPanel({
 
       <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <span style={{ color: "#4b5563" }}>IAGA 관측소 코드 (예: IRT)</span>
+          <span style={{ color: "#6b5c42" }}>IAGA 관측소 코드 (예: IRT)</span>
           <input
             type="text"
             style={{ ...inputStyle, width: 100 }}
@@ -288,7 +288,7 @@ export default function IntermagnetPanel({
       </div>
       {dateModeToggle(dateMode, setDateMode)}
       {dateMode === "auto" ? (
-        <div style={{ color: hasFlightDates ? "#4b5563" : "#b45309" }}>
+        <div style={{ color: hasFlightDates ? "#6b5c42" : "#b45309" }}>
           {hasFlightDates
             ? `인식된 측선 날짜 (${flightDates.length}일): ${flightDates.join(", ")}`
             : "드론 자료를 먼저 업로드하면 촬영 날짜를 자동으로 인식합니다 (또는 직접 기간을 지정하세요)."}
@@ -296,11 +296,11 @@ export default function IntermagnetPanel({
       ) : (
         <div style={{ display: "flex", gap: 6, alignItems: "flex-end", flexWrap: "wrap" }}>
           <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ color: "#4b5563" }}>시작일</span>
+            <span style={{ color: "#6b5c42" }}>시작일</span>
             <input type="date" style={{ ...inputStyle, width: 140 }} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
           </label>
           <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ color: "#4b5563" }}>종료일</span>
+            <span style={{ color: "#6b5c42" }}>종료일</span>
             <input
               type="date"
               style={{ ...inputStyle, width: 140 }}
@@ -325,7 +325,7 @@ export default function IntermagnetPanel({
           {loading ? "요청 중..." : "자동 다운로드 시도"}
         </button>
       </div>
-      <div style={{ color: "#9ca3af" }}>
+      <div style={{ color: "#ab9a78" }}>
         요청한 날짜 중 아직 게시되지 않은 자료나 특정일에 결측된 자료는, 그 전날과 다음날 자료로 추정하여 채웁니다.
       </div>
 
@@ -336,7 +336,7 @@ export default function IntermagnetPanel({
       )}
 
       {preview && (
-        <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 6, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ border: "1px solid #ecd0a3", background: "#faf0e2", borderRadius: 6, padding: "8px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ fontWeight: 600 }}>
             {preview.station_name} ({preview.iaga_code})
           </div>
@@ -352,7 +352,7 @@ export default function IntermagnetPanel({
           )}
           <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
             <button
-              style={{ ...buttonStyle, background: "#2563eb", color: "white" }}
+              style={{ ...buttonStyle, background: "#a9631f", color: "white" }}
               disabled={applying}
               onClick={onApplyIntermagnet}
             >

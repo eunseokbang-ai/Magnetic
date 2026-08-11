@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
@@ -15,7 +15,7 @@ const buttonStyle = {
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
@@ -27,7 +27,7 @@ export default function ContactPanel({ ready, params, setParams, onRun, running,
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           THD 능선(ridge)이 여러 상향연속(upward continuation) 고도에서 지속적으로 나타나는 지점만 골라 자성 암체 경계(지질
           접촉면) 후보를 추출합니다(Archibald et al. 1999 "worming" 기법) — 리니어먼트 추출과 달리 단일 고도의 능선이 아니라
           여러 고도에서의 지속성(persistence)을 기준으로 삼아, 얕은 노이즈나 국소 소스로 인한 가짜 능선을 걸러냅니다. 지질도
@@ -67,9 +67,9 @@ export default function ContactPanel({ ready, params, setParams, onRun, running,
           {running ? "탐지 중..." : "자성 접촉면 탐지 실행"}
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
-        {result && !result.available && <div style={{ color: "#9ca3af" }}>{result.reason}</div>}
+        {result && !result.available && <div style={{ color: "#ab9a78" }}>{result.reason}</div>}
         {result && result.available && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             접촉면 {result.n_contacts}개, 총 길이 {(result.total_length_m / 1000).toFixed(2)} km
             <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <input type="checkbox" checked={showOnMap} onChange={(e) => setShowOnMap(e.target.checked)} />

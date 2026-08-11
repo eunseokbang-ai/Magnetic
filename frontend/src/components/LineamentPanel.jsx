@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
@@ -12,13 +12,13 @@ const buttonStyle = {
   cursor: "pointer",
 };
 const tableStyle = { width: "100%", borderCollapse: "collapse", fontSize: 11 };
-const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e5e7eb", color: "#6b7280" };
-const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3f4f6" };
+const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e6dac0", color: "#8a7a5c" };
+const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3ecd9" };
 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
@@ -71,13 +71,13 @@ function RoseDiagram({ bins, binWidthDeg }) {
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
       {[0.25, 0.5, 0.75, 1.0].map((f) => (
-        <circle key={f} cx={center} cy={center} r={maxRadius * f} fill="none" stroke="#e5e7eb" strokeWidth="0.5" />
+        <circle key={f} cx={center} cy={center} r={maxRadius * f} fill="none" stroke="#e6dac0" strokeWidth="0.5" />
       ))}
-      <line x1={center} y1={center - maxRadius - 6} x2={center} y2={center + maxRadius + 6} stroke="#9ca3af" strokeWidth="0.5" />
-      <line x1={center - maxRadius - 6} y1={center} x2={center + maxRadius + 6} y2={center} stroke="#9ca3af" strokeWidth="0.5" />
+      <line x1={center} y1={center - maxRadius - 6} x2={center} y2={center + maxRadius + 6} stroke="#ab9a78" strokeWidth="0.5" />
+      <line x1={center - maxRadius - 6} y1={center} x2={center + maxRadius + 6} y2={center} stroke="#ab9a78" strokeWidth="0.5" />
       {wedges}
-      <text x={center} y={14} textAnchor="middle" fontSize="10" fill="#374151">N</text>
-      <text x={size - 6} y={center + 4} textAnchor="end" fontSize="10" fill="#374151">E</text>
+      <text x={center} y={14} textAnchor="middle" fontSize="10" fill="#4a3d28">N</text>
+      <text x={size - 6} y={center + 4} textAnchor="end" fontSize="10" fill="#4a3d28">E</text>
     </svg>
   );
 }
@@ -88,7 +88,7 @@ export default function LineamentPanel({ ready, params, setParams, onRun, runnin
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           THD/analytic signal/틸트각/1VD 격자에서 능선(ridge) 극댓값을 찾아 서로 가까운 점들을 하나의 리니어먼트(단층·전단대·접촉면
           추정 구조선)로 묶고, 주향(strike) 방향 통계를 로즈다이어그램으로 보여줍니다. 광체 자체보다 구조통제형 광상의 구조 파악에
           유용합니다.
@@ -126,9 +126,9 @@ export default function LineamentPanel({ ready, params, setParams, onRun, runnin
           {running ? "추출 중..." : "리니어먼트 추출 실행"}
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
-        {result && !result.available && <div style={{ color: "#9ca3af" }}>{result.reason}</div>}
+        {result && !result.available && <div style={{ color: "#ab9a78" }}>{result.reason}</div>}
         {result && result.available && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             리니어먼트 {result.n_lineaments}개, 총 길이 {(result.total_length_m / 1000).toFixed(2)} km
             <label style={{ display: "flex", alignItems: "center", gap: 6, margin: "6px 0" }}>
               <input type="checkbox" checked={showOnMap} onChange={(e) => setShowOnMap(e.target.checked)} />
@@ -137,7 +137,7 @@ export default function LineamentPanel({ ready, params, setParams, onRun, runnin
             <div style={{ display: "flex", justifyContent: "center", margin: "6px 0" }}>
               <RoseDiagram bins={result.rose_bins} binWidthDeg={result.rose_bin_width_deg} />
             </div>
-            <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4 }}>
+            <div style={{ maxHeight: 160, overflowY: "auto", border: "1px solid #f3ecd9", borderRadius: 4 }}>
               <table style={tableStyle}>
                 <thead>
                   <tr>

@@ -37,17 +37,17 @@ const FILTER_METHOD_INFO = {
   moving_average: "이동평균 — 가장 단순한 평활화 방식으로, 뾰족한 이상체를 다소 무디게 만들 수 있습니다.",
 };
 
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const summaryStyle = { padding: "10px 12px", fontWeight: 600, fontSize: 13, cursor: "pointer" };
 const bodyStyle = { padding: "0 12px 12px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
   fontWeight: 600,
   borderRadius: 6,
-  border: "1px solid #2563eb",
-  background: "#2563eb",
+  border: "1px solid #a9631f",
+  background: "#a9631f",
   color: "white",
   cursor: "pointer",
 };
@@ -57,10 +57,10 @@ function ProgressBar({ fraction }) {
   const pct = Math.round(Math.min(1, Math.max(0, fraction)) * 100);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#e5e7eb", overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: "#2563eb", transition: "width 0.15s" }} />
+      <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#e6dac0", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: "#a9631f", transition: "width 0.15s" }} />
       </div>
-      <span style={{ color: "#6b7280", fontSize: 11, minWidth: 32, textAlign: "right" }}>{pct}%</span>
+      <span style={{ color: "#8a7a5c", fontSize: 11, minWidth: 32, textAlign: "right" }}>{pct}%</span>
     </div>
   );
 }
@@ -68,7 +68,7 @@ function ProgressBar({ fraction }) {
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
@@ -225,11 +225,11 @@ export default function WorkflowSteps({
               }
             }}
           />
-          <div style={{ color: "#6b7280" }}>여러 비행 파일을 함께 선택하면 하나로 합쳐 처리합니다.</div>
+          <div style={{ color: "#8a7a5c" }}>여러 비행 파일을 함께 선택하면 하나로 합쳐 처리합니다.</div>
           <ProgressBar fraction={droneUploadProgress} />
-          {droneFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{droneFileNames.join(", ")}</div>}
+          {droneFileNames.length > 0 && <div style={{ color: "#8a7a5c" }}>{droneFileNames.join(", ")}</div>}
           {droneSummary && (
-            <div style={{ color: "#374151" }}>
+            <div style={{ color: "#4a3d28" }}>
               포인트 수: {droneSummary.n_points}
               <br />
               시간범위: {droneSummary.time_range?.[0]} ~ {droneSummary.time_range?.[1]}
@@ -257,7 +257,7 @@ export default function WorkflowSteps({
       <details id="wf-section-base" style={sectionStyle} open>
         <summary style={summaryStyle}>2. 베이스(일변화) 자료 업로드</summary>
         <div style={bodyStyle}>
-          <label style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 8px" }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 6, background: "#faf6ec", border: "1px solid #e6dac0", borderRadius: 6, padding: "6px 8px" }}>
             <input
               type="checkbox"
               checked={dp.mode === "assume_constant"}
@@ -284,15 +284,15 @@ export default function WorkflowSteps({
               }
             }}
           />
-          <div style={{ color: "#6b7280" }}>
+          <div style={{ color: "#8a7a5c" }}>
             여러 베이스 로그 파일을 함께 선택하면 하나로 합쳐 처리합니다. 쉼표구분 CSV(오전/오후 시각) 형식과, 파일명에
             날짜(YYYYMMDD)가 포함된 "시 분 초 X Y Z F" 공백구분 1초간격 텍스트(예: cyg202607151s.txt) 형식을 모두
             자동으로 인식합니다.
           </div>
           <ProgressBar fraction={baseUploadProgress} />
-          {baseFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{baseFileNames.join(", ")}</div>}
+          {baseFileNames.length > 0 && <div style={{ color: "#8a7a5c" }}>{baseFileNames.join(", ")}</div>}
           {baseSummary && (
-            <div style={{ color: "#374151" }}>
+            <div style={{ color: "#4a3d28" }}>
               포인트 수: {baseSummary.n_points}
               <br />
               시간범위: {baseSummary.time_range?.[0]} ~ {baseSummary.time_range?.[1]}
@@ -316,7 +316,7 @@ export default function WorkflowSteps({
               {baseSummary.source?.type === "intermagnet" && (
                 <>
                   <br />
-                  <span style={{ color: "#2563eb" }}>
+                  <span style={{ color: "#a9631f" }}>
                     출처: INTERMAGNET 관측소 {baseSummary.source.station_name} ({baseSummary.source.iaga_code})
                   </span>
                 </>
@@ -324,7 +324,7 @@ export default function WorkflowSteps({
               {baseSummary.source?.type === "intermagnet_nearest" && (
                 <>
                   <br />
-                  <span style={{ color: "#2563eb" }}>
+                  <span style={{ color: "#a9631f" }}>
                     출처: 주변 INTERMAGNET 관측소 {baseSummary.source.station_name} 자료의 거리가중평균(IDW) 추정값
                   </span>
                 </>
@@ -334,7 +334,7 @@ export default function WorkflowSteps({
 
           {onUploadIaga2002 && (
             <details style={{ marginTop: 6 }}>
-              <summary style={{ cursor: "pointer", color: "#374151" }}>
+              <summary style={{ cursor: "pointer", color: "#4a3d28" }}>
                 INTERMAGNET 관측소 자료 사용 (베이스 자료 대신 - 로컬 일변화는 반영 못하지만 태양풍에 의한 지역/전지구적 변화는 반영)
               </summary>
               <IntermagnetPanel
@@ -375,7 +375,7 @@ export default function WorkflowSteps({
             </button>
           )}
           <details style={{ marginTop: 6 }}>
-            <summary style={{ cursor: "pointer", color: "#374151" }}>베이스 자료 QC 옵션 (설치/회수 노이즈 트림 · 스파이크 제거)</summary>
+            <summary style={{ cursor: "pointer", color: "#4a3d28" }}>베이스 자료 QC 옵션 (설치/회수 노이즈 트림 · 스파이크 제거)</summary>
             <div style={{ ...bodyStyle, paddingTop: 8 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <input
@@ -430,7 +430,7 @@ export default function WorkflowSteps({
                 </Field>
               )}
               {processSummary?.base_qc && (
-                <div style={{ color: "#374151" }}>
+                <div style={{ color: "#4a3d28" }}>
                   설치구간 트림: {processSummary.base_qc.n_trimmed_start}건 · 회수구간 트림: {processSummary.base_qc.n_trimmed_end}건 · 스파이크
                   제거: {processSummary.base_qc.n_spikes_removed}건
                 </div>
@@ -443,7 +443,7 @@ export default function WorkflowSteps({
       <details style={sectionStyle}>
         <summary style={summaryStyle}>2-1. 헤딩효과 캘리브레이션 비행 (선택사항)</summary>
         <div style={bodyStyle}>
-          <div style={{ color: "#6b7280" }}>
+          <div style={{ color: "#8a7a5c" }}>
             Geometrics MagArrow 등 나침반(Compass) 데이터가 있는 장비에서, 자기 경사도가 낮은(1nT/m 미만) 좁은 구역(10x10m
             내외, 가능한 한 높은 고도)을 최소 1~2바퀴 회전 후 클로버잎 또는 실제 측선과 같은 방향의 패턴으로, 실제 조사와
             비슷한 속도로 여러 자세를 스쳐 지나가며 짧게 비행한 자료입니다. 업로드하면 헤딩(자세)에 따른 판독 오차를
@@ -465,9 +465,9 @@ export default function WorkflowSteps({
             }}
           />
           <ProgressBar fraction={headingCalibrationUploadProgress} />
-          {headingCalFileNames.length > 0 && <div style={{ color: "#6b7280" }}>{headingCalFileNames.join(", ")}</div>}
+          {headingCalFileNames.length > 0 && <div style={{ color: "#8a7a5c" }}>{headingCalFileNames.join(", ")}</div>}
           {headingCalibrationSummary && (
-            <div style={{ color: "#374151" }}>
+            <div style={{ color: "#4a3d28" }}>
               포인트 수: {headingCalibrationSummary.n_points}
               <br />
               시간범위: {headingCalibrationSummary.time_range?.[0]} ~ {headingCalibrationSummary.time_range?.[1]}
@@ -525,7 +525,7 @@ export default function WorkflowSteps({
               <option value="moving_average">이동평균 (가장 단순)</option>
             </select>
           </Field>
-          <div style={{ color: "#9ca3af" }}>{FILTER_METHOD_INFO[processParams.filter_method || "butterworth"]}</div>
+          <div style={{ color: "#ab9a78" }}>{FILTER_METHOD_INFO[processParams.filter_method || "butterworth"]}</div>
 
           {(processParams.filter_method || "butterworth") === "butterworth" ? (
             <>
@@ -539,7 +539,7 @@ export default function WorkflowSteps({
                 />
               </Field>
               {droneSummary?.median_speed_mps > 0 && (
-                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, color: "#6b7280" }}>
+                <div style={{ display: "flex", alignItems: "flex-end", gap: 6, color: "#8a7a5c" }}>
                   <Field label={`평균 비행속도 ${droneSummary.median_speed_mps.toFixed(1)} m/s 기준, 보존할 최소 파장(m)`}>
                     <input
                       type="number"
@@ -552,7 +552,7 @@ export default function WorkflowSteps({
                   </Field>
                   <button
                     type="button"
-                    style={{ ...buttonStyle, background: "white", color: "#2563eb", padding: "4px 8px", whiteSpace: "nowrap" }}
+                    style={{ ...buttonStyle, background: "white", color: "#a9631f", padding: "4px 8px", whiteSpace: "nowrap" }}
                     disabled={!targetWavelengthM || targetWavelengthM <= 0}
                     onClick={() => {
                       const suggested = droneSummary.median_speed_mps / targetWavelengthM;
@@ -721,7 +721,7 @@ export default function WorkflowSteps({
               <option value="utm">UTM (국내 51N/52N)</option>
             </select>
           </Field>
-          <div style={{ color: "#9ca3af" }}>{KOREA_PROJECTION_INFO[processParams.korea_projection ?? ""]}</div>
+          <div style={{ color: "#ab9a78" }}>{KOREA_PROJECTION_INFO[processParams.korea_projection ?? ""]}</div>
 
           <Field label="좌표계 수동 지정 (EPSG 코드) — 지정 시 위 Korea Projection 선택보다 우선 적용. 예: UTM 48N = 32648">
             <input
@@ -751,7 +751,7 @@ export default function WorkflowSteps({
                   <button
                     type="button"
                     title="부호 전환 (베이스 시계가 GPS보다 빠르면 +, 느리면 -)"
-                    style={{ width: 28, padding: "3px 0", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db", background: "white", cursor: "pointer" }}
+                    style={{ width: 28, padding: "3px 0", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2", background: "white", cursor: "pointer" }}
                     onClick={() => updateDiurnal("time_offset_seconds", -total)}
                   >
                     {sign < 0 ? "−" : "+"}
@@ -833,7 +833,7 @@ export default function WorkflowSteps({
           </button>
 
           {processSummary && (
-            <div style={{ color: "#374151", marginTop: 4 }}>
+            <div style={{ color: "#4a3d28", marginTop: 4 }}>
               측선 {processSummary.n_lines}개 검출 / 유효 {processSummary.n_kept} / 자동제외 {processSummary.n_excluded_auto}
               <br />
               복각(Inclination): {processSummary.inclination_deg?.toFixed(2)}°, 편각(Declination): {processSummary.declination_deg?.toFixed(2)}°
@@ -881,7 +881,7 @@ export default function WorkflowSteps({
                 !processSummary.heading_effect_calibration?.applied &&
                 processSummary.heading_effect_calibration?.reason && (
                   <>
-                    <span style={{ color: "#9ca3af" }}>헤딩효과 캘리브레이션 보정: {processSummary.heading_effect_calibration.reason}</span>
+                    <span style={{ color: "#ab9a78" }}>헤딩효과 캘리브레이션 보정: {processSummary.heading_effect_calibration.reason}</span>
                     <br />
                   </>
                 )}
@@ -894,7 +894,7 @@ export default function WorkflowSteps({
               )}
               {processSummary.sway_detection?.enabled && processSummary.sway_detection?.available === false && (
                 <>
-                  <span style={{ color: "#9ca3af" }}>IMU 흔들림 검출: 원본 파일에 자이로/가속도 데이터 없음 (건너뜀)</span>
+                  <span style={{ color: "#ab9a78" }}>IMU 흔들림 검출: 원본 파일에 자이로/가속도 데이터 없음 (건너뜀)</span>
                   <br />
                 </>
               )}
@@ -907,7 +907,7 @@ export default function WorkflowSteps({
               )}
               {processSummary.duplicate_line_resolution?.enabled && processSummary.duplicate_line_resolution?.n_groups === 0 && (
                 <>
-                  <span style={{ color: "#9ca3af" }}>반복비행 중복 측선 자동 선택: 중복으로 판단되는 측선 없음</span>
+                  <span style={{ color: "#ab9a78" }}>반복비행 중복 측선 자동 선택: 중복으로 판단되는 측선 없음</span>
                   <br />
                 </>
               )}
@@ -1027,7 +1027,7 @@ export default function WorkflowSteps({
             />
           </Field>
           {processSummary?.line_spacing_m && (
-            <div style={{ color: "#6b7280" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
+            <div style={{ color: "#8a7a5c" }}>추정 측선 간격: {processSummary.line_spacing_m.toFixed(1)}m</div>
           )}
           <Field
             label={
@@ -1129,7 +1129,7 @@ export default function WorkflowSteps({
           </Field>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={hillshade} onChange={(e) => setHillshade(e.target.checked)} />
-            <span style={{ color: "#4b5563" }}>힐쉐이드 효과 (음영기복 - 값 변화를 입체감 있게 강조, Geosoft 스타일)</span>
+            <span style={{ color: "#6b5c42" }}>힐쉐이드 효과 (음영기복 - 값 변화를 입체감 있게 강조, Geosoft 스타일)</span>
           </label>
           {hillshade && (
             <>
@@ -1146,7 +1146,7 @@ export default function WorkflowSteps({
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={showContours} onChange={(e) => setShowContours(e.target.checked)} />
-            <span style={{ color: "#4b5563" }}>등고선(등자력선) 표시</span>
+            <span style={{ color: "#6b5c42" }}>등고선(등자력선) 표시</span>
           </label>
           {showContours && (
             <>
@@ -1170,8 +1170,8 @@ export default function WorkflowSteps({
           <button
             style={{
               ...buttonStyle,
-              background: inspectMode ? "#2563eb" : "white",
-              color: inspectMode ? "white" : "#2563eb",
+              background: inspectMode ? "#a9631f" : "white",
+              color: inspectMode ? "white" : "#a9631f",
             }}
             disabled={!overlay}
             onClick={() => onToggleInspectMode()}
@@ -1180,7 +1180,7 @@ export default function WorkflowSteps({
             {inspectMode ? "지점값 확인 중 (클릭하면 종료)" : "지점값 확인"}
           </button>
           <button
-            style={{ ...buttonStyle, background: "white", color: "#374151", border: "1px solid #d1d5db" }}
+            style={{ ...buttonStyle, background: "white", color: "#4a3d28", border: "1px solid #ddd0b2" }}
             disabled={!processSummary || confidenceLoading}
             onClick={() => onGridConfidence()}
             title="자료점으로부터의 거리(같은 그리드 빈 공간 채우기 기준)를 바탕으로, 각 셀이 실제 자료에 얼마나 가까이 구속되어 있는지(1=자료점 바로 위, 0=보간 한계 지점)를 색으로 보여줍니다. 붉은/노란 구간은 보간에 크게 의존한 값이니 해석 시 주의하세요."
@@ -1190,7 +1190,7 @@ export default function WorkflowSteps({
           {confidenceOverlay && (
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={showConfidenceOverlay} onChange={(e) => setShowConfidenceOverlay(e.target.checked)} />
-              <span style={{ color: "#4b5563" }}>지도에 신뢰도 레이어 표시 (초록=신뢰 높음, 빨강=보간 의존)</span>
+              <span style={{ color: "#6b5c42" }}>지도에 신뢰도 레이어 표시 (초록=신뢰 높음, 빨강=보간 의존)</span>
             </label>
           )}
         </div>
@@ -1228,15 +1228,15 @@ export default function WorkflowSteps({
                 disabled={transformLoading || !processSummary}
                 style={{
                   ...buttonStyle,
-                  background: activeTransform === key ? "#2563eb" : "white",
-                  color: activeTransform === key ? "white" : "#2563eb",
+                  background: activeTransform === key ? "#a9631f" : "white",
+                  color: activeTransform === key ? "white" : "#a9631f",
                 }}
               >
                 {label}
               </button>
             ))}
           </div>
-          {transformLoading && <div style={{ color: "#6b7280" }}>계산 중...</div>}
+          {transformLoading && <div style={{ color: "#8a7a5c" }}>계산 중...</div>}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input
               type="checkbox"
@@ -1315,7 +1315,7 @@ export default function WorkflowSteps({
             <span>컬러 GeoTIFF로 저장 (화면에 보이는 색상 그대로, 값 아님)</span>
           </label>
           <button
-            style={{ ...buttonStyle, background: "white", color: "#2563eb" }}
+            style={{ ...buttonStyle, background: "white", color: "#a9631f" }}
             disabled={exportingGeotiff || !processSummary}
             onClick={() => onExportGeotiff()}
           >
@@ -1323,20 +1323,20 @@ export default function WorkflowSteps({
               ? "내보내는 중..."
               : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 GeoTIFF로 저장`}
           </button>
-          <div style={{ color: "#9ca3af" }}>
+          <div style={{ color: "#ab9a78" }}>
             {exportGeotiffColored
               ? "화면에 보이는 컬러맵/힐쉐이드가 그대로 이미지로 저장됩니다 (Google Earth 등에서 바로 볼 때 적합, 값 재분석 불가)."
               : "실제 값(nT 등)이 그대로 저장되어 Oasis Montaj/QGIS/ArcGIS 등에서 다시 열 수 있습니다."}
           </div>
-          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingXyz || !processSummary} onClick={() => onExportXyz()}>
+          <button style={{ ...buttonStyle, background: "white", color: "#a9631f" }} disabled={exportingXyz || !processSummary} onClick={() => onExportXyz()}>
             {exportingXyz ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 XYZ(텍스트)로 저장`}
           </button>
-          <div style={{ color: "#9ca3af" }}>경도·위도·값 3열의 공백 구분 텍스트 파일 — GeoTIFF를 지원하지 않는 다른 프로그램에서도 열람 가능.</div>
-          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingGrd || !processSummary} onClick={() => onExportGrd()}>
+          <div style={{ color: "#ab9a78" }}>경도·위도·값 3열의 공백 구분 텍스트 파일 — GeoTIFF를 지원하지 않는 다른 프로그램에서도 열람 가능.</div>
+          <button style={{ ...buttonStyle, background: "white", color: "#a9631f" }} disabled={exportingGrd || !processSummary} onClick={() => onExportGrd()}>
             {exportingGrd ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 Surfer GRD로 저장`}
           </button>
-          <div style={{ color: "#9ca3af" }}>Surfer 6 Binary Grid(.grd, DSBB) 형식 — Golden Software Surfer에서 바로 열람 가능.</div>
-          <button style={{ ...buttonStyle, background: "white", color: "#2563eb" }} disabled={exportingPointsCsv || !processSummary} onClick={() => onExportPointsCsv()}>
+          <div style={{ color: "#ab9a78" }}>Surfer 6 Binary Grid(.grd, DSBB) 형식 — Golden Software Surfer에서 바로 열람 가능.</div>
+          <button style={{ ...buttonStyle, background: "white", color: "#a9631f" }} disabled={exportingPointsCsv || !processSummary} onClick={() => onExportPointsCsv()}>
             {exportingPointsCsv ? "내보내는 중..." : "처리된 포인트 전체를 CSV로 저장"}
           </button>
         </div>

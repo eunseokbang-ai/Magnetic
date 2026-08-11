@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "8px 10px",
   fontSize: 12,
@@ -12,13 +12,13 @@ const buttonStyle = {
   cursor: "pointer",
 };
 const tableStyle = { width: "100%", borderCollapse: "collapse", fontSize: 11 };
-const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e5e7eb", color: "#6b7280" };
-const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3f4f6", verticalAlign: "top" };
+const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e6dac0", color: "#8a7a5c" };
+const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3ecd9", verticalAlign: "top" };
 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
@@ -46,7 +46,7 @@ export default function ProspectivityPanel({ ready, params, setParams, onRun, ru
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           이 프로그램이 실제로 계산할 수 있는 레이어(ASA, THD, 구조선/접촉면 인접성, 그리고 3차원 역산을 실행했다면 천부
           감수율)만을 0~1로 정규화해 가중합산한 점수를 계산합니다. 지질도·방사능 등 이 프로그램이 취득하지 않는 외부 자료
           기반 레이어는 포함되어 있지 않습니다 — 아래 탐사목적 프리셋은 각 레이어에 대한 가중치 배분일 뿐, 발표된 광상모델을
@@ -60,11 +60,11 @@ export default function ProspectivityPanel({ ready, params, setParams, onRun, ru
           </select>
         </Field>
         {params.purpose === "custom" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px solid #f3f4f6", borderRadius: 4, padding: 8 }}>
-            <span style={{ color: "#4b5563" }}>레이어별 가중치 (자동으로 합이 1이 되도록 정규화됩니다)</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px solid #f3ecd9", borderRadius: 4, padding: 8 }}>
+            <span style={{ color: "#6b5c42" }}>레이어별 가중치 (자동으로 합이 1이 되도록 정규화됩니다)</span>
             {Object.entries(LAYER_LABELS).map(([k, label]) => (
               <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ width: 70, color: "#6b7280" }}>{label}</span>
+                <span style={{ width: 70, color: "#8a7a5c" }}>{label}</span>
                 <input
                   type="number"
                   step="0.05"
@@ -101,11 +101,11 @@ export default function ProspectivityPanel({ ready, params, setParams, onRun, ru
           {running ? "분석 중..." : "프로스펙티비티 분석 실행"}
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
-        {result && !result.available && <div style={{ color: "#9ca3af" }}>{result.reason}</div>}
+        {result && !result.available && <div style={{ color: "#ab9a78" }}>{result.reason}</div>}
         {result && result.available && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             {result.n_targets === 0 ? (
-              <div style={{ color: "#9ca3af" }}>{result.reason}</div>
+              <div style={{ color: "#ab9a78" }}>{result.reason}</div>
             ) : (
               <>사용된 레이어: {result.layers_used.map((k) => LAYER_LABELS[k]).join(", ")} — 타깃 {result.n_targets}개</>
             )}
@@ -120,7 +120,7 @@ export default function ProspectivityPanel({ ready, params, setParams, onRun, ru
               </label>
             </div>
             {result.targets && result.targets.length > 0 && (
-              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4 }}>
+              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f3ecd9", borderRadius: 4 }}>
                 <table style={tableStyle}>
                   <thead>
                     <tr>

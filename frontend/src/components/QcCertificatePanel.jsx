@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
@@ -12,20 +12,20 @@ const buttonStyle = {
   cursor: "pointer",
 };
 const tableStyle = { width: "100%", borderCollapse: "collapse", fontSize: 11 };
-const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e5e7eb", color: "#6b7280" };
-const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3f4f6", verticalAlign: "top" };
+const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e6dac0", color: "#8a7a5c" };
+const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3ecd9", verticalAlign: "top" };
 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
 }
 
 const STATUS_LABEL = { pass: "PASS", fail: "FAIL", not_evaluated: "평가 불가" };
-const STATUS_COLOR = { pass: "#15803d", fail: "#b91c1c", not_evaluated: "#9ca3af" };
+const STATUS_COLOR = { pass: "#15803d", fail: "#b91c1c", not_evaluated: "#ab9a78" };
 
 export default function QcCertificatePanel({ ready, params, setParams, onRun, running, result, error }) {
   const update = (key, val) => setParams((p) => ({ ...p, [key]: val }));
@@ -33,7 +33,7 @@ export default function QcCertificatePanel({ ready, params, setParams, onRun, ru
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           이미 계산된 노이즈 QC, 샘플링 간격 QC, 파일간 레벨 오프셋, 헤딩효과 캘리브레이션 교차검증, 반복측선 재현성, 자동 제외 비율
           지표를 아래 허용기준과 비교해 항목별 PASS/FAIL과 종합 결과를 보여줍니다. 반복측선 재현성은 "반복측선 분석"을 먼저 실행해야
           평가됩니다. 기준값은 발주처 규격/자체 품질기준에 맞게 조정하세요.
@@ -83,11 +83,11 @@ export default function QcCertificatePanel({ ready, params, setParams, onRun, ru
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         {result && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             <div style={{ fontWeight: 700, color: STATUS_COLOR[result.overall_status], marginBottom: 6 }}>
               종합 결과: {STATUS_LABEL[result.overall_status]} ({result.n_pass} PASS / {result.n_fail} FAIL / {result.n_not_evaluated} 평가 불가)
             </div>
-            <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4 }}>
+            <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #f3ecd9", borderRadius: 4 }}>
               <table style={tableStyle}>
                 <thead>
                   <tr>

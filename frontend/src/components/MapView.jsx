@@ -300,7 +300,7 @@ function ContourLayer({ contours }) {
       const idx = levelIndex.get(feat.level) ?? 0;
       const isMajor = idx % majorEvery === 0;
       const line = L.polyline(feat.path, {
-        color: isMajor ? "#374151" : "#9ca3af",
+        color: isMajor ? "#4a3d28" : "#ab9a78",
         weight: isMajor ? 1.6 : 0.8,
         opacity: 0.85,
       });
@@ -325,7 +325,7 @@ function NorthArrow() {
       div.style.borderRadius = "4px";
       div.style.boxShadow = "0 1px 4px rgba(0,0,0,0.3)";
       div.style.textAlign = "center";
-      div.style.color = "#111827";
+      div.style.color = "#2c2418";
       div.style.userSelect = "none";
       div.innerHTML = '<div style="font-size:15px;line-height:1;">▲</div><div style="font-size:10px;font-weight:600;">N</div>';
       return div;
@@ -361,7 +361,7 @@ function EulerLayer({ solutions }) {
     for (const s of points) {
       const marker = L.circleMarker([s.lat, s.lon], {
         radius: 5,
-        color: "#111827",
+        color: "#2c2418",
         weight: 1,
         fillColor: colorScale(s.depth_m),
         fillOpacity: 0.85,
@@ -402,7 +402,7 @@ function MultiscaleEdgeLayer({ points }) {
     for (const p of list) {
       const marker = L.circleMarker([p.lat, p.lon], {
         radius: 3,
-        color: "#111827",
+        color: "#2c2418",
         weight: 0.5,
         fillColor: colorScale(p.height_m),
         fillOpacity: 0.85,
@@ -437,7 +437,7 @@ function TargetDetectionLayer({ targets }) {
       const radius = 6 + 3 * Math.log10(Math.max(t.moment_am2, 0.01) + 1);
       const marker = L.circleMarker([t.lat, t.lon], {
         radius,
-        color: "#111827",
+        color: "#2c2418",
         weight: 2,
         dashArray: "3,2",
         fillColor: "#dc2626",
@@ -495,7 +495,7 @@ function StructureCandidateLayer({ result, selectedPolygonIndices, selectedAnoma
       const color = a.matched_structure ? "#0f766e" : "#b45309";
       const marker = L.circleMarker([a.lat, a.lon], {
         radius: selected ? 8 : 6,
-        color: selected ? "#111827" : color,
+        color: selected ? "#2c2418" : color,
         weight: selected ? 2 : 1,
         fillColor: color,
         fillOpacity: 0.7,
@@ -638,7 +638,7 @@ function ProspectivityTargetLayer({ targets }) {
     (targets || []).forEach((t) => {
       const marker = L.circleMarker([t.lat, t.lon], {
         radius: 8,
-        color: "#111827",
+        color: "#2c2418",
         weight: 2,
         fillColor: "#f97316",
         fillOpacity: 0.3 + 0.6 * t.score,
@@ -724,16 +724,16 @@ function InspectLayer({ active, points, onPointClick }) {
         className: "inspect-value-label",
         html:
           `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(-50%,-100%);">` +
-          `<div style="background:${hasValue ? "#111827" : "#6b7280"};color:white;font-size:11px;font-weight:700;` +
+          `<div style="background:${hasValue ? "#2c2418" : "#8a7a5c"};color:white;font-size:11px;font-weight:700;` +
           `padding:2px 6px;border-radius:4px;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,0.4);">${text}</div>` +
           `<div style="width:0;height:0;border-left:4px solid transparent;border-right:4px solid transparent;` +
-          `border-top:5px solid ${hasValue ? "#111827" : "#6b7280"};"></div>` +
+          `border-top:5px solid ${hasValue ? "#2c2418" : "#8a7a5c"};"></div>` +
           `</div>`,
         iconSize: [0, 0],
       });
       group.addLayer(L.marker([p.lat, p.lon], { icon, interactive: false }));
       group.addLayer(
-        L.circleMarker([p.lat, p.lon], { radius: 3, color: "#111827", weight: 1, fillColor: "#f59e0b", fillOpacity: 1 })
+        L.circleMarker([p.lat, p.lon], { radius: 3, color: "#2c2418", weight: 1, fillColor: "#f59e0b", fillOpacity: 1 })
       );
     }
   }, [points]);
@@ -924,7 +924,7 @@ export default function MapView({
       {detectedTargets && <TargetDetectionLayer targets={detectedTargets} />}
       {multiscaleEdgePoints && <MultiscaleEdgeLayer points={multiscaleEdgePoints} />}
       {lineaments && <LineamentLayer lineaments={lineaments} />}
-      {tiltDepthPoints && <DepthEstimationLayer points={tiltDepthPoints} color="#1d4ed8" />}
+      {tiltDepthPoints && <DepthEstimationLayer points={tiltDepthPoints} color="#8a4f18" />}
       {analyticSignalDepthPoints && <DepthEstimationLayer points={analyticSignalDepthPoints} color="#7c3aed" />}
       {contacts && <ContactLayer contacts={contacts} />}
       {prospectivityOverlay &&

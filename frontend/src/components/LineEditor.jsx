@@ -32,7 +32,7 @@ export default function LineEditor({
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
 
   if (!lines || lines.length === 0) {
-    return <div style={{ fontSize: 12, color: "#9ca3af" }}>자료 처리를 먼저 실행하세요.</div>;
+    return <div style={{ fontSize: 12, color: "#ab9a78" }}>자료 처리를 먼저 실행하세요.</div>;
   }
 
   const handleToggle = (lineId, checked) => {
@@ -45,7 +45,7 @@ export default function LineEditor({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontSize: 12, color: "#374151" }}>
+      <div style={{ fontSize: 12, color: "#4a3d28" }}>
         측선 체크를 해제하면 지도/그리딩에서 제외됩니다. 수동 포함: <b>{nManualIncluded ?? 0}</b> / 수동 제외: <b>{nManualExcluded ?? 0}</b>
       </div>
 
@@ -64,7 +64,7 @@ export default function LineEditor({
         </label>
       )}
 
-      <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+      <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #e6dac0", borderRadius: 6 }}>
         {lines.map((l) => (
           <label
             key={l.line_id}
@@ -74,7 +74,7 @@ export default function LineEditor({
               gap: 8,
               padding: "4px 8px",
               fontSize: 12,
-              borderBottom: "1px solid #f3f4f6",
+              borderBottom: "1px solid #f3ecd9",
             }}
           >
             <input
@@ -100,7 +100,7 @@ export default function LineEditor({
                 </span>
               )}
             </span>
-            <span style={{ color: "#6b7280" }}>
+            <span style={{ color: "#8a7a5c" }}>
               {l.n_points}pt / {l.length_m.toFixed(0)}m
               {l.heading_shift_nt != null && ` / ${l.heading_shift_nt >= 0 ? "+" : ""}${l.heading_shift_nt.toFixed(1)}nT`}
             </span>
@@ -122,7 +122,7 @@ export default function LineEditor({
         ))}
       </div>
 
-      <div style={{ fontSize: 12, color: "#374151" }}>
+      <div style={{ fontSize: 12, color: "#4a3d28" }}>
         지도에서 영역을 그려 아래 모드대로 처리합니다 (자동 제외된 흔들림 구간도 회색 점으로 표시되니 그 위에 영역을 그리면 됩니다).
       </div>
       <div style={{ display: "flex", gap: 6 }}>
@@ -133,9 +133,9 @@ export default function LineEditor({
             padding: "6px 8px",
             fontSize: 12,
             borderRadius: 6,
-            border: drawAction === "exclude" ? "1px solid #dc2626" : "1px solid #d1d5db",
+            border: drawAction === "exclude" ? "1px solid #dc2626" : "1px solid #ddd0b2",
             background: drawAction === "exclude" ? "#fef2f2" : "white",
-            color: drawAction === "exclude" ? "#dc2626" : "#374151",
+            color: drawAction === "exclude" ? "#dc2626" : "#4a3d28",
             cursor: "pointer",
           }}
         >
@@ -148,9 +148,9 @@ export default function LineEditor({
             padding: "6px 8px",
             fontSize: 12,
             borderRadius: 6,
-            border: drawAction === "include" ? "1px solid #16a34a" : "1px solid #d1d5db",
+            border: drawAction === "include" ? "1px solid #16a34a" : "1px solid #ddd0b2",
             background: drawAction === "include" ? "#f0fdf4" : "white",
-            color: drawAction === "include" ? "#16a34a" : "#374151",
+            color: drawAction === "include" ? "#16a34a" : "#4a3d28",
             cursor: "pointer",
           }}
         >
@@ -163,9 +163,9 @@ export default function LineEditor({
           padding: "6px 10px",
           fontSize: 12,
           borderRadius: 6,
-          border: drawMode ? "1px solid #2563eb" : "1px solid #d1d5db",
-          background: drawMode ? "#eff6ff" : "white",
-          color: drawMode ? "#2563eb" : "#374151",
+          border: drawMode ? "1px solid #a9631f" : "1px solid #ddd0b2",
+          background: drawMode ? "#faf0e2" : "white",
+          color: drawMode ? "#a9631f" : "#4a3d28",
           cursor: "pointer",
         }}
       >
@@ -173,15 +173,15 @@ export default function LineEditor({
       </button>
       <button
         onClick={onResetManual}
-        style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "white", cursor: "pointer" }}
+        style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #ddd0b2", background: "white", cursor: "pointer" }}
       >
         수동 편집 모두 되돌리기 (완전 자동으로)
       </button>
 
       {onToggleSmoothDrawMode && (
         <>
-          <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "4px 0" }} />
-          <div style={{ fontSize: 12, color: "#374151" }}>
+          <hr style={{ border: "none", borderTop: "1px solid #e6dac0", margin: "4px 0" }} />
+          <div style={{ fontSize: 12, color: "#4a3d28" }}>
             지상 구조물(집, 건물 등)로 인한 자력값 왜곡을 지도에서 직접 제거합니다. 위 "12. 참조 레이어"에 드론
             정사영상(orthophoto)을 GeoTIFF로 올려두면 구조물 위치를 눈으로 확인하며 그 위에 영역을 그릴 수 있습니다.
             선택한 영역의 이상/TMI 값이 주변 값으로 보간되어 왜곡이 제거됩니다.
@@ -193,9 +193,9 @@ export default function LineEditor({
               padding: "6px 10px",
               fontSize: 12,
               borderRadius: 6,
-              border: smoothDrawMode ? "1px solid #16a34a" : "1px solid #d1d5db",
+              border: smoothDrawMode ? "1px solid #16a34a" : "1px solid #ddd0b2",
               background: smoothDrawMode ? "#f0fdf4" : "white",
-              color: smoothDrawMode ? "#16a34a" : "#374151",
+              color: smoothDrawMode ? "#16a34a" : "#4a3d28",
               cursor: "pointer",
               opacity: smoothing ? 0.6 : 1,
             }}
@@ -204,7 +204,7 @@ export default function LineEditor({
           </button>
           {(onUndoSmoothing || onResetAllSmoothing) && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-              <span style={{ color: "#6b7280" }}>
+              <span style={{ color: "#8a7a5c" }}>
                 {nSmoothedActions > 0 ? `스무딩 적용 ${nSmoothedActions}회` : "적용된 스무딩 없음"}
               </span>
               <button
@@ -215,7 +215,7 @@ export default function LineEditor({
                   padding: "4px 8px",
                   fontSize: 12,
                   borderRadius: 6,
-                  border: "1px solid #d1d5db",
+                  border: "1px solid #ddd0b2",
                   background: "white",
                   cursor: nSmoothedActions ? "pointer" : "default",
                   opacity: nSmoothedActions && !smoothing ? 1 : 0.5,
@@ -231,7 +231,7 @@ export default function LineEditor({
                   padding: "4px 8px",
                   fontSize: 12,
                   borderRadius: 6,
-                  border: "1px solid #d1d5db",
+                  border: "1px solid #ddd0b2",
                   background: "white",
                   cursor: nSmoothedActions ? "pointer" : "default",
                   opacity: nSmoothedActions && !smoothing ? 1 : 0.5,
@@ -247,13 +247,13 @@ export default function LineEditor({
 
       {onOpenFlightPathEditor && (
         <>
-          <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "4px 0" }} />
-          <div style={{ fontSize: 12, color: "#374151" }}>
+          <hr style={{ border: "none", borderTop: "1px solid #e6dac0", margin: "4px 0" }} />
+          <div style={{ fontSize: 12, color: "#4a3d28" }}>
             비행 경로를 투영 좌표(미터) 평면에서 확대해 보며 자르기/복원할 수 있는 전용 편집기입니다 (DroneMagAdv 방식).
           </div>
           <button
             onClick={onOpenFlightPathEditor}
-            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #2563eb", background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}
+            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #a9631f", background: "#faf0e2", color: "#a9631f", cursor: "pointer" }}
           >
             비행 경로 편집기 열기
           </button>
@@ -265,11 +265,11 @@ export default function LineEditor({
           <button
             onClick={onExportBln}
             disabled={exportingBln || !canExportBln}
-            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #d1d5db", background: "white", color: "#374151", cursor: "pointer" }}
+            style={{ padding: "6px 10px", fontSize: 12, borderRadius: 6, border: "1px solid #ddd0b2", background: "white", color: "#4a3d28", cursor: "pointer" }}
           >
             {exportingBln ? "저장 중..." : "마지막으로 그린 영역을 BLN(Surfer Blanking)으로 저장"}
           </button>
-          {!canExportBln && <div style={{ fontSize: 11, color: "#9ca3af" }}>먼저 위 "지도에서 영역 그리기"로 폴리곤/사각형을 그리세요.</div>}
+          {!canExportBln && <div style={{ fontSize: 11, color: "#ab9a78" }}>먼저 위 "지도에서 영역 그리기"로 폴리곤/사각형을 그리세요.</div>}
         </>
       )}
     </div>

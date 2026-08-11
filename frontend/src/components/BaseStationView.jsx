@@ -49,7 +49,7 @@ export default function BaseStationView({ data, onClose }) {
         bottom: 16,
         left: 16,
         background: "white",
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
         borderRadius: 8,
         boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         zIndex: 1000,
@@ -57,7 +57,7 @@ export default function BaseStationView({ data, onClose }) {
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e6dac0" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>베이스(일변화) 자료 - 원본 vs 보정</div>
         <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14 }}>
           ✕ 닫기
@@ -66,34 +66,34 @@ export default function BaseStationView({ data, onClose }) {
       <div style={{ flex: 1, padding: 16, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", overflow: "auto" }}>
         <div style={{ width: "100%", maxWidth: width, display: "flex", alignItems: "center", gap: 16, marginBottom: 6, fontSize: 12 }}>
           <span style={{ color: "#f59e0b" }}>━━ 원본 (설치/회수 노이즈 포함)</span>
-          {hasCorrected && <span style={{ color: "#2563eb" }}>━━ 보정 후 (트림 + 스파이크 제거)</span>}
+          {hasCorrected && <span style={{ color: "#a9631f" }}>━━ 보정 후 (트림 + 스파이크 제거)</span>}
         </div>
         <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "auto", maxHeight: "65vh", background: "white" }}>
-          <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#9ca3af" strokeWidth="1" />
-          <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="#9ca3af" strokeWidth="1" />
-          <text x={padding.left - 6} y={yScale(y1) + 4} fontSize="11" textAnchor="end" fill="#6b7280">
+          <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="#ab9a78" strokeWidth="1" />
+          <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="#ab9a78" strokeWidth="1" />
+          <text x={padding.left - 6} y={yScale(y1) + 4} fontSize="11" textAnchor="end" fill="#8a7a5c">
             {y1.toFixed(1)}
           </text>
-          <text x={padding.left - 6} y={yScale(y0) + 4} fontSize="11" textAnchor="end" fill="#6b7280">
+          <text x={padding.left - 6} y={yScale(y0) + 4} fontSize="11" textAnchor="end" fill="#8a7a5c">
             {y0.toFixed(1)}
           </text>
-          <text x={padding.left} y={height - padding.bottom + 18} fontSize="11" fill="#6b7280">
+          <text x={padding.left} y={height - padding.bottom + 18} fontSize="11" fill="#8a7a5c">
             0s
           </text>
-          <text x={width - padding.right} y={height - padding.bottom + 18} fontSize="11" textAnchor="end" fill="#6b7280">
+          <text x={width - padding.right} y={height - padding.bottom + 18} fontSize="11" textAnchor="end" fill="#8a7a5c">
             {fmtSeconds(xMax)}
           </text>
           <path d={rawPathD} fill="none" stroke="#f59e0b" strokeWidth="1" opacity={0.85} />
-          {hasCorrected && <path d={correctedPathD} fill="none" stroke="#2563eb" strokeWidth="1.5" />}
+          {hasCorrected && <path d={correctedPathD} fill="none" stroke="#a9631f" strokeWidth="1.5" />}
         </svg>
-        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 8, display: "flex", gap: 20, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: "#8a7a5c", marginTop: 8, display: "flex", gap: 20, flexWrap: "wrap" }}>
           <span>
             원본 nT: {yMinRaw.toFixed(1)} ~ {yMaxRaw.toFixed(1)} ({raw_mag.length}포인트)
           </span>
           {hasCorrected && <span>보정 후: {corrected_mag.length}포인트</span>}
         </div>
         {qc_info && (
-          <div style={{ marginTop: 10, fontSize: 12, color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "8px 12px" }}>
+          <div style={{ marginTop: 10, fontSize: 12, color: "#4a3d28", background: "#faf6ec", border: "1px solid #e6dac0", borderRadius: 6, padding: "8px 12px" }}>
             설치구간 트림: <b>{qc_info.n_trimmed_start}</b>건 · 회수구간 트림: <b>{qc_info.n_trimmed_end}</b>건 · 중간 스파이크 제거: <b>{qc_info.n_spikes_removed}</b>건
           </div>
         )}

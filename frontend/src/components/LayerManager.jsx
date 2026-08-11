@@ -1,13 +1,13 @@
 import { useState } from "react";
 
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "6px 10px",
   fontSize: 12,
   borderRadius: 6,
-  border: "1px solid #2563eb",
+  border: "1px solid #a9631f",
   background: "white",
-  color: "#2563eb",
+  color: "#a9631f",
   cursor: "pointer",
 };
 
@@ -48,7 +48,7 @@ export default function LayerManager({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontSize: 12, color: "#374151" }}>
+      <div style={{ fontSize: 12, color: "#4a3d28" }}>
         좌표계가 내장된 GeoTIFF(지질도 등)를 업로드하면 배경지도 위에 겹쳐 표시됩니다. 목록 아래쪽이 위 레이어입니다.
       </div>
       <input
@@ -64,12 +64,12 @@ export default function LayerManager({
           e.target.value = "";
         }}
       />
-      {fileName && uploading && <div style={{ fontSize: 12, color: "#6b7280" }}>{fileName} 업로드/렌더링 중...</div>}
+      {fileName && uploading && <div style={{ fontSize: 12, color: "#8a7a5c" }}>{fileName} 업로드/렌더링 중...</div>}
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
 
       {onRegisterTileFolder && (
-        <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ fontSize: 12, color: "#374151" }}>
+        <div style={{ borderTop: "1px solid #e6dac0", paddingTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ fontSize: 12, color: "#4a3d28" }}>
             <b>대용량 정사영상 (수십 GB급)</b>은 직접 업로드하면 렌더링이 매우 오래 걸립니다. 대신 QGIS의 "래스터 → 타일
             생성(XYZ)" 또는 GDAL의 <code>gdal2tiles.py</code>로 미리 타일링한 폴더(0, 1, 2... 확대단계 숫자 이름의
             하위 폴더 구조)를 아래에 경로로 지정하면, 업로드 없이 그 폴더를 직접 읽어 즉시 배경 레이어로 표시합니다
@@ -126,11 +126,11 @@ export default function LayerManager({
       )}
 
       {layers.length === 0 ? (
-        <div style={{ fontSize: 12, color: "#9ca3af" }}>추가된 레이어가 없습니다.</div>
+        <div style={{ fontSize: 12, color: "#ab9a78" }}>추가된 레이어가 없습니다.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {layers.map((l, idx) => (
-            <div key={l.id} style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 6, fontSize: 12 }}>
+            <div key={l.id} style={{ border: "1px solid #e6dac0", borderRadius: 6, padding: 6, fontSize: 12 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
                 <input type="checkbox" checked={l.visible} onChange={(e) => onToggleVisible(l.id, e.target.checked)} />
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.name}>
@@ -157,7 +157,7 @@ export default function LayerManager({
                 </button>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ color: "#6b7280" }}>불투명도</span>
+                <span style={{ color: "#8a7a5c" }}>불투명도</span>
                 <input
                   type="range"
                   min="0"
@@ -167,7 +167,7 @@ export default function LayerManager({
                   onChange={(e) => onSetOpacity(l.id, parseFloat(e.target.value))}
                   style={{ flex: 1 }}
                 />
-                <span style={{ color: "#6b7280", width: 32, textAlign: "right" }}>{Math.round(l.opacity * 100)}%</span>
+                <span style={{ color: "#8a7a5c", width: 32, textAlign: "right" }}>{Math.round(l.opacity * 100)}%</span>
               </div>
             </div>
           ))}
