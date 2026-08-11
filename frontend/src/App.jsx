@@ -337,6 +337,28 @@ export default function App() {
   const [sectionProfile, setSectionProfile] = useState("custom");
   const [sectionPositionFrac, setSectionPositionFrac] = useState(0.5);
   const [sectionDrawMode, setSectionDrawMode] = useState(false);
+
+  // MapView mounts up to three independent Leaflet-draw DrawControl
+  // instances that can each be "enabled" - one shared by
+  // drawMode/sectionDrawMode/smoothDrawMode/geologyDrawMode (mux'd into a
+  // single `enabled` prop, see the drawMode= line below), one for
+  // measureMode, one for boundaryMode. Each of those six toggle handlers
+  // used to only clear whichever subset of the others its own author
+  // happened to think of at the time, so two (or more) could end up
+  // enabled together - either two real DrawControls both firing off a
+  // single Leaflet-draw CREATED event, or (within the mux'd group) the
+  // wrong one of sectionDrawMode/smoothDrawMode/geologyDrawMode/drawMode
+  // winning handleMapShapeDrawn's if/else priority order. Routing every
+  // toggle through this one helper first guarantees at most one mode is
+  // ever active at a time.
+  const exitAllDrawModes = () => {
+    setDrawMode(false);
+    setSectionDrawMode(false);
+    setSmoothDrawMode(false);
+    setGeologyDrawMode(false);
+    setMeasureMode(null);
+    setBoundaryMode(false);
+  };
   const [sectionThreshold, setSectionThreshold] = useState("");
   const [sectionThresholdMax, setSectionThresholdMax] = useState("");
   const [sectionResult, setSectionResult] = useState(null);
@@ -871,7 +893,11 @@ export default function App() {
     }
   }, [processSummary]);
 
-  const handleToggleBoundaryMode = () => setBoundaryMode((v) => !v);
+  const handleToggleBoundaryMode = () => {
+    const next = !boundaryMode;
+    exitAllDrawModes();
+    if (next) setBoundaryMode(true);
+  };
 
   // Re-request whichever overlay (plain grid or an active derived
   // transform) is currently shown, so a boundary draw/clear is reflected
@@ -1711,8 +1737,9 @@ export default function App() {
   };
 
   const handleToggleSectionDrawMode = () => {
-    setMeasureMode(null);
-    setSectionDrawMode((v) => !v);
+    const next = !sectionDrawMode;
+    exitAllDrawModes();
+    if (next) setSectionDrawMode(true);
   };
 
   const handleSectionPathDrawn = async (latlngCoords) => {
@@ -1785,11 +1812,9 @@ export default function App() {
   };
 
   const handleToggleGeologyDrawMode = () => {
-    setMeasureMode(null);
-    setDrawMode(false);
-    setSmoothDrawMode(false);
-    setSectionDrawMode(false);
-    setGeologyDrawMode((v) => !v);
+    const next = !geologyDrawMode;
+    exitAllDrawModes();
+    if (next) setGeologyDrawMode(true);
   };
 
   const handleGeologyPolygonDrawn = async (latlngCoords) => {
@@ -1832,11 +1857,9 @@ export default function App() {
   // 동시에 켜져 있으면 지도 위에 두 개의 그리기 컨트롤이 겹쳐 혼란스러우므로
   // 서로 배타적으로 켭니다.
   const toggleMeasureMode = (mode) => {
-    setMeasureMode((current) => (current === mode ? null : mode));
-    setDrawMode(false);
-    setSmoothDrawMode(false);
-    setSectionDrawMode(false);
-    setGeologyDrawMode(false);
+    const next = measureMode === mode ? null : mode;
+    exitAllDrawModes();
+    if (next) setMeasureMode(next);
   };
 
   const handleMeasureShapeDrawn = (coords) => {
@@ -2391,15 +2414,15 @@ export default function App() {
           drawAction={drawAction}
           onSetDrawAction={setDrawAction}
           onToggleDrawMode={() => {
-            setSmoothDrawMode(false);
-            setMeasureMode(null);
-            setDrawMode((v) => !v);
+            const next = !drawMode;
+            exitAllDrawModes();
+            if (next) setDrawMode(true);
           }}
           smoothDrawMode={smoothDrawMode}
           onToggleSmoothDrawMode={() => {
-            setDrawMode(false);
-            setMeasureMode(null);
-            setSmoothDrawMode((v) => !v);
+            const next = !smoothDrawMode;
+            exitAllDrawModes();
+            if (next) setSmoothDrawMode(true);
           }}
           smoothing={smoothing}
           nSmoothedActions={smoothHistory.length}

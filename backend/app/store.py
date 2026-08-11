@@ -837,6 +837,22 @@ class Project:
         igrf_total = compute_igrf_total_field(
             df["lat"].to_numpy(), df["lon"].to_numpy(), df["altitude_ellipsoidal_m"].to_numpy(), df["timestamp"]
         )
+        if not np.isfinite(igrf_total).any():
+            # compute_igrf_total_field leaves a row NaN whenever its
+            # lat/lon/altitude is non-finite (see igrf.py) - if EVERY row
+            # is NaN, the whole survey's altitude is unusable (e.g. the
+            # SENSYS MagDrone R3 ASC format, which always reports
+            # altitude_msl_m as NaN - see io_/drone_loader.py). Before this
+            # check, that used to surface only much further downstream as
+            # an opaque "그리딩을 위한 유효 포인트가 부족합니다" or a
+            # silently blank map, with nothing pointing back at altitude as
+            # the actual cause - raise here instead, where the cause is
+            # still known.
+            raise ProjectError(
+                "고도 자료가 없어 IGRF(지구자기장) 보정을 계산할 수 없습니다 - 업로드한 파일 형식이 "
+                "고도 정보를 제공하지 않는 것으로 보입니다. GPS 고도가 포함된 형식의 자료를 사용하거나, "
+                "고도 열이 올바르게 인식되었는지 확인하세요."
+            )
         df["igrf_total"] = igrf_total
         df["anomaly"] = df["mag_diurnal_corrected"] - igrf_total
         df["tmi"] = df["mag_diurnal_corrected"]
