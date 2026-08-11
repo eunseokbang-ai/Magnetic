@@ -500,13 +500,16 @@ def _nearest_axis_index(axis_1d: np.ndarray, values: np.ndarray) -> np.ndarray:
     return np.where((values - left) <= (right - values), idx - 1, idx)
 
 
-def _grid_boxing(
+def _block_average_to_grid(
     x_r: np.ndarray, y_r: np.ndarray, values_r: np.ndarray, easting_2d: np.ndarray, northing_2d: np.ndarray
-) -> np.ndarray:
-    """"Boxing" gridding (see grid_points docstring): each cell gets the
-    plain average of whichever already block-reduced points snap to it -
-    no interpolation into empty cells at all, unlike every other method
-    here."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Snaps each (already block-reduced) data point to its nearest grid
+    node and plain-averages whatever lands on each node - shared by
+    _grid_boxing (which uses this result directly, leaving unconstrained
+    cells NaN) and _grid_minimum_curvature (which instead relaxes the
+    unconstrained cells to minimum curvature around these same
+    constraints). Returns (mask of cells with >=1 point, averaged value at
+    those cells - 0 elsewhere)."""
     ny, nx = easting_2d.shape
     easting_1d, northing_1d = easting_2d[0, :], northing_2d[:, 0]
     col_idx = _nearest_axis_index(easting_1d, x_r)
@@ -517,9 +520,22 @@ def _grid_boxing(
     np.add.at(sum_grid, (row_idx, col_idx), values_r)
     np.add.at(count_grid, (row_idx, col_idx), 1)
 
-    out = np.full((ny, nx), np.nan)
     mask = count_grid > 0
-    out[mask] = sum_grid[mask] / count_grid[mask]
+    averaged = np.zeros((ny, nx))
+    averaged[mask] = sum_grid[mask] / count_grid[mask]
+    return mask, averaged
+
+
+def _grid_boxing(
+    x_r: np.ndarray, y_r: np.ndarray, values_r: np.ndarray, easting_2d: np.ndarray, northing_2d: np.ndarray
+) -> np.ndarray:
+    """"Boxing" gridding (see grid_points docstring): each cell gets the
+    plain average of whichever already block-reduced points snap to it -
+    no interpolation into empty cells at all, unlike every other method
+    here."""
+    mask, averaged = _block_average_to_grid(x_r, y_r, values_r, easting_2d, northing_2d)
+    out = np.full(easting_2d.shape, np.nan)
+    out[mask] = averaged[mask]
     return out
 
 
@@ -710,18 +726,5 @@ def _grid_minimum_curvature(
     node as a hard constraint, then relax the rest of the grid to minimum
     curvature around those constraints (via a coarse-to-fine multilevel
     warm start for large grids - see _minimum_curvature_multilevel)."""
-    ny, nx = easting_2d.shape
-    easting_1d, northing_1d = easting_2d[0, :], northing_2d[:, 0]
-    col_idx = _nearest_axis_index(easting_1d, x_r)
-    row_idx = _nearest_axis_index(northing_1d, y_r)
-
-    sum_grid = np.zeros((ny, nx))
-    count_grid = np.zeros((ny, nx))
-    np.add.at(sum_grid, (row_idx, col_idx), values_r)
-    np.add.at(count_grid, (row_idx, col_idx), 1)
-
-    constrained_mask = count_grid > 0
-    constrained_values = np.zeros((ny, nx))
-    constrained_values[constrained_mask] = sum_grid[constrained_mask] / count_grid[constrained_mask]
-
-    return _minimum_curvature_multilevel((ny, nx), constrained_mask, constrained_values)
+    constrained_mask, constrained_values = _block_average_to_grid(x_r, y_r, values_r, easting_2d, northing_2d)
+    return _minimum_curvature_multilevel(easting_2d.shape, constrained_mask, constrained_values)

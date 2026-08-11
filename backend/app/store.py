@@ -921,7 +921,13 @@ class Project:
         # offset would actually be suspicious" - scale-appropriate for
         # this survey's own noise level rather than a fixed nT threshold.
         diffs = kept.groupby("source_file_index")["anomaly"].apply(lambda s: np.diff(s.to_numpy()))
-        all_diffs = np.concatenate([d for d in diffs if len(d)]) if len(diffs) else np.array([])
+        nonempty_diffs = [d for d in diffs if len(d)]
+        # Guard on the filtered list, not on len(diffs) - a file whose group
+        # has exactly one point contributes a length-0 diff array, so a
+        # groupby result with several such single-point files would have
+        # len(diffs) > 0 while every entry is empty, and np.concatenate([])
+        # raises ValueError ("need at least one array to concatenate").
+        all_diffs = np.concatenate(nonempty_diffs) if nonempty_diffs else np.array([])
         noise_std = float(1.4826 * np.median(np.abs(all_diffs - np.median(all_diffs)))) if all_diffs.size else 0.0
         flag_threshold_nt = max(3.0 * noise_std, 1.0)
 
@@ -1402,7 +1408,16 @@ class Project:
         # processing.gridding._along_line_lowpass.
         resolved_wavelength = along_line_smooth_wavelength_m if along_line_smooth_wavelength_m is not None else self.line_spacing_m
         effective_wavelength = resolved_wavelength if along_line_smooth else None
-        key = (value, cell_size_m, method, resolved_max_distance, effective_wavelength)
+        # Both the raw max_distance_m (None vs an explicit float that
+        # happens to equal what auto-resolution would have produced) and
+        # resolved_max_distance are needed here: grid_points is called
+        # below with the raw value and picks a genuinely different masking
+        # algorithm depending on whether it's None (per-cell adaptive
+        # local-line-gap threshold) or an explicit float (one uniform
+        # project-wide threshold) - keying on resolved_max_distance alone
+        # would let an explicit call collide with an auto call that
+        # resolves to the same number and incorrectly reuse its result.
+        key = (value, cell_size_m, method, max_distance_m, resolved_max_distance, effective_wavelength)
         if key in self.grid_cache:
             return self.grid_cache[key]
         if self.processed is None:

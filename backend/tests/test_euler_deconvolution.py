@@ -149,6 +149,38 @@ def test_euler_altitude_grid_omitted_is_unchanged():
     assert abs(np.median(depths) - z0_true) < 0.25 * z0_true
 
 
+def test_euler_flight_agl_without_altitude_grid_labels_ground_surface():
+    """flight_agl_m shifts depth_m (via agl_offset) whether or not
+    altitude_grid is given - the flat z=0 plane already represents flight
+    altitude (see module docstring), so subtracting AGL from it produces a
+    ground-referenced depth just like the altitude_grid case does. The
+    depth_reference label must track that (say "ground_surface"), not stay
+    "flat_datum" just because altitude_grid was omitted - a caller reading
+    the label alone would otherwise think these depths were still measured
+    from the flight surface when they've actually already been shifted to
+    below-ground."""
+    x0_true, y0_true, z0_true = 500.0, 300.0, 80.0
+    B_true, k_true, N = 50000.0, 5.0e7, 3.0
+    agl_m = 20.0
+
+    cell = 10.0
+    easting = np.arange(0.0, 1000.0 + cell, cell)
+    northing = np.arange(0.0, 600.0 + cell, cell)
+    X, Y = np.meshgrid(easting, northing)
+    R = np.sqrt((X - x0_true) ** 2 + (Y - y0_true) ** 2 + z0_true**2)
+    T = B_true + k_true / R**N
+
+    solutions = run_euler_deconvolution(
+        T, easting, northing, cell, UTM_EPSG,
+        structural_index=N, window_size_m=150.0, max_depth_uncertainty_pct=50.0,
+        flight_agl_m=agl_m,
+    )
+    assert len(solutions) > 0
+    assert all(s.depth_reference == "ground_surface" for s in solutions)
+    depths = np.array([s.depth_m for s in solutions])
+    assert abs(np.median(depths) - (z0_true - agl_m)) < 0.25 * z0_true
+
+
 def test_euler_ignores_a_data_gap_instead_of_reading_a_fake_source_there():
     """Regression test: run_euler_deconvolution used to fill NaN gaps with
     the grid's global mean before differencing, so any cell immediately

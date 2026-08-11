@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import pathlib
 import subprocess
 from datetime import date, timedelta
@@ -54,6 +55,8 @@ from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .store import ProjectError, store
 
 register_custom_colormaps()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="드론 자력탐사 자료 처리 API")
 
@@ -151,8 +154,18 @@ async def value_error_handler(request, exc: ValueError):
     # specific *Error types above - without this, FastAPI has no handler
     # for a bare ValueError and it surfaces as an opaque 500, hiding the
     # actual (often quite actionable) Korean message the exception carries.
+    #
+    # Because this is a blanket catch on the bare ValueError type, it also
+    # swallows any *unintentional* ValueError a real bug happens to raise
+    # (e.g. from a numpy/pandas call deep in processing/* that was never
+    # meant to be user-facing) - those get the same "it's your fault, fix
+    # your request" 400 treatment as a deliberate validation message,
+    # which would hide a real bug from both the user and, without this log
+    # line, from the server's own logs too (exc_info=True keeps the
+    # traceback, which the 400 response body deliberately does not).
     from fastapi.responses import JSONResponse
 
+    logger.warning("ValueError surfaced as 400: %s", exc, exc_info=True)
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 

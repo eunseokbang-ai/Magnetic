@@ -316,9 +316,11 @@ def _select_regularization_strength(
         # closest achievable regularization strength.
         return float(grid[i_min])
 
-    if i_min == len(grid) - 1 or misfits[i_min] >= target_rms_nt:
-        # Minimum sits at (or past) the top of the grid, or already meets
-        # the target - nothing to bisect, just use it.
+    if i_min == len(grid) - 1:
+        # Minimum sits at the top of the grid - nothing above it to bisect
+        # against, just use it (misfits[i_min] <= target_rms_nt is already
+        # guaranteed here by the `> target_rms_nt` check above, so that
+        # condition doesn't need to be tested again).
         return float(grid[i_min])
 
     lo, hi = float(grid[i_min]), float(grid[-1])
@@ -867,63 +869,71 @@ def render_section_png(
     dist_max = float(distance_m[-1]) if len(distance_m) else 1.0
     z_lo, z_hi = float(z_centers[-1]), float(z_centers[0])  # ascending: deepest -> shallowest
 
-    fig = Figure(figsize=(11.0, 6.5), dpi=110)
-    FigureCanvasAgg(fig)
-    fig.set_facecolor("white")
-    matplotlib.rcParams["font.family"] = "NanumGothic"  # Hangul labels need a CJK-capable font
-    matplotlib.rcParams["axes.unicode_minus"] = False  # NanumGothic lacks the U+2212 minus glyph
-    ax = fig.add_axes([0.09, 0.13, 0.78, 0.75])
+    # matplotlib.rc_context scopes the font override to this call (restored
+    # on exit) instead of writing straight into matplotlib.rcParams, which
+    # would leave every other renderer in the process permanently switched
+    # to NanumGothic/no-unicode-minus after the first section PNG - a
+    # standing side effect no caller of this function asked for, and (since
+    # FastAPI's sync endpoints run in a real OS threadpool) a source of
+    # cross-request races on that same global dict.
+    with matplotlib.rc_context({"font.family": "NanumGothic", "axes.unicode_minus": False}):
+        fig = Figure(figsize=(11.0, 6.5), dpi=110)
+        FigureCanvasAgg(fig)
+        fig.set_facecolor("white")
+        ax = fig.add_axes([0.09, 0.13, 0.78, 0.75])
 
-    cmap = matplotlib.colormaps[cmap_name]
-    im = ax.imshow(
-        section, extent=[0.0, dist_max, z_lo, z_hi], origin="upper", aspect="auto",
-        cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest",
-    )
-    # Above-ground cells are already NaN (transparent) in `section`, so the
-    # axes' own white background already reads as "air" - the fill just
-    # makes that reading unambiguous even when the terrain relief is a
-    # small fraction of the plotted depth range (a thin line alone can
-    # look like a flat cutoff near the top of a tall, mostly-empty plot).
-    ax.fill_between(distance_m, ground_elevation_m, z_hi, color="white", zorder=2)
-    ax.plot(distance_m, ground_elevation_m, color="black", linewidth=2.2, zorder=3, label="지표면")
-    ax.set_xlabel("측선을 따른 거리 (m)")
-    ax.set_ylabel("고도 (m)")
-    profile_label = _PROFILE_LABELS.get(profile, profile)
-    ax.set_title(f"수직 단면 - {profile_label} (자화율, SI)")
-    ax.set_xlim(0.0, dist_max)
-    ax.set_ylim(z_lo, z_hi)
-    ax.text(0.01, 1.02, "A", transform=ax.transAxes, fontsize=12, fontweight="bold")
-    ax.text(0.99, 1.02, "A'", transform=ax.transAxes, fontsize=12, fontweight="bold", ha="right")
+        cmap = matplotlib.colormaps[cmap_name]
+        im = ax.imshow(
+            section, extent=[0.0, dist_max, z_lo, z_hi], origin="upper", aspect="auto",
+            cmap=cmap, vmin=vmin, vmax=vmax, interpolation="nearest",
+        )
+        # Above-ground cells are already NaN (transparent) in `section`, so
+        # the axes' own white background already reads as "air" - the fill
+        # just makes that reading unambiguous even when the terrain relief
+        # is a small fraction of the plotted depth range (a thin line alone
+        # can look like a flat cutoff near the top of a tall, mostly-empty
+        # plot).
+        ax.fill_between(distance_m, ground_elevation_m, z_hi, color="white", zorder=2)
+        ax.plot(distance_m, ground_elevation_m, color="black", linewidth=2.2, zorder=3, label="지표면")
+        ax.set_xlabel("측선을 따른 거리 (m)")
+        ax.set_ylabel("고도 (m)")
+        profile_label = _PROFILE_LABELS.get(profile, profile)
+        ax.set_title(f"수직 단면 - {profile_label} (자화율, SI)")
+        ax.set_xlim(0.0, dist_max)
+        ax.set_ylim(z_lo, z_hi)
+        ax.text(0.01, 1.02, "A", transform=ax.transAxes, fontsize=12, fontweight="bold")
+        ax.text(0.99, 1.02, "A'", transform=ax.transAxes, fontsize=12, fontweight="bold", ha="right")
 
-    cbar_ax = fig.add_axes([0.885, 0.13, 0.02, 0.75])
-    fig.colorbar(im, cax=cbar_ax, label="자화율 (SI)")
+        cbar_ax = fig.add_axes([0.885, 0.13, 0.02, 0.75])
+        fig.colorbar(im, cax=cbar_ax, label="자화율 (SI)")
 
-    # Locator inset: full mesh (project inversion) extent as a light-gray
-    # box, this profile's path drawn on top, so the user can see where
-    # the cross-section sits within the overall surveyed area.
-    loc_ax = ax.inset_axes([0.01, 0.62, 0.32, 0.36])
-    x_lo, x_hi = float(np.min(mesh_x_centers)), float(np.max(mesh_x_centers))
-    y_lo, y_hi = float(np.min(mesh_y_centers)), float(np.max(mesh_y_centers))
-    pad_x = 0.05 * max(x_hi - x_lo, 1.0)
-    pad_y = 0.05 * max(y_hi - y_lo, 1.0)
-    loc_ax.add_patch(
-        matplotlib.patches.Rectangle((x_lo, y_lo), x_hi - x_lo, y_hi - y_lo, facecolor="#e5e7eb", edgecolor="#9ca3af", linewidth=0.8)
-    )
-    loc_ax.plot(path_x, path_y, color="#dc2626", linewidth=1.8)
-    loc_ax.text(path_x[0], path_y[0], "A", fontsize=8, fontweight="bold", color="#dc2626")
-    loc_ax.text(path_x[-1], path_y[-1], "A'", fontsize=8, fontweight="bold", color="#dc2626", ha="right")
-    loc_ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
-    loc_ax.set_ylim(y_lo - pad_y, y_hi + pad_y)
-    loc_ax.set_aspect("equal")
-    loc_ax.set_title("위치 (전체 조사구역 내)", fontsize=7.5)
-    loc_ax.tick_params(labelsize=6)
-    loc_ax.set_facecolor("white")
-    for spine in loc_ax.spines.values():
-        spine.set_linewidth(0.6)
+        # Locator inset: full mesh (project inversion) extent as a
+        # light-gray box, this profile's path drawn on top, so the user can
+        # see where the cross-section sits within the overall surveyed
+        # area.
+        loc_ax = ax.inset_axes([0.01, 0.62, 0.32, 0.36])
+        x_lo, x_hi = float(np.min(mesh_x_centers)), float(np.max(mesh_x_centers))
+        y_lo, y_hi = float(np.min(mesh_y_centers)), float(np.max(mesh_y_centers))
+        pad_x = 0.05 * max(x_hi - x_lo, 1.0)
+        pad_y = 0.05 * max(y_hi - y_lo, 1.0)
+        loc_ax.add_patch(
+            matplotlib.patches.Rectangle((x_lo, y_lo), x_hi - x_lo, y_hi - y_lo, facecolor="#e5e7eb", edgecolor="#9ca3af", linewidth=0.8)
+        )
+        loc_ax.plot(path_x, path_y, color="#dc2626", linewidth=1.8)
+        loc_ax.text(path_x[0], path_y[0], "A", fontsize=8, fontweight="bold", color="#dc2626")
+        loc_ax.text(path_x[-1], path_y[-1], "A'", fontsize=8, fontweight="bold", color="#dc2626", ha="right")
+        loc_ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
+        loc_ax.set_ylim(y_lo - pad_y, y_hi + pad_y)
+        loc_ax.set_aspect("equal")
+        loc_ax.set_title("위치 (전체 조사구역 내)", fontsize=7.5)
+        loc_ax.tick_params(labelsize=6)
+        loc_ax.set_facecolor("white")
+        for spine in loc_ax.spines.values():
+            spine.set_linewidth(0.6)
 
-    buf = BytesIO()
-    fig.savefig(buf, format="png")
-    png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     return {
         "image_data_url": f"data:image/png;base64,{png_b64}",

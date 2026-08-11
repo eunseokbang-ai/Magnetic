@@ -114,12 +114,18 @@ def run_euler_deconvolution(
 
     x2d, y2d = np.meshgrid(easting, northing)
 
-    if altitude_grid is None:
-        depth_reference = "flat_datum"
-    elif flight_agl_m is not None:
+    # agl_offset below is applied whenever flight_agl_m is given, independent
+    # of altitude_grid (both the flat z=0 plane and a real altitude_grid
+    # represent flight altitude - see module docstring) - so the reported
+    # label must key off flight_agl_m too, not altitude_grid alone, or a
+    # flight_agl_m-only call would silently report ground-surface depths
+    # under the "flat_datum" (below flight surface) label.
+    if flight_agl_m is not None:
         depth_reference = "ground_surface"
-    else:
+    elif altitude_grid is not None:
         depth_reference = "flight_altitude"
+    else:
+        depth_reference = "flat_datum"
     agl_offset = flight_agl_m if flight_agl_m is not None else 0.0
 
     solutions_xyz: list[tuple[float, float, float, float, float]] = []
