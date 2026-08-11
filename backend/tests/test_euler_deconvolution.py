@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
+from pyproj import Transformer
 
 from app.processing.euler_deconvolution import run_euler_deconvolution
 
@@ -148,9 +149,53 @@ def test_euler_altitude_grid_omitted_is_unchanged():
     assert abs(np.median(depths) - z0_true) < 0.25 * z0_true
 
 
+def test_euler_ignores_a_data_gap_instead_of_reading_a_fake_source_there():
+    """Regression test: run_euler_deconvolution used to fill NaN gaps with
+    the grid's global mean before differencing, so any cell immediately
+    next to a gap - whose real local value differs from that global mean,
+    since the field varies smoothly across the survey - had its gradient
+    computed partly against that artificial constant, i.e. a fake step
+    right at the gap's edge. That fake step looks exactly like a
+    source-like discontinuity to Euler's equation, so windows straddling
+    a gap could report a spurious solution located at the gap itself even
+    though nothing is actually there. Puts a real point source in one
+    corner of the survey and a data gap (no source) in the opposite
+    corner, and checks no accepted solution's epicenter lands near the
+    gap - only the real source should be found."""
+    x0_true, y0_true, z0_true = 150.0, 150.0, 60.0
+    B_true, k_true, N = 50000.0, 3.0e7, 3.0
+
+    cell = 10.0
+    easting = np.arange(0.0, 1000.0 + cell, cell)
+    northing = np.arange(0.0, 600.0 + cell, cell)
+    X, Y = np.meshgrid(easting, northing)
+    R = np.sqrt((X - x0_true) ** 2 + (Y - y0_true) ** 2 + z0_true**2)
+    T = B_true + k_true / R**N
+
+    gap_x0, gap_x1 = 700.0, 800.0
+    gap_y0, gap_y1 = 350.0, 450.0
+    gap_mask = (X >= gap_x0) & (X <= gap_x1) & (Y >= gap_y0) & (Y <= gap_y1)
+    T_with_gap = T.copy()
+    T_with_gap[gap_mask] = np.nan
+
+    solutions = run_euler_deconvolution(
+        T_with_gap, easting, northing, cell, UTM_EPSG,
+        structural_index=N, window_size_m=150.0, max_depth_uncertainty_pct=50.0,
+    )
+    assert len(solutions) > 0, "the real source should still be recovered"
+
+    to_local = Transformer.from_crs(f"EPSG:{UTM_EPSG}", "EPSG:4326", always_xy=True)
+    gap_cx, gap_cy = (gap_x0 + gap_x1) / 2.0, (gap_y0 + gap_y1) / 2.0
+    for s in solutions:
+        x, y = Transformer.from_crs("EPSG:4326", f"EPSG:{UTM_EPSG}", always_xy=True).transform(s.lon, s.lat)
+        dist_from_gap = np.hypot(x - gap_cx, y - gap_cy)
+        assert dist_from_gap > 75.0, f"solution at ({x:.0f},{y:.0f}) sits right on the data gap, not the real source"
+
+
 if __name__ == "__main__":
     test_euler_recovers_synthetic_point_source()
     test_euler_wrong_structural_index_still_bounded()
     test_euler_altitude_grid_recovers_depth_below_ground()
     test_euler_altitude_grid_omitted_is_unchanged()
+    test_euler_ignores_a_data_gap_instead_of_reading_a_fake_source_there()
     print("ALL CHECKS PASSED")

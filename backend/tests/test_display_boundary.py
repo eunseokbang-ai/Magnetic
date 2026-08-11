@@ -43,7 +43,7 @@ def test_display_boundary_clips_grid_to_polygon_and_clears():
     req = GridRequest(value="anomaly", cell_size_m=5.0)
 
     project.get_grid_overlay(req)
-    full_finite = int(np.isfinite(project.last_overlay_values).sum())
+    full_finite = int(np.isfinite(project.last_overlay.values).sum())
     assert full_finite > 0
 
     df = project.processed
@@ -55,13 +55,13 @@ def test_display_boundary_clips_grid_to_polygon_and_clears():
 
     project.set_display_boundary(DisplayBoundaryRequest(polygon=boundary))
     project.get_grid_overlay(req)
-    half_finite = int(np.isfinite(project.last_overlay_values).sum())
+    half_finite = int(np.isfinite(project.last_overlay.values).sum())
     assert 0 < half_finite < full_finite
 
     # clearing (polygon=None) restores the unclipped extent
     project.set_display_boundary(DisplayBoundaryRequest(polygon=None))
     project.get_grid_overlay(req)
-    restored_finite = int(np.isfinite(project.last_overlay_values).sum())
+    restored_finite = int(np.isfinite(project.last_overlay.values).sum())
     assert restored_finite == full_finite
 
 

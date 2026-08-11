@@ -181,6 +181,24 @@ N_ACTIVE_CAP = 90000
 TARGET_DETECTION_GRID_CELL_CAP = 4_000_000
 
 
+@dataclass(frozen=True)
+class OverlayState:
+    """Snapshot of the most recently rendered grid/derivative overlay,
+    used by sample_overlay_value's click-to-inspect tool. Bundled into
+    one immutable object (rather than four separate Project attributes)
+    so a request handler publishes it with a single attribute
+    assignment - CPython's GIL makes that single assignment atomic,
+    unlike four separate assignments, which a concurrent request handler
+    (FastAPI's sync endpoints run in a threadpool, so real thread
+    interleaving is possible) could observe half-updated: e.g. new
+    values paired with the previous request's easting/northing axes,
+    silently reporting a value from the wrong location."""
+    values: np.ndarray
+    easting: np.ndarray
+    northing: np.ndarray
+    label: str
+
+
 class ProjectError(ValueError):
     pass
 
@@ -276,10 +294,7 @@ class Project:
     inversion_field_intensity_nt: float | None = None
     inversion_obs_grid: GridResult | None = None
     inversion_value_field: str | None = None
-    last_overlay_values: np.ndarray | None = None
-    last_overlay_easting: np.ndarray | None = None
-    last_overlay_northing: np.ndarray | None = None
-    last_overlay_label: str | None = None
+    last_overlay: OverlayState | None = None
 
     def load_drone(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
@@ -1460,10 +1475,7 @@ class Project:
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
                 interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
             )
-        self.last_overlay_values = grid.values
-        self.last_overlay_easting = grid.easting
-        self.last_overlay_northing = grid.northing
-        self.last_overlay_label = req.value
+        self.last_overlay = OverlayState(grid.values, grid.easting, grid.northing, req.value)
         return overlay
 
     def get_grid_confidence_overlay(self, req: GridConfidenceRequest) -> dict:
@@ -1644,10 +1656,7 @@ class Project:
                 values, grid.easting, grid.northing, self.utm_epsg,
                 interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
             )
-        self.last_overlay_values = values
-        self.last_overlay_easting = grid.easting
-        self.last_overlay_northing = grid.northing
-        self.last_overlay_label = req.transform
+        self.last_overlay = OverlayState(values, grid.easting, grid.northing, req.transform)
         return overlay
 
     def export_grid_geotiff(self, req: GridRequest) -> bytes:
@@ -2485,16 +2494,17 @@ class Project:
         most noticeable right at a sharp anomaly edge, exactly where
         getting this right matters most. Nearest-cell guarantees the
         number always matches the pixel."""
-        if self.last_overlay_values is None:
+        overlay = self.last_overlay  # single read - see OverlayState's docstring on why this must stay one reference
+        if overlay is None:
             raise ProjectError("먼저 그리드를 생성하세요.")
         if self.utm_epsg is None:
             raise ProjectError("좌표계 정보가 없습니다.")
-        easting = self.last_overlay_easting
-        northing = self.last_overlay_northing
-        values = self.last_overlay_values
+        easting = overlay.easting
+        northing = overlay.northing
+        values = overlay.values
         transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
         x, y = transformer.transform(lon, lat)
-        result = {"lat": lat, "lon": lon, "value_nt": None, "in_bounds": False, "label": self.last_overlay_label}
+        result = {"lat": lat, "lon": lon, "value_nt": None, "in_bounds": False, "label": overlay.label}
         # Half a cell of slack on each side matches the overlay image's own
         # rendered extent (see grid_to_png_overlay's "pixel is area" bounds)
         # - without it, a click inside the visually-drawn edge cell but

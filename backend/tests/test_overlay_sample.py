@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from pyproj import Transformer
 
 from app.main import app
-from app.store import ProjectError, store as project_store
+from app.store import OverlayState, ProjectError, store as project_store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"
@@ -47,8 +47,8 @@ def test_sample_overlay_value_in_bounds_matches_grid_center():
     assert r.status_code == 200, r.text
 
     project = project_store.get(project_id)
-    easting, northing = project.last_overlay_easting, project.last_overlay_northing
-    assert project.last_overlay_values is not None
+    easting, northing = project.last_overlay.easting, project.last_overlay.northing
+    assert project.last_overlay is not None
 
     from pyproj import Transformer
     mid_x = float(easting[len(easting) // 2])
@@ -101,9 +101,7 @@ def test_sample_overlay_value_returns_exact_nearest_cell_not_a_blend():
     values = np.zeros((n, n))
     hot_row, hot_col = 4, 4
     values[hot_row, hot_col] = 500.0  # sharply different from its all-zero neighbors
-    project.last_overlay_easting = easting
-    project.last_overlay_northing = northing
-    project.last_overlay_values = values
+    project.last_overlay = OverlayState(values, easting, northing, "anomaly")
 
     transformer = Transformer.from_crs(f"EPSG:{project.utm_epsg}", "EPSG:4326", always_xy=True)
     lon, lat = transformer.transform(easting[hot_col], northing[hot_row])
@@ -129,9 +127,7 @@ def test_sample_overlay_value_reports_no_data_for_the_exact_blank_cell():
     values = np.full((n, n), 42.0)
     blank_row, blank_col = 4, 4
     values[blank_row, blank_col] = np.nan
-    project.last_overlay_easting = easting
-    project.last_overlay_northing = northing
-    project.last_overlay_values = values
+    project.last_overlay = OverlayState(values, easting, northing, "anomaly")
 
     transformer = Transformer.from_crs(f"EPSG:{project.utm_epsg}", "EPSG:4326", always_xy=True)
     lon, lat = transformer.transform(easting[blank_col], northing[blank_row])
@@ -146,7 +142,7 @@ def test_sample_overlay_value_switches_source_after_transform():
     r = client.post(f"/api/projects/{project_id}/grid", json={"value": "anomaly", "cell_size_m": 10.0})
     assert r.status_code == 200, r.text
     project = project_store.get(project_id)
-    assert project.last_overlay_label == "anomaly"
+    assert project.last_overlay.label == "anomaly"
 
     r = client.post(
         f"/api/projects/{project_id}/transform",
@@ -154,7 +150,7 @@ def test_sample_overlay_value_switches_source_after_transform():
     )
     assert r.status_code == 200, r.text
     project = project_store.get(project_id)
-    assert project.last_overlay_label == "1vd"
+    assert project.last_overlay.label == "1vd"
 
 
 def test_grid_overlay_reports_extrema_locations_that_click_to_the_same_value():

@@ -157,6 +157,19 @@ function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn, repeatMode 
   const map = useMap();
   const controlRef = useRef(null);
   const groupRef = useRef(null);
+  // Several DrawControl instances (exclude/boundary/section, etc.) stay
+  // mounted on the same shared map at once, each registering its own
+  // L.Draw.Event.CREATED listener below - but leaflet-draw fires that
+  // event once on the map itself, so every mounted instance's listener
+  // receives it regardless of which instance's toolbar the user actually
+  // drew with. Gating on enabledRef (kept fresh every render, read at
+  // call time so the listener never closes over a stale value) makes
+  // only the instance whose own toolbar is currently active react -
+  // otherwise drawing with one tool (e.g. line exclusion) also fired the
+  // other mounted tools' handlers (e.g. silently force-excluding
+  // everything inside the same shape, or overwriting the section path).
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   useEffect(() => {
     if (!groupRef.current) {
@@ -164,6 +177,7 @@ function DrawControl({ enabled, shapeType = "polygon", onShapeDrawn, repeatMode 
       map.addLayer(groupRef.current);
     }
     const handleCreated = (e) => {
+      if (!enabledRef.current) return;
       const layer = e.layer;
       // Polygon/rectangle getLatLngs() nests one ring array deep; polyline
       // returns a flat array of LatLngs directly - Array.isArray on the

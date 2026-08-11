@@ -208,7 +208,7 @@ def resolution_diagnostics(G: np.ndarray, layers: np.ndarray, n_layers: int) -> 
     reliability caveat: depths where this has dropped to a small fraction
     of the shallowest layer's value should be trusted much less than the
     shallow, well-constrained part of the model."""
-    col_norm = np.sqrt(np.sum(G**2, axis=0))
+    col_norm = np.sqrt(np.einsum("ij,ij->j", G, G))
     per_layer = np.zeros(n_layers)
     n_cells = np.zeros(n_layers, dtype=int)
     for layer_idx in range(n_layers):
@@ -230,7 +230,7 @@ def resolution_diagnostics(G: np.ndarray, layers: np.ndarray, n_layers: int) -> 
 
 
 def _ridge_solve(
-    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, identity_obs: np.ndarray, chi_max: float, m_ref: np.ndarray
+    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, chi_max: float, m_ref: np.ndarray
 ) -> np.ndarray:
     """One regularized normal-equations solve in data space (see invert's
     docstring for the Woodbury/dual reformulation this implements),
@@ -240,10 +240,12 @@ def _ridge_solve(
     m = m' + m_ref turns "minimize ||Gm-d||^2 + alpha*||m-m_ref||^2_P"
     into exactly the original zero-reference problem in m', just with the
     reference model's own forward response (G @ m_ref) subtracted from
-    the data first. Pass a zeros array for the original toward-zero
-    behavior."""
+    the data first. alpha0 is added directly to A_reduced's diagonal in
+    place (equivalent to + alpha0*I) rather than allocating/multiplying a
+    dense identity matrix just to add a scalar to the diagonal."""
     GP = Gw * p[np.newaxis, :]
-    A_reduced = GP @ Gw.T + alpha0 * identity_obs
+    A_reduced = GP @ Gw.T
+    A_reduced[np.diag_indices_from(A_reduced)] += alpha0
     d_shifted = dw - Gw @ m_ref
     lam = np.linalg.solve(A_reduced, d_shifted)
     m_prime = p * (Gw.T @ lam)
@@ -269,13 +271,22 @@ def _select_regularization_strength(
     itself - misfit increases monotonically with regularization strength,
     so log-space bisection converges in a fixed, small number of solves
     regardless of mesh size (the expensive part, building G, already
-    happened once before this is called)."""
-    n_obs = Gw.shape[0]
-    identity_obs = np.eye(n_obs)
+    happened once before this is called).
+
+    p0 is fixed for the whole search (only alpha0 varies between probes),
+    so G @ diag(p0) @ Gt and d - G@m_ref are computed once here and
+    reused across all ~40 probes below, instead of recomputing that
+    O(n_obs^2 * n_active) product from scratch on every single probe -
+    that product otherwise dominates the search's entire cost."""
+    GPGt = (Gw * p0[np.newaxis, :]) @ Gw.T
+    d_shifted = dw - Gw @ m_ref
 
     def misfit_at(reg_strength: float) -> float:
         alpha0 = alpha_scale * reg_strength
-        m = _ridge_solve(Gw, dw, p0, alpha0, identity_obs, chi_max, m_ref)
+        A_reduced = GPGt.copy()
+        A_reduced[np.diag_indices_from(A_reduced)] += alpha0
+        lam = np.linalg.solve(A_reduced, d_shifted)
+        m = np.clip(p0 * (Gw.T @ lam) + m_ref, 0.0, chi_max)
         predicted = Gw @ m
         return float(np.sqrt(np.mean((predicted - dw) ** 2)))
 
@@ -405,7 +416,7 @@ def invert(
     # forming either dense n_active x n_active or n_obs x n_obs product
     # just for this scalar. alpha scales with the data's own units (via
     # sum(G^2)) so regularization_strength alone is a unit-free knob.
-    alpha_scale = float(np.sum(Gw ** 2)) / n_active
+    alpha_scale = float(np.einsum("ij,ij->", Gw, Gw)) / n_active
 
     # Physically-plausible soft ceiling: even iron-rich rocks rarely exceed
     # a few SI units of susceptibility; this only guards against numerical
@@ -421,9 +432,8 @@ def invert(
         # neutral (reg_strength=1) alpha stands in for "what will the
         # compact weighting roughly look like", so the search targets a
         # weighting shaped like what the full IRLS run will actually use.
-        identity_obs_snapshot = np.eye(n_obs)
         p_flat = 1.0 / (depth_weight**2)
-        m_snapshot = _ridge_solve(Gw, dw, p_flat, alpha_scale, identity_obs_snapshot, chi_max, m_ref_arr)
+        m_snapshot = _ridge_solve(Gw, dw, p_flat, alpha_scale, chi_max, m_ref_arr)
         # Compact/focusing weighting concentrates *deviations from the
         # reference model* (m_ref_arr, zeros when there's no reference)
         # into blocky anomalies, not the raw susceptibility itself - a
@@ -447,12 +457,11 @@ def invert(
     m = m_ref_arr.copy()
     compact_weight = np.ones(n_active, dtype=float)
     eps = None
-    identity_obs = np.eye(n_obs)
     n_iter = max(1, int(n_irls_iterations))
     for it in range(n_iter):
         wm2 = (depth_weight ** 2) * compact_weight
         p = 1.0 / wm2
-        m = _ridge_solve(Gw, dw, p, alpha0, identity_obs, chi_max, m_ref_arr)
+        m = _ridge_solve(Gw, dw, p, alpha0, chi_max, m_ref_arr)
 
         # The stabilizing epsilon is fixed from the first (plain
         # depth-weighted L2) solve and held constant afterwards - if it

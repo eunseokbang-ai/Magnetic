@@ -35,6 +35,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from pyproj import Transformer
+from scipy.ndimage import binary_erosion
 
 from .transforms import vertical_derivative
 
@@ -91,8 +92,18 @@ def run_euler_deconvolution(
     dTdx = np.gradient(filled, cell_size_m, axis=1)
     dTdz = vertical_derivative(grid_values, cell_size_m, order=1)  # NaN-aware, matches z-positive-down convention
 
-    dTdx = np.where(finite_mask, dTdx, np.nan)
-    dTdy = np.where(finite_mask, dTdy, np.nan)
+    # np.gradient's central differences reach one cell in either direction,
+    # so any cell whose immediate neighbor was NaN (and so got replaced by
+    # the constant _fill_nan mean above) has a gradient computed partly
+    # against that artificial fill value, not real data - masking only the
+    # NaN cells themselves (finite_mask) would leave that whole rind of
+    # contaminated-but-technically-finite cells in, producing a ring of
+    # spurious "gradient" (and so spurious depth solutions) all along the
+    # survey's outer boundary and around every interior gap. Eroding the
+    # mask by one cell first removes exactly those contaminated cells too.
+    eroded_mask = binary_erosion(finite_mask, border_value=False)
+    dTdx = np.where(eroded_mask, dTdx, np.nan)
+    dTdy = np.where(eroded_mask, dTdy, np.nan)
     # dTdz already NaN outside coverage (transforms.py re-masks after the FFT round-trip)
 
     w = max(5, int(round(window_size_m / cell_size_m)))

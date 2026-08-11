@@ -218,6 +218,9 @@ class ProcessParams(BaseModel):
 
 
 ValueField = Literal["tmi", "anomaly"]
+# 3D inversion only ever accepts "anomaly", never "tmi" - see
+# InversionParams.value's comment for why.
+InversionValueField = Literal["anomaly"]
 TransformName = Literal[
     "rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta",
     "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
@@ -435,7 +438,15 @@ class LocalTileFolderRequest(BaseModel):
 
 
 class InversionParams(BaseModel):
-    value: ValueField = "anomaly"
+    # Always "anomaly", never "tmi" - the inversion solve has no free
+    # constant/DC-level unknown, only a non-negative susceptibility per
+    # cell (see processing/inversion.py::invert). TMI's absolute level
+    # (tens of thousands of nT) would either force every cell to the
+    # non-negativity clip ceiling or, even under "anomaly", have any
+    # leftover regional DC offset misread as a blanket layer of
+    # susceptibility - so this is pinned to the one physically sound
+    # option rather than left as a user-selectable ValueField.
+    value: InversionValueField = "anomaly"
     # Any of these left as None (the default) is auto-estimated from the
     # survey's own line spacing/extent and anomaly spectrum - see
     # processing/inversion_auto.py.

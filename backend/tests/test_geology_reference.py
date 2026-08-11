@@ -151,9 +151,23 @@ def test_run_inversion_uses_geology_reference():
     assert summary2["n_geology_units"] == 1
 
 
+def test_run_inversion_rejects_tmi_value():
+    # The inversion solve has no free DC/base-level unknown (only a
+    # non-negative susceptibility per cell), so running it against raw
+    # TMI (tens of thousands of nT) rather than anomaly would either
+    # force every cell to the clip ceiling or misread a leftover
+    # regional offset as a blanket layer of susceptibility - "tmi" is
+    # rejected at the API boundary rather than silently producing a
+    # garbage model.
+    client, project_id = _make_processed_project()
+    r = client.post(f"/api/projects/{project_id}/inversion", json={"value": "tmi", "assumed_agl_m": 50.0})
+    assert r.status_code == 422, r.text
+
+
 if __name__ == "__main__":
     test_invert_m_ref_none_matches_explicit_zeros_array()
     test_invert_heavy_regularization_approaches_reference_model()
     test_geology_unit_crud_via_api()
     test_run_inversion_uses_geology_reference()
+    test_run_inversion_rejects_tmi_value()
     print("ALL CHECKS PASSED")

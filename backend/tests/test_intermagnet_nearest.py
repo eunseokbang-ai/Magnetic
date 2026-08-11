@@ -306,6 +306,36 @@ def test_estimate_base_from_observatories_interpolates_small_gaps_not_extrapolat
     assert t_a[4] in set(out["timestamp"])
 
 
+def test_estimate_base_from_observatories_no_jump_when_near_station_drops_out():
+    # NEAR sits at a ~50000nT latitude, FAR at a completely different
+    # ~30000nT latitude (a huge absolute-level gap, dwarfing any real
+    # diurnal variation). NEAR has a gap in the middle of the window;
+    # FAR covers the whole window. Combining must not let the output
+    # jump toward FAR's absolute level during NEAR's gap - the combined
+    # series should stay close to NEAR's own level throughout, since
+    # NEAR completely dominates the IDW weight (it's essentially at the
+    # target) whenever it has data.
+    t = pd.date_range("2026-07-24", periods=20, freq="1min")
+    near_vals = np.full(20, 50000.0)
+    near_vals[10] += 5.0  # tiny genuine diurnal wobble
+    near_df = pd.DataFrame({"timestamp": t, "mag": near_vals})
+    near_df = pd.concat([near_df.iloc[:8], near_df.iloc[14:]])  # minutes 8-13 missing (a real gap, not a small one)
+    near = IagaObservatoryData("NEAR", "NEAR", 36.5, 127.9, 0.0, "F", near_df)
+    far = IagaObservatoryData("FAR", "FAR", 10.0, 127.9, 0.0, "F", pd.DataFrame({"timestamp": t, "mag": 30000.0}))
+
+    out = estimate_base_from_observatories([near, far], 36.5, 127.9)
+    by_time = out.set_index("timestamp")["mag"]
+
+    covered_gap = [ts for ts in t[8:14] if ts in by_time.index]
+    assert covered_gap  # FAR still covers this stretch, so it's present
+    # during NEAR's dropout the combined value must stay near NEAR's own
+    # level (~50000), nowhere close to jumping toward FAR's (~30000)
+    for ts in covered_gap:
+        assert by_time.loc[ts] == pytest.approx(50000.0, abs=50.0)
+    # and no large discontinuity anywhere across the whole series
+    assert (by_time.diff().abs().dropna() < 100.0).all()
+
+
 def test_estimate_base_from_observatories_raises_on_empty_station_list():
     with pytest.raises(IntermagnetFetchError):
         estimate_base_from_observatories([], 0.0, 0.0)

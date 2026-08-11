@@ -583,22 +583,32 @@ def estimate_base_from_observatories(
     normalized to sum to 1 - the standard IDW spatial interpolation
     scheme).
 
-    Weighting the raw F values directly (rather than each station's
-    deviation from its own daily mean) is deliberate and equivalent for
-    this app's purposes: diurnal correction (processing/diurnal.py) only
-    ever uses (base_interp - reference_within_flight_window), i.e. the
-    *variation* relative to the survey window's own mean. Since IDW is a
-    linear combination with fixed (time-independent) weights,
-    weighted_avg(F_a, F_b) - mean(weighted_avg(F_a, F_b)) equals
-    weighted_avg(F_a - mean(F_a), F_b - mean(F_b)) - so the arbitrary
-    absolute-level differences between stations at different latitudes
-    cancel out downstream exactly as they would for a single real station,
-    without needing to separately detrend each series here first."""
+    Each station's series is first converted to a deviation from that
+    station's OWN mean level before blending, and a single fixed offset
+    (the weighted average of the stations' own absolute means, using the
+    same overall weights) is added back once at the end. This matters
+    because the per-timestamp weights actually used below aren't fixed:
+    whichever stations happen to have data at a given minute get their
+    weights renormalized to sum to 1 at that minute (see weight_total),
+    so the effective weighting changes as stations drop in and out of
+    coverage. Blending stations' raw absolute F values under a
+    *changing* weight set would make the combined series jump by
+    however much those stations' absolute levels differ (tens of
+    thousands of nT, since that's dominated by latitude/IGRF main-field
+    strength, not local weather) every time the active station set
+    changes - e.g. whenever the nearest station has a brief dropout.
+    Blending deviations from each station's own mean instead means the
+    combined series only reflects genuine differences in the *diurnal
+    variation itself* between stations (tens of nT) when the active set
+    changes, which is the whole point of combining multiple stations in
+    the first place."""
     if not stations:
         raise IntermagnetFetchError("결합할 관측소 자료가 없습니다.")
 
     weights = np.array([1.0 / max(haversine_km(target_lat, target_lon, s.lat, s.lon), 1.0) ** power for s in stations])
     weights = weights / weights.sum()
+    station_means = np.array([s.df["mag"].mean() for s in stations])
+    overall_offset = float(np.sum(weights * station_means))
 
     start = min(s.df["timestamp"].min() for s in stations)
     end = max(s.df["timestamp"].max() for s in stations)
@@ -606,18 +616,19 @@ def estimate_base_from_observatories(
 
     weighted_sum = np.zeros(len(grid))
     weight_total = np.zeros(len(grid))
-    for w, s in zip(weights, stations):
+    for w, s, station_mean in zip(weights, stations, station_means):
         series = s.df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
         # Interpolate only small internal gaps (a station's own brief
         # dropouts) - never extrapolate past a station's real coverage.
         series = series.interpolate(limit=5, limit_area="inside")
+        deviation = series.to_numpy() - station_mean
         valid = series.notna().to_numpy()
-        weighted_sum[valid] += w * series.to_numpy()[valid]
+        weighted_sum[valid] += w * deviation[valid]
         weight_total[valid] += w
 
     has_data = weight_total > 0
     mag = np.full(len(grid), np.nan)
-    mag[has_data] = weighted_sum[has_data] / weight_total[has_data]
+    mag[has_data] = overall_offset + weighted_sum[has_data] / weight_total[has_data]
 
     out = pd.DataFrame({"timestamp": grid, "mag": mag}).dropna(subset=["mag"]).reset_index(drop=True)
     if out.empty:

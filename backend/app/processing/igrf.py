@@ -36,7 +36,7 @@ _MIN_SPAN_KM = 0.05
 
 
 def _padded_axis(values: np.ndarray, n_nodes: int, min_span: float) -> np.ndarray:
-    lo, hi = float(np.min(values)), float(np.max(values))
+    lo, hi = float(np.nanmin(values)), float(np.nanmax(values))
     if hi - lo < min_span:
         mid = (hi + lo) / 2.0
         lo, hi = mid - min_span / 2.0, mid + min_span / 2.0
@@ -66,22 +66,33 @@ def _igrf_grid_interpolated(lon: np.ndarray, lat: np.ndarray, h_km: np.ndarray, 
 
 
 def compute_igrf_total_field(lat: np.ndarray, lon: np.ndarray, altitude_ellipsoidal_m: np.ndarray, dates: pd.Series) -> np.ndarray:
-    """Return the IGRF total field intensity (nT) at each point."""
+    """Return the IGRF total field intensity (nT) at each point.
+
+    Points with a non-finite lat/lon/altitude are left as NaN in the
+    output rather than fed into the interpolation grid - matching what a
+    direct per-point ppigrf.igrf() call would have done (NaN in, NaN
+    out), and keeping a handful of NaN inputs (e.g. an altitude field
+    that a given loader format never populates) from turning the coarse
+    interpolation grid's own axis bounds into NaN and failing every
+    point for that day, not just the bad ones."""
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
     h_km = np.asarray(altitude_ellipsoidal_m, dtype=float) / 1000.0
     date_values = pd.DatetimeIndex(dates).to_pydatetime()
 
-    be = np.empty(len(lat), dtype=float)
-    bn = np.empty(len(lat), dtype=float)
-    bu = np.empty(len(lat), dtype=float)
+    be = np.full(len(lat), np.nan)
+    bn = np.full(len(lat), np.nan)
+    bu = np.full(len(lat), np.nan)
+    finite = np.isfinite(lat) & np.isfinite(lon) & np.isfinite(h_km)
 
     # Grouped by calendar day since IGRF varies negligibly within a single
     # survey day (secular variation is an annual-scale effect) - each
     # day's points share one coarse interpolation grid.
     dates_day = pd.Series(date_values).dt.floor("D")
     for day, idx in dates_day.groupby(dates_day).groups.items():
-        idx = np.asarray(idx)
+        idx = np.asarray(idx)[finite[np.asarray(idx)]]
+        if len(idx) == 0:
+            continue
         b_e, b_n, b_u = _igrf_grid_interpolated(lon[idx], lat[idx], h_km[idx], day.to_pydatetime())
         be[idx] = b_e
         bn[idx] = b_n

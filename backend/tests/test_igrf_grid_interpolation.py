@@ -61,3 +61,37 @@ def test_handles_single_point_and_zero_span_without_degenerate_grid_error():
     got = compute_igrf_total_field(np.array([34.57]), np.array([126.37]), np.array([100.0]), dates)
     assert got.shape == (1,)
     assert np.isfinite(got[0])
+
+
+def test_some_nan_altitudes_dont_poison_the_whole_days_grid():
+    # A loader format that never populates altitude leaves it all-NaN for
+    # some rows - np.min/np.max over an array containing any NaN returns
+    # NaN, which used to turn that day's whole interpolation grid axis
+    # into NaN and made RegularGridInterpolator raise for every point
+    # that day, not just the NaN ones. The NaN rows should come back NaN
+    # (matching what a direct per-point ppigrf call would do); the finite
+    # rows must still be computed normally.
+    rng = np.random.default_rng(2)
+    n = 50
+    lat = rng.uniform(34.54, 34.60, n)
+    lon = rng.uniform(126.35, 126.42, n)
+    alt = rng.uniform(50.0, 150.0, n)
+    alt[::5] = np.nan  # every 5th point has no altitude
+    dates = pd.Series([pd.Timestamp("2026-07-15")] * n)
+
+    got = compute_igrf_total_field(lat, lon, alt, dates)
+
+    nan_mask = np.isnan(alt)
+    assert np.all(np.isnan(got[nan_mask]))
+    assert np.all(np.isfinite(got[~nan_mask]))
+    ref = _reference_total_field(lat[~nan_mask], lon[~nan_mask], alt[~nan_mask], pd.Timestamp("2026-07-15").to_pydatetime())
+    assert np.max(np.abs(got[~nan_mask] - ref)) < 0.01
+
+
+def test_all_nan_altitudes_return_all_nan_not_a_crash():
+    dates = pd.Series([pd.Timestamp("2026-07-15")] * 5)
+    got = compute_igrf_total_field(
+        np.full(5, 34.57), np.full(5, 126.37), np.full(5, np.nan), dates
+    )
+    assert got.shape == (5,)
+    assert np.all(np.isnan(got))
