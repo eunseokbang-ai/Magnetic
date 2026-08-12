@@ -203,6 +203,37 @@ class ProjectError(ValueError):
     pass
 
 
+# LRU entry caps for the two per-project result caches below. Both caches
+# are only fully cleared on reprocess/manual-edit, so without a cap a user
+# experimenting with cell sizes/interpolation methods/masking distances
+# accumulates entries indefinitely - and a single grid_cache entry can be
+# large (GridResult carries values + tree_dist + max_distance_grid, up to
+# the ~3M-cell gridding cap: roughly 25MB per float64 array, so up to
+# ~100MB per entry). Grid entries are the heavy ones (several full-grid
+# arrays each) so they get the smaller cap; transform entries hold one
+# values array each. Module-level (not per-instance) so tests can lower
+# them without building huge grids.
+_GRID_CACHE_MAX_ENTRIES = 4
+_TRANSFORM_CACHE_MAX_ENTRIES = 8
+
+
+def _lru_get(cache: dict, key):
+    """Return cache[key] (refreshing its recency) or None. Python dicts
+    iterate in insertion order, so re-inserting on hit makes the FIRST key
+    the least-recently-USED one, which _lru_put evicts."""
+    if key not in cache:
+        return None
+    value = cache.pop(key)
+    cache[key] = value
+    return value
+
+
+def _lru_put(cache: dict, key, value, max_entries: int) -> None:
+    cache[key] = value
+    while len(cache) > max_entries:
+        cache.pop(next(iter(cache)))
+
+
 @dataclass
 class Project:
     id: str
@@ -1434,8 +1465,9 @@ class Project:
         # would let an explicit call collide with an auto call that
         # resolves to the same number and incorrectly reuse its result.
         key = (value, cell_size_m, method, max_distance_m, resolved_max_distance, effective_wavelength)
-        if key in self.grid_cache:
-            return self.grid_cache[key]
+        cached = _lru_get(self.grid_cache, key)
+        if cached is not None:
+            return cached
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         df = self.processed
@@ -1458,7 +1490,7 @@ class Project:
             along_line_smooth_wavelength_m=effective_wavelength,
             typical_line_spacing_m=self.line_spacing_m,
         )
-        self.grid_cache[key] = result
+        _lru_put(self.grid_cache, key, result, _GRID_CACHE_MAX_ENTRIES)
         return result
 
     def _cell_size_guideline_warning(self, cell_size_m: float) -> str | None:
@@ -1575,6 +1607,14 @@ class Project:
             req.value,
             req.cell_size_m,
             req.method,
+            # Both the raw and resolved max_distance_m, for the same reason
+            # as _grid_for's cache key: the transform result depends on
+            # which underlying grid was used, and auto (None) vs an
+            # explicit value that happens to equal the auto-resolved number
+            # produce genuinely different grids (per-cell adaptive vs
+            # uniform masking) - keying on the resolved number alone would
+            # let one silently return the other's cached transform.
+            req.max_distance_m,
             resolved_max_distance,
             effective_smooth_wavelength,
             req.transform,
@@ -1585,10 +1625,11 @@ class Project:
             req.microlevel_wavelength_factor,
             req.microlevel_pre_apply,
         )
-        if cache_key in self.transform_cache:
-            return self.transform_cache[cache_key]
+        cached = _lru_get(self.transform_cache, cache_key)
+        if cached is not None:
+            return cached
         result = self._compute_transform_values(grid, req)
-        self.transform_cache[cache_key] = result
+        _lru_put(self.transform_cache, cache_key, result, _TRANSFORM_CACHE_MAX_ENTRIES)
         return result
 
     def _maybe_pre_level(self, grid: GridResult, req) -> GridResult:

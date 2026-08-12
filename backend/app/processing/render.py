@@ -73,6 +73,38 @@ class _NormalNorm(Normalize):
         return np.ma.array(result, mask=mask)
 
 
+# Color-bar fractions the legend places its value labels at. Fixed and
+# equally spaced so the frontend can lay the labels out with plain
+# space-between flexbox; what varies per stretch is the VALUE each
+# fraction corresponds to (see _legend_ticks).
+_LEGEND_TICK_FRACTIONS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+
+
+def _legend_ticks(grid_values: np.ndarray, stretch: str, vmin: float, vmax: float) -> list[float]:
+    """Data value whose color sits at each _LEGEND_TICK_FRACTIONS position
+    of the color bar, for the given stretch. A legend that only labels
+    vmin/vmax under a uniform gradient implicitly claims the mapping
+    between them is linear - true for the linear stretch, wrong for
+    equalize (rank/CDF-based) and normal (Gaussian-CDF-based), where the
+    value at the color bar's midpoint is the data's median / mean, not
+    (vmin+vmax)/2. These ticks give the legend honest intermediate labels
+    for every stretch, using the same definitions as the corresponding
+    Normalize classes above (_EqualizeNorm: empirical quantiles;
+    _NormalNorm: mean + std * Phi^-1(fraction), ends clamped to the
+    +-3 sigma display range it reports as vmin/vmax)."""
+    if stretch == "equalize":
+        finite = grid_values[np.isfinite(grid_values)]
+        return [float(v) for v in np.quantile(finite, _LEGEND_TICK_FRACTIONS)]
+    if stretch == "normal":
+        finite = grid_values[np.isfinite(grid_values)]
+        mean = float(np.mean(finite))
+        std = float(np.std(finite))
+        std = std if std > 0 else 1.0
+        ticks = mean + std * _scipy_norm.ppf(np.clip(_LEGEND_TICK_FRACTIONS, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
+        return [float(v) for v in ticks]
+    return [float(v) for v in vmin + _LEGEND_TICK_FRACTIONS * (vmax - vmin)]
+
+
 def _render_rgba(
     grid_values: np.ndarray,
     cmap_name: str,
@@ -231,6 +263,7 @@ def grid_to_png_overlay(
         "vmax": vmax,
         "cmap": cmap_name,
         "stretch": stretch,
+        "legend_ticks": _legend_ticks(grid_values, stretch, vmin, vmax),
     }
 
 

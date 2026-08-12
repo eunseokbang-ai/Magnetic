@@ -27,11 +27,18 @@ function Gradient({ cmapName }) {
   );
 }
 
+const STRETCH_NOTES = {
+  equalize: "히스토그램 균등화 스트레치 — 색 간격이 값에 비례하지 않습니다 (눈금 참조)",
+  normal: "정규분포 스트레치 — 색 간격이 값에 비례하지 않습니다 (눈금 참조)",
+};
+
 export default function Legend({
   label,
   unit,
   vmin,
   vmax,
+  ticks,
+  stretch,
   cmapName,
   onCmapChange,
   manualRange,
@@ -42,6 +49,14 @@ export default function Legend({
   onJumpToExtremum,
 }) {
   const updateManual = (key, value) => onManualRangeChange({ ...manualRange, [key]: value });
+  // Backend legend_ticks: the data value whose color sits at each of 5
+  // equally spaced positions along the bar (0/25/50/75/100%). For the
+  // equalize/normal stretches these are NOT linearly spaced values (the
+  // midpoint is the data's median/mean, not (vmin+vmax)/2) - showing them
+  // is what keeps the legend honest for a non-linear stretch, instead of
+  // implying a linear mapping by labeling only the two ends.
+  const tickValues = Array.isArray(ticks) && ticks.length >= 2 ? ticks : [vmin, vmax];
+  const stretchNote = STRETCH_NOTES[stretch];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -50,10 +65,22 @@ export default function Legend({
           {label} {unit ? `(${unit})` : ""}
         </div>
         <Gradient cmapName={cmapName} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#8a7a5c", marginTop: 2 }}>
-          <span>{vmin != null ? vmin.toFixed(1) : "-"}</span>
-          <span>{vmax != null ? vmax.toFixed(1) : "-"}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8a7a5c", marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+          {tickValues.map((t, i) => (
+            <span
+              key={i}
+              style={{
+                flex: 1,
+                textAlign: i === 0 ? "left" : i === tickValues.length - 1 ? "right" : "center",
+              }}
+            >
+              {t != null ? t.toFixed(1) : "-"}
+            </span>
+          ))}
         </div>
+        {stretchNote && (
+          <div style={{ fontSize: 10.5, color: "#a9631f", marginTop: 4, lineHeight: 1.5 }}>{stretchNote}</div>
+        )}
       </div>
 
       <div style={{ fontSize: 12 }}>

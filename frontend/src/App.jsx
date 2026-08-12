@@ -2814,6 +2814,8 @@ export default function App() {
           unit="nT"
           vmin={legendRange.vmin}
           vmax={legendRange.vmax}
+          ticks={overlay?.legend_ticks}
+          stretch={overlay?.stretch}
           cmapName={cmapName}
           onCmapChange={setCmapName}
           manualRange={manualRange}
