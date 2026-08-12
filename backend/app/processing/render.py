@@ -45,30 +45,59 @@ class _EqualizeNorm(Normalize):
         return np.ma.array(result, mask=mask)
 
 
+# Scale factor making the median absolute deviation a consistent estimator
+# of the standard deviation for normally distributed data (1 / Phi^-1(0.75)).
+_MAD_TO_SIGMA = 1.4826
+
+
+def robust_center_scale(finite: np.ndarray) -> tuple[float, float]:
+    """Median and MAD-derived sigma of `finite` - the robust stand-ins for
+    mean/std used by the "normal" stretch. Falls back to the plain std
+    (then to 1.0) when the MAD is zero, which happens when more than half
+    the cells share one exact value (e.g. a mostly-flat mask or a
+    heavily-quantized grid) and would otherwise collapse the whole color
+    range onto that single value."""
+    center = float(np.median(finite))
+    scale = _MAD_TO_SIGMA * float(np.median(np.abs(finite - center)))
+    if scale <= 0:
+        scale = float(np.std(finite))
+    return center, (scale if scale > 0 else 1.0)
+
+
 class _NormalNorm(Normalize):
     """"Normal distribution" stretch (per the UAV magnetics guidelines'
-    common-stretches list): maps each value through the Gaussian CDF
-    fitted to the grid's own mean/std, rather than either a plain linear
-    fraction of [vmin, vmax] or the empirical-rank _EqualizeNorm above.
-    Unlike equalize (which reproduces whatever the actual distribution
-    shape is, exactly, via ranks), this assumes the data is close to
-    normally distributed and stretches accordingly - most of the color
-    range concentrates within a few standard deviations of the mean,
+    common-stretches list): maps each value through a Gaussian CDF fitted
+    to the grid's own background level and spread, rather than either a
+    plain linear fraction of [vmin, vmax] or the empirical-rank
+    _EqualizeNorm above. Unlike equalize (which reproduces whatever the
+    actual distribution shape is, exactly, via ranks), this assumes the
+    data is close to normally distributed and stretches accordingly - most
+    of the color range concentrates within a few sigma of the center,
     which suits a grid that genuinely is roughly bell-shaped around a
     background level (typical for anomaly grids dominated by background
     noise with a few real anomalies), without needing every individual
-    rank to be preserved."""
+    rank to be preserved.
 
-    def __init__(self, mean: float, std: float):
-        std = std if std > 0 else 1.0
-        super().__init__(vmin=mean - 3.0 * std, vmax=mean + 3.0 * std, clip=False)
-        self._mean = mean
-        self._std = std
+    Center/scale come from the median and MAD, not the mean and standard
+    deviation. Those are the robust estimators of exactly the same two
+    quantities, and this stretch's whole premise - "background noise plus
+    a few real anomalies" - is the case where the non-robust pair fails:
+    a handful of strong anomalies inflates the std, widening the +-3 sigma
+    display range and flattening the color contrast across the background
+    the user actually wants to read. For genuinely Gaussian data the two
+    agree, so this only changes the outcome where the mean/std version was
+    being skewed by the very anomalies the map is meant to show."""
+
+    def __init__(self, center: float, scale: float):
+        scale = scale if scale > 0 else 1.0
+        super().__init__(vmin=center - 3.0 * scale, vmax=center + 3.0 * scale, clip=False)
+        self._center = center
+        self._scale = scale
 
     def __call__(self, value, clip=None):
         arr = np.ma.asarray(value, dtype=float)
-        filled = arr.filled(self._mean) if np.ma.is_masked(arr) else np.asarray(arr)
-        result = _scipy_norm.cdf(filled, loc=self._mean, scale=self._std)
+        filled = arr.filled(self._center) if np.ma.is_masked(arr) else np.asarray(arr)
+        result = _scipy_norm.cdf(filled, loc=self._center, scale=self._scale)
         mask = np.ma.getmaskarray(arr) if np.ma.is_masked(arr) else False
         return np.ma.array(result, mask=mask)
 
@@ -96,11 +125,8 @@ def _legend_ticks(grid_values: np.ndarray, stretch: str, vmin: float, vmax: floa
         finite = grid_values[np.isfinite(grid_values)]
         return [float(v) for v in np.quantile(finite, _LEGEND_TICK_FRACTIONS)]
     if stretch == "normal":
-        finite = grid_values[np.isfinite(grid_values)]
-        mean = float(np.mean(finite))
-        std = float(np.std(finite))
-        std = std if std > 0 else 1.0
-        ticks = mean + std * _scipy_norm.ppf(np.clip(_LEGEND_TICK_FRACTIONS, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
+        center, scale = robust_center_scale(grid_values[np.isfinite(grid_values)])
+        ticks = center + scale * _scipy_norm.ppf(np.clip(_LEGEND_TICK_FRACTIONS, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
         return [float(v) for v in ticks]
     return [float(v) for v in vmin + _LEGEND_TICK_FRACTIONS * (vmax - vmin)]
 
@@ -132,7 +158,7 @@ def _render_rgba(
         norm = _EqualizeNorm(np.sort(finite))
         vmin, vmax = float(finite.min()), float(finite.max())
     elif stretch == "normal":
-        norm = _NormalNorm(float(np.mean(finite)), float(np.std(finite)))
+        norm = _NormalNorm(*robust_center_scale(finite))
         vmin, vmax = norm.vmin, norm.vmax
     else:
         explicit_range = vmin is not None and vmax is not None

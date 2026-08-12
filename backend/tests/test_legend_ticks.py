@@ -15,7 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.render import grid_to_png_overlay
+from app.processing.render import grid_to_png_overlay, robust_center_scale
 
 UTM_EPSG = 32652
 
@@ -60,15 +60,14 @@ def test_normal_ticks_follow_gaussian_cdf_inverse():
     overlay = grid_to_png_overlay(values, easting, northing, UTM_EPSG, stretch="normal")
 
     ticks = np.array(overlay["legend_ticks"])
-    finite = values[np.isfinite(values)]
-    mean, std = float(np.mean(finite)), float(np.std(finite))
+    center, scale = robust_center_scale(values[np.isfinite(values)])
     # ends land exactly on the reported +-3 sigma display range, the
-    # midpoint on the mean, interior ticks at mean +- 0.6745 sigma
+    # midpoint on the center, interior ticks at center +- 0.6745 sigma
     # (Phi^-1(0.75))
     assert np.isclose(ticks[0], overlay["vmin"])
     assert np.isclose(ticks[-1], overlay["vmax"])
-    assert np.isclose(ticks[2], mean)
-    assert np.isclose(ticks[3] - mean, 0.6744897501960817 * std, rtol=1e-6)
+    assert np.isclose(ticks[2], center)
+    assert np.isclose(ticks[3] - center, 0.6744897501960817 * scale, rtol=1e-6)
 
 
 if __name__ == "__main__":

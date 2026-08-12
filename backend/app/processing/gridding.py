@@ -379,7 +379,20 @@ def grid_confidence(
     build/query and (in auto mode) the per-line local-gap computation -
     together the dominant cost of grid_points itself. Leave all three
     None (default) to compute them fresh, e.g. for a standalone call not
-    backed by an existing GridResult."""
+    backed by an existing GridResult.
+
+    One deliberate asymmetry when reusing: grid_points drops points whose
+    x, y OR VALUE is non-finite before building its tree, while this
+    function (which never sees the values) drops only non-finite x/y. So
+    for a survey containing NaN anomaly/TMI readings the passed-in
+    tree_dist measures distance to the points that actually got gridded,
+    whereas the freshly-computed path would measure distance to all
+    positioned points including the value-less ones. The reused version is
+    the more meaningful of the two here - confidence is about how well the
+    interpolated surface is supported, and a point with no value supports
+    nothing - so this is not a discrepancy to "fix" by aligning the
+    filters; it just means the two paths can differ slightly on grids with
+    missing values, and the reused one should be preferred."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     finite = np.isfinite(x) & np.isfinite(y)

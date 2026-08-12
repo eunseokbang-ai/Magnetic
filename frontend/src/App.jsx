@@ -2830,6 +2830,11 @@ export default function App() {
             ⚠ {overlay.cell_size_guideline_warning}
           </div>
         )}
+        {overlay?.rtp_latitude_warning && (
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>
+            ⚠ {overlay.rtp_latitude_warning}
+          </div>
+        )}
       </div>
     </div>
   );

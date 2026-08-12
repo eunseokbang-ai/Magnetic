@@ -119,6 +119,7 @@ from .processing.render import (
 )
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import (
+    RTP_LOW_LATITUDE_INCLINATION_DEG,
     analytic_signal,
     derivative_easting,
     derivative_northing,
@@ -181,7 +182,15 @@ N_ACTIVE_CAP = 90000
 TARGET_DETECTION_GRID_CELL_CAP = 4_000_000
 
 
-@dataclass(frozen=True)
+# eq=False: the generated __eq__ would compare the numpy array fields with
+# ==, producing an elementwise array rather than a bool and raising
+# "truth value of an array is ambiguous". Nothing compares or hashes these
+# today, so this is purely a guard against a future caller doing so and
+# hitting a confusing error far from the cause. (frozen=True with
+# eq=False also leaves __hash__ as the default identity hash, which is the
+# right semantics here anyway - two snapshots are the same only if they
+# are literally the same object.)
+@dataclass(frozen=True, eq=False)
 class OverlayState:
     """Snapshot of the most recently rendered grid/derivative overlay,
     used by sample_overlay_value's click-to-inspect tool. Bundled into
@@ -1493,6 +1502,23 @@ class Project:
         _lru_put(self.grid_cache, key, result, _GRID_CACHE_MAX_ENTRIES)
         return result
 
+    def _rtp_latitude_warning(self, transform: str) -> str | None:
+        """RTP's operator diverges toward the magnetic equator (see
+        processing/transforms.py::reduction_to_pole) - the amplitude cap
+        there bounds the blowup, but a low-inclination RTP map is still
+        unreliable and streaky along strike. Purely informational, and
+        points at RTE, which is stable at any latitude and is already
+        offered as its own transform."""
+        if transform != "rtp" or self.inclination_deg is None:
+            return None
+        if abs(self.inclination_deg) >= RTP_LOW_LATITUDE_INCLINATION_DEG:
+            return None
+        return (
+            f"자기 복각이 낮아({self.inclination_deg:.1f}°) 극자기 변환(RTP)이 수치적으로 불안정한 구간입니다 - "
+            "측선 방향으로 늘어진 줄무늬 인공 신호가 나타날 수 있습니다. 저위도에서도 안정적인 "
+            "적도자기 변환(RTE)을 대신 사용하는 것을 권장합니다."
+        )
+
     def _cell_size_guideline_warning(self, cell_size_m: float) -> str | None:
         """The UAV magnetics survey guidelines' rule of thumb (Section
         11.1): grid to a cell size of 1/4 to 1/5 of the nominal line
@@ -1739,6 +1765,7 @@ class Project:
         overlay["extrema"] = _extrema_locations(values, grid.easting, grid.northing, self.utm_epsg)
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
+        overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
         overlay["transform"] = req.transform
         if req.show_contours:
             overlay["contours"] = compute_contours(

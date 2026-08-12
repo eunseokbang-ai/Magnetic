@@ -67,6 +67,20 @@ def _direction_coeffs(inclination_deg: float, declination_deg: float):
     return np.cos(i) * np.cos(d), np.cos(i) * np.sin(d), np.sin(i)
 
 
+# Largest amplitude gain the RTP operator is allowed to apply to any single
+# wavenumber - see reduction_to_pole. 20x is well above anything the filter
+# legitimately needs at mid/high magnetic latitudes (at Korea's ~53 deg
+# inclination the operator's true gain peaks around 2-3x, so this never
+# binds there), while still bounding the otherwise-unbounded blowup along
+# the strike direction at low latitudes.
+_RTP_MAX_AMPLIFICATION = 20.0
+
+# Below this |inclination| the RTP operator is considered numerically
+# unreliable and RTE is the standard alternative - the usual textbook
+# threshold for "low magnetic latitude" RTP instability.
+RTP_LOW_LATITUDE_INCLINATION_DEG = 30.0
+
+
 def reduction_to_pole(
     grid: np.ndarray,
     cell_size_m: float,
@@ -74,7 +88,20 @@ def reduction_to_pole(
     declination_deg: float,
 ) -> np.ndarray:
     """Transform an induced-magnetization anomaly to its pole-reduced
-    equivalent (as if measured with a vertical, 90 deg inclination field)."""
+    equivalent (as if measured with a vertical, 90 deg inclination field).
+
+    The raw operator k^2 / (i*(kx*a + ky*b) + |k|*c)^2 has an unbounded
+    singularity as the inclination approaches the magnetic equator: c =
+    sin(I) shrinks toward 0, so for wavenumbers perpendicular to the
+    declination the denominator approaches 0 and the gain diverges,
+    amplifying noise along the strike direction into the classic RTP
+    low-latitude streaking artefact. The operator's magnitude is therefore
+    capped at _RTP_MAX_AMPLIFICATION (phase preserved, so only the runaway
+    amplitudes are affected and nothing changes at mid/high latitudes
+    where the cap never binds). This bounds the artefact but does not
+    remove it - at low magnetic latitudes reduction_to_equator is the
+    appropriate transform instead, and callers should steer users there
+    (see RTP_LOW_LATITUDE_INCLINATION_DEG)."""
     a, b, c = _direction_coeffs(inclination_deg, declination_deg)
 
     def filt(kx, ky, k_mag):
@@ -83,7 +110,11 @@ def reduction_to_pole(
             theta = (k_mag**2) / (denom**2)
         theta[(k_mag == 0)] = 1.0
         theta[~np.isfinite(theta)] = 0.0
-        return theta
+        # Clamp magnitude, keep phase: theta * min(1, cap/|theta|).
+        magnitude = np.abs(theta)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            scale = np.where(magnitude > _RTP_MAX_AMPLIFICATION, _RTP_MAX_AMPLIFICATION / magnitude, 1.0)
+        return theta * scale
 
     return _apply_filter(grid, cell_size_m, filt)
 

@@ -242,7 +242,15 @@ def _ridge_solve(
     reference model's own forward response (G @ m_ref) subtracted from
     the data first. alpha0 is added directly to A_reduced's diagonal in
     place (equivalent to + alpha0*I) rather than allocating/multiplying a
-    dense identity matrix just to add a scalar to the diagonal."""
+    dense identity matrix just to add a scalar to the diagonal.
+
+    NOTE: _select_regularization_strength's inner misfit_at() deliberately
+    inlines this same arithmetic (it hoists the p0-invariant GPGt and
+    d_shifted out of its ~40-probe loop, which is the whole point of the
+    search being cheap). The two must stay numerically identical - if this
+    function's formulation ever changes, change misfit_at to match, or the
+    strength it selects will silently stop corresponding to the solve it
+    is selecting for."""
     GP = Gw * p[np.newaxis, :]
     A_reduced = GP @ Gw.T
     A_reduced[np.diag_indices_from(A_reduced)] += alpha0
@@ -277,7 +285,10 @@ def _select_regularization_strength(
     so G @ diag(p0) @ Gt and d - G@m_ref are computed once here and
     reused across all ~40 probes below, instead of recomputing that
     O(n_obs^2 * n_active) product from scratch on every single probe -
-    that product otherwise dominates the search's entire cost."""
+    that product otherwise dominates the search's entire cost. That
+    hoisting is why misfit_at below inlines _ridge_solve's arithmetic
+    rather than calling it; the two are numerically identical today and
+    must be kept that way (see _ridge_solve's own note)."""
     GPGt = (Gw * p0[np.newaxis, :]) @ Gw.T
     d_shifted = dw - Gw @ m_ref
 
