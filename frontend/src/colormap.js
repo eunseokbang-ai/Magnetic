@@ -77,8 +77,41 @@ export function getColorFn(cmapName) {
   return (t) => lut[Math.max(0, Math.min(255, Math.floor((Number.isFinite(t) ? t : 0) * 256)))];
 }
 
-export function makeColorScale(cmapName, vmin, vmax) {
+export function makeColorScale(cmapName, vmin, vmax, colorStops) {
   const fn = getColorFn(cmapName);
+
+  // colorStops are the data values whose colors sit at evenly spaced
+  // positions of the color bar, as the server rendered the grid image
+  // (render.py:_stretch_stops). Interpolating a value's position through
+  // them reproduces whichever stretch that image used - which matters
+  // because these points are drawn on top of that image: color them by a
+  // plain linear ramp instead and every flight line reads as a stripe of
+  // the wrong color, an artifact easily mistaken for a leveling error in
+  // the data. With no stops (no grid displayed) a linear ramp is right.
+  if (Array.isArray(colorStops) && colorStops.length > 1) {
+    const stops = colorStops;
+    const last = stops.length - 1;
+    return (value) => {
+      if (!Number.isFinite(value)) return fn(0);
+      if (value <= stops[0]) return fn(0);
+      if (value >= stops[last]) return fn(1);
+      // Binary search for the bracketing pair; stops are monotone
+      // non-decreasing by construction.
+      let lo = 0;
+      let hi = last;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (stops[mid] <= value) lo = mid;
+        else hi = mid;
+      }
+      const width = stops[hi] - stops[lo];
+      // Equal stops mean a flat run in the stretch (e.g. a repeated
+      // quantile); anywhere in it maps to the run's own position.
+      const withinPair = width > 0 ? (value - stops[lo]) / width : 0;
+      return fn((lo + withinPair) / last);
+    };
+  }
+
   const span = vmax - vmin || 1;
   return (value) => fn((value - vmin) / span);
 }

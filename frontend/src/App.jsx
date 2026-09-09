@@ -310,7 +310,15 @@ export default function App() {
   const [showContours, setShowContours] = useState(false);
   const [contourInterval, setContourInterval] = useState(null);
   const [contourNLevels, setContourNLevels] = useState(10);
-  const [showPointsOverGrid, setShowPointsOverGrid] = useState(true);
+  // Off by default. Points are drawn *over* the grid image, and since
+  // that image is itself semi-transparent over the basemap while the
+  // points are not, a point always composites more saturated than the
+  // grid cell holding the same value - so every flight line shows as a
+  // colored stripe whether or not the data has anything wrong with it.
+  // No alpha fixes that (matching the grid exactly needs alpha 0), so the
+  // overlay is opt-in: it answers "where did I actually fly", not "what
+  // does the field look like", which is what the grid is for.
+  const [showPointsOverGrid, setShowPointsOverGrid] = useState(false);
   const [showLineLabels, setShowLineLabels] = useState(false);
   const [overlayLayers, setOverlayLayers] = useState([]);
   const [overlayUploading, setOverlayUploading] = useState(false);

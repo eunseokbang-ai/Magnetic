@@ -14,7 +14,7 @@ import pointCanvasLayer from "../leafletPointCanvasLayer";
 // event-listener registration is the actual bottleneck, and it was rebuilt
 // from scratch on every color-range/value-field tweak. The layer is created
 // once and only re-painted via setData() afterwards.
-function PointLayer({ points, vmin, vmax, cmapName, onHover }) {
+function PointLayer({ points, vmin, vmax, cmapName, colorStops, onHover }) {
   const map = useMap();
   const layerRef = useRef(null);
   const onHoverRef = useRef(onHover);
@@ -32,9 +32,9 @@ function PointLayer({ points, vmin, vmax, cmapName, onHover }) {
 
   useEffect(() => {
     if (!layerRef.current) return;
-    const colorScale = makeColorScale(cmapName, vmin, vmax);
+    const colorScale = makeColorScale(cmapName, vmin, vmax, colorStops);
     layerRef.current.setData(points || [], colorScale);
-  }, [points, vmin, vmax, cmapName]);
+  }, [points, vmin, vmax, cmapName, colorStops]);
 
   return null;
 }
@@ -919,11 +919,16 @@ export default function MapView({
           <ImageOverlay url={confidenceOverlay.image_data_url} bounds={confidenceOverlay.bounds} opacity={0.7} />
         ))}
 
+      {/* colorRange here is the *displayed grid's* range (see App.jsx's
+          legendRange), not the raw point min/max: the points sit on top of
+          that image, so anything else makes every flight line a stripe of
+          the wrong color. */}
       <PointLayer
         points={pointsVisible ? points : []}
         vmin={colorRange.vmin}
         vmax={colorRange.vmax}
-        cmapName={cmapName}
+        cmapName={overlay?.cmap || cmapName}
+        colorStops={overlay?.color_stops}
         onHover={onHoverPoint}
       />
 

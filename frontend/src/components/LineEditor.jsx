@@ -55,7 +55,9 @@ export default function LineEditor({
       </label>
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
         <input type="checkbox" checked={showPointsOverGrid} onChange={(e) => onToggleShowPointsOverGrid(e.target.checked)} />
-        <span>그리드 위에 측선 점 표시</span>
+        <span title="측선 점은 그리드 이미지 '위에' 그려집니다. 그리드는 배경지도 위에 반투명하게 깔리는데 점은 그렇지 않기 때문에, 값이 똑같아도 점이 항상 더 진하게 보입니다. 즉 자료에 아무 문제가 없어도 측선마다 색 띠가 생깁니다 - 이걸 줄무늬(레벨 오차)로 오해하지 마세요. 자력값을 읽을 때는 이 옵션을 끄고 그리드만 보세요. 이 표시는 '어디를 실제로 비행했는지' 확인용입니다.">
+          그리드 위에 측선 점 표시 — 비행 경로 확인용 (켜면 측선이 실제보다 진하게 보입니다) ⓘ
+        </span>
       </label>
       {onToggleShowRampPoints && (
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>

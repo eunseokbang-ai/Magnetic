@@ -440,3 +440,38 @@ def test_lowering_the_trend_window_brings_a_smaller_survey_into_range():
 
     assert not compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9).applied
     assert compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=7).applied
+
+
+def test_the_direction_step_is_measured_even_with_the_correction_off():
+    """The number people actually want when they see striping is "do the
+    two flight directions read differently, and by how much". Getting it
+    must not require turning a correction on and comparing two maps."""
+    _client, _pid, summary = _processed()  # heading_correction left off
+    info = summary["heading_correction"]
+
+    assert info["measured"] is True, info["reason"]
+    assert info["applied"] is False
+    assert info["offset_nt"] is not None
+
+
+def test_measuring_the_direction_step_does_not_change_the_data():
+    off = _processed()[2]
+    on = _processed(heading_correction={"enabled": True})[2]
+
+    assert on["heading_correction"]["applied"] is True
+    assert off["heading_correction"]["offset_nt"] == pytest.approx(on["heading_correction"]["offset_nt"])
+    # Same measurement, but only the enabled run may move the field.
+    assert off["anomaly_stats"]["std"] != pytest.approx(on["anomaly_stats"]["std"], rel=1e-9)
+
+
+def test_per_line_shifts_are_only_listed_when_they_were_really_applied():
+    """The line list shows each line's applied shift; with the correction
+    measured but off, reporting one would describe data that was never
+    written."""
+    off = _processed()[2]
+    on = _processed(heading_correction={"enabled": True})[2]
+
+    assert all(line["heading_shift_nt"] in (None, 0.0) for line in off["lines"])
+    assert any(line["heading_shift_nt"] for line in on["lines"])
+    # The A/B grouping is still worth showing either way.
+    assert {line["heading_group"] for line in off["lines"]} == {"A", "B"}

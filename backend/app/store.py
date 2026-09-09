@@ -326,6 +326,9 @@ class Project:
     dominant_azimuth_deg: float | None = None
     line_spacing_m: float | None = None
     heading_leveling: HeadingLevelingResult | None = None
+    # Whether heading_leveling's offset was actually subtracted from the
+    # data, as opposed to only measured - see run_pipeline.
+    heading_correction_applied: bool = False
     statistical_leveling: StatisticalLevelingResult | None = None
     striping_info: dict | None = None
     inclination_deg: float | None = None
@@ -943,21 +946,27 @@ class Project:
         )
 
         hp = params.heading_correction
-        if hp.enabled:
-            self.heading_leveling = compute_heading_correction(
-                df,
-                "anomaly",
-                self.dominant_azimuth_deg,
-                self.line_spacing_m,
-                quiet_percentile=hp.quiet_percentile,
-                max_match_distance_m=hp.max_match_distance_m,
-                method=hp.method,
-                neighborhood_radius_factor=hp.neighborhood_radius_factor,
-            )
+        # Always measured, applied only when the user asked for it.
+        # "Do the forward and reverse lines read differently, and by how
+        # much" is a question about the survey, not about this correction,
+        # and it is the question people actually ask when they see
+        # striping - they should not have to turn a correction on and
+        # compare two maps by eye to get the number. Cheap enough to do
+        # unconditionally: ~0.4s on a 120k-point, 40-line survey.
+        self.heading_leveling = compute_heading_correction(
+            df,
+            "anomaly",
+            self.dominant_azimuth_deg,
+            self.line_spacing_m,
+            quiet_percentile=hp.quiet_percentile,
+            max_match_distance_m=hp.max_match_distance_m,
+            method=hp.method,
+            neighborhood_radius_factor=hp.neighborhood_radius_factor,
+        )
+        self.heading_correction_applied = bool(hp.enabled and self.heading_leveling.applied)
+        if self.heading_correction_applied:
             df["anomaly"] = apply_heading_correction(df, "anomaly", self.heading_leveling)
             df["tmi"] = apply_heading_correction(df, "tmi", self.heading_leveling)
-        else:
-            self.heading_leveling = HeadingLevelingResult(False, "사용자가 헤딩 보정을 비활성화했습니다.", None, 0, 0)
 
         # Tie-line membership is computed unconditionally (cheap) so it can
         # always be shown to the user (e.g. in the flight-path editor),
@@ -1254,7 +1263,7 @@ class Project:
             "duplicate_line_resolution": self.duplicate_line_info,
             "heading_effect_calibration": self.heading_calibration_info,
             "gps_mag_lag": self.gps_lag_info,
-            "heading_correction": _heading_correction_summary(self.heading_leveling),
+            "heading_correction": _heading_correction_summary(self.heading_leveling, self.heading_correction_applied),
             "crossover_leveling": self.crossover_info,
             "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
             "striping": self.striping_info,
@@ -1263,7 +1272,7 @@ class Project:
             "file_level_check": self.file_level_info,
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
-            "lines": _line_summaries(df, self.heading_leveling),
+            "lines": _line_summaries(df, self.heading_leveling, self.heading_correction_applied),
             "display_boundary_polygon": self.display_boundary_polygon,
             "auto_boundary": self.auto_boundary_info,
         }
@@ -3557,9 +3566,17 @@ def _stats(series: pd.Series) -> dict:
     }
 
 
-def _line_summaries(df: pd.DataFrame, heading_leveling: "HeadingLevelingResult | None" = None) -> list[dict]:
+def _line_summaries(
+    df: pd.DataFrame,
+    heading_leveling: "HeadingLevelingResult | None" = None,
+    heading_applied: bool = False,
+) -> list[dict]:
+    # The A/B direction group is worth showing whenever it was worked out,
+    # but the per-line shift only when it was really subtracted - the
+    # offset is now measured even with the correction off, and listing a
+    # shift the data never received would misreport what is on screen.
     groups = heading_leveling.line_groups if heading_leveling else {}
-    shifts = heading_leveling.line_shifts if heading_leveling else {}
+    shifts = heading_leveling.line_shifts if (heading_leveling and heading_applied) else {}
     lines = []
     for line_id, g in df[df["line_id"] >= 0].groupby("line_id"):
         lines.append(
@@ -3578,11 +3595,17 @@ def _line_summaries(df: pd.DataFrame, heading_leveling: "HeadingLevelingResult |
     return lines
 
 
-def _heading_correction_summary(result: "HeadingLevelingResult | None") -> dict:
+def _heading_correction_summary(result: "HeadingLevelingResult | None", applied: bool = False) -> dict:
+    """`measured` = the forward/reverse offset could be estimated;
+    `applied` = it was actually removed from the data. They differ
+    whenever the user leaves the correction off, which is the default -
+    the offset is still reported so the size of any direction-dependent
+    step is visible without having to enable anything."""
     if result is None:
-        return {"applied": False, "reason": None}
+        return {"measured": False, "applied": False, "reason": None}
     return {
-        "applied": result.applied,
+        "measured": result.applied,
+        "applied": applied,
         "reason": result.reason,
         "offset_nt": result.offset_nt,
         "n_matched_pairs": result.n_matched_pairs,

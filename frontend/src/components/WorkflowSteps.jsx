@@ -1048,9 +1048,11 @@ export default function WorkflowSteps({
                   )
                 </div>
               )}
-              {processSummary.heading_correction?.applied ? (
-                <span>
-                  헤딩 보정 오프셋: {processSummary.heading_correction.offset_nt?.toFixed(2)} nT
+              {processSummary.heading_correction?.measured ? (
+                <span
+                  title="전진 방향으로 난 측선과 후진 방향으로 난 측선의 값 차이입니다. 헤딩 보정을 켜지 않아도 항상 측정해서 보여주므로, 방향별 단차가 실제로 있는지 눈이 아니라 숫자로 확인할 수 있습니다. 구역별 산포가 이 값보다 크면 방향 문제가 아니라 측선별 레벨 오차입니다."
+                >
+                  방향별 단차(A↔B): {processSummary.heading_correction.offset_nt?.toFixed(2)} nT
                   {processSummary.heading_correction.method === "local_plane" ? (
                     <>
                       {" "}
@@ -1065,6 +1067,12 @@ export default function WorkflowSteps({
                       {processSummary.heading_correction.n_quiet_pairs}쌍 사용)
                     </>
                   )}
+                  {processSummary.heading_correction.applied ? (
+                    <b style={{ color: "#15803d" }}> — 보정 적용됨</b>
+                  ) : (
+                    <span style={{ color: "#8a7a5c" }}> — 측정만 함 (보정하려면 위 헤딩 보정을 켜세요)</span>
+                  )}{" "}
+                  ⓘ
                 </span>
               ) : (
                 processSummary.heading_correction?.reason && <span style={{ color: "#b45309" }}>헤딩 보정: {processSummary.heading_correction.reason}</span>

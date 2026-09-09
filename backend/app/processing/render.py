@@ -105,11 +105,18 @@ class _NormalNorm(Normalize):
 # Color-bar fractions the legend places its value labels at. Fixed and
 # equally spaced so the frontend can lay the labels out with plain
 # space-between flexbox; what varies per stretch is the VALUE each
-# fraction corresponds to (see _legend_ticks).
+# fraction corresponds to (see _stretch_stops).
 _LEGEND_TICK_FRACTIONS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+# Knots for the value->color lookup handed to the frontend. One per entry
+# of the 256-colour map: at 64 the equalize stretch's CDF was still up to
+# two colour entries out on a long-tailed grid, and 256 floats cost
+# nothing next to the PNG they travel with.
+_COLOR_STOP_FRACTIONS = np.linspace(0.0, 1.0, 256)
 
 
-def _legend_ticks(grid_values: np.ndarray, stretch: str, vmin: float, vmax: float) -> list[float]:
+def _stretch_stops(
+    grid_values: np.ndarray, stretch: str, vmin: float, vmax: float, fractions: np.ndarray
+) -> list[float]:
     """Data value whose color sits at each _LEGEND_TICK_FRACTIONS position
     of the color bar, for the given stretch. A legend that only labels
     vmin/vmax under a uniform gradient implicitly claims the mapping
@@ -123,12 +130,12 @@ def _legend_ticks(grid_values: np.ndarray, stretch: str, vmin: float, vmax: floa
     +-3 sigma display range it reports as vmin/vmax)."""
     if stretch == "equalize":
         finite = grid_values[np.isfinite(grid_values)]
-        return [float(v) for v in np.quantile(finite, _LEGEND_TICK_FRACTIONS)]
+        return [float(v) for v in np.quantile(finite, fractions)]
     if stretch == "normal":
         center, scale = robust_center_scale(grid_values[np.isfinite(grid_values)])
-        ticks = center + scale * _scipy_norm.ppf(np.clip(_LEGEND_TICK_FRACTIONS, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
+        ticks = center + scale * _scipy_norm.ppf(np.clip(fractions, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
         return [float(v) for v in ticks]
-    return [float(v) for v in vmin + _LEGEND_TICK_FRACTIONS * (vmax - vmin)]
+    return [float(v) for v in vmin + fractions * (vmax - vmin)]
 
 
 def _render_rgba(
@@ -289,7 +296,14 @@ def grid_to_png_overlay(
         "vmax": vmax,
         "cmap": cmap_name,
         "stretch": stretch,
-        "legend_ticks": _legend_ticks(grid_values, stretch, vmin, vmax),
+        "legend_ticks": _stretch_stops(grid_values, stretch, vmin, vmax, _LEGEND_TICK_FRACTIONS),
+        # The same value->color mapping the image above was rendered with,
+        # sampled finely enough to interpolate through. The flight-line
+        # points are drawn client-side on top of this image, and without
+        # this they were colored by a plain linear ramp over a different
+        # value range entirely - so every line read as a stripe of the
+        # wrong color over the grid it sits on. See colormap.js.
+        "color_stops": _stretch_stops(grid_values, stretch, vmin, vmax, _COLOR_STOP_FRACTIONS),
     }
 
 
