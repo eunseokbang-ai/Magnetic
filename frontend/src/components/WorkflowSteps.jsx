@@ -1087,6 +1087,8 @@ export default function WorkflowSteps({
                   )}
                   {processSummary.heading_correction.applied ? (
                     <b style={{ color: "#15803d" }}> — 보정 적용됨</b>
+                  ) : hc.enabled ? (
+                    <span style={{ color: "#b45309" }}> — 신뢰할 수 없어 적용 안 됨 (아래 경고 참고)</span>
                   ) : (
                     <span style={{ color: "#8a7a5c" }}> — 측정만 함 (보정하려면 위 헤딩 보정을 켜세요)</span>
                   )}{" "}

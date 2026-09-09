@@ -973,7 +973,7 @@ class Project:
             method=hp.method,
             neighborhood_radius_factor=hp.neighborhood_radius_factor,
         )
-        self.heading_correction_applied = bool(hp.enabled and self.heading_leveling.applied)
+        self.heading_correction_applied = _heading_correction_should_apply(hp, self.heading_leveling)
         if self.heading_correction_applied:
             df["anomaly"] = apply_heading_correction(df, "anomaly", self.heading_leveling)
             df["tmi"] = apply_heading_correction(df, "tmi", self.heading_leveling)
@@ -3603,6 +3603,31 @@ def _line_summaries(
             }
         )
     return lines
+
+
+def _heading_correction_should_apply(hp: "HeadingCorrectionParams", result: "HeadingLevelingResult") -> bool:
+    """Only actually remove the offset when the user turned the correction
+    on AND the estimate passed its own reliability check (empty
+    `warnings`). `result.applied` alone is not enough to gate on - it only
+    means "a number could be computed", not "the number is a real
+    direction-dependent effect". A self-diagnosed unreliable estimate
+    (`offset_spread_nt` >= `offset_nt`, see processing/leveling.py) is
+    dominated by per-line noise rather than a heading effect, so applying
+    it anyway shifts each line by noise instead of removing anything real.
+
+    Measured on the 2026-09 HaeNam M400 block: with the gate missing,
+    turning heading_correction on visibly added wrinkles even though
+    compute_heading_correction correctly flagged the estimate unreliable
+    (offset 1.26 nT < spread 3.03 nT) - the aggregate stripe_ratio metric
+    barely moved (0.95% either way), which is what made this look safe
+    before a user noticed the actual grid looked worse. This gate is what
+    was missing to make the "self-declining" design described in
+    HeadingCorrectionParams' docstring actually hold end to end - compare
+    statistical_leveling, which is always-on by design because its
+    per-line corrections already decline individually rather than as one
+    global step that can only be all-or-nothing.
+    """
+    return bool(hp.enabled and result.applied and not result.warnings)
 
 
 def _heading_correction_summary(result: "HeadingLevelingResult | None", applied: bool = False) -> dict:

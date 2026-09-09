@@ -64,13 +64,19 @@ class HeadingCorrectionParams(BaseModel):
     # turning this on as well nearly halves the residual stripe ratio
     # (1.75% -> 0.90%; jitter 2.27 -> 1.16 nT), and the fitted offset
     # (5.58 nT) is well above its own spread (2.22 nT), so it does not
-    # trigger the "unreliable" warning below. On the 32-file M400 block from
-    # the same site it changes almost nothing (0.95% either way) and *does*
-    # trigger that warning - the platforms differ enough that this needs
-    # measuring per survey rather than assuming, which is exactly what
-    # leaving it on and reading offset_spread_nt vs. offset_nt achieves;
-    # this mirrors statistical_leveling's own always-on, self-declining
-    # design rather than making the user discover the option.
+    # trigger the "unreliable" warning below.
+    #
+    # On the 32-file M400 block from the same site the estimate *does*
+    # trigger that warning (offset 1.26 nT < spread 3.03 nT) - store.py's
+    # pipeline now actually skips applying the correction in that case
+    # (see `_heading_correction_should_apply`), rather than only showing a
+    # warning while still writing the shift. Before that gate existed,
+    # applying an unreliable estimate anyway barely moved the *aggregate*
+    # stripe_ratio metric (0.95% either way) but visibly added wrinkles to
+    # the M400 grid - a user caught this by eye, which the metric alone
+    # did not. So: leaving this enabled is intended to be safe by design
+    # (self-declining, like statistical_leveling), but the self-declining
+    # part has to actually withhold the correction, not just warn about it.
     enabled: bool = True
     quiet_percentile: float = Field(40.0, ge=1, le=100)
     max_match_distance_m: Optional[float] = None

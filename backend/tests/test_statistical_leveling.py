@@ -12,12 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from app.models import HeadingCorrectionParams
 from app.processing.leveling import apply_heading_correction, compute_heading_correction
 from app.processing.microlevel import apply_microleveling
 from app.processing.statistical_leveling import (
     apply_statistical_leveling,
     compute_statistical_leveling,
 )
+from app.store import _heading_correction_should_apply
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"
@@ -285,6 +287,36 @@ def test_local_plane_declines_when_every_line_was_flown_the_same_way():
 
     assert not result.applied
     assert "반대 방향" in result.reason
+
+
+def test_an_unreliable_estimate_is_not_actually_applied_even_when_enabled():
+    """This is the pipeline-level gate (store._heading_correction_should_apply),
+    not compute_heading_correction itself - that function correctly leaves
+    `applied=True` whenever it could fit a number at all (see
+    test_local_plane_reports_a_spread_that_flags_a_non_heading_error above)
+    and lets `warnings` carry the reliability signal instead. It's the
+    pipeline's job to actually withhold the correction when that warning
+    fires. Found missing on the 2026-09 HaeNam M400 block: enabling
+    heading_correction there visibly added wrinkles despite the estimate
+    being flagged unreliable, because the old gate only checked
+    `hp.enabled and result.applied` and ignored `result.warnings`."""
+    rng = np.random.default_rng(7)
+    df = _survey(rng.normal(0.0, 8.0, N_LINES))
+    result = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+    assert result.applied and result.warnings  # sanity: this is the unreliable case
+
+    assert _heading_correction_should_apply(HeadingCorrectionParams(enabled=True), result) is False
+    assert _heading_correction_should_apply(HeadingCorrectionParams(enabled=False), result) is False
+
+
+def test_a_reliable_estimate_is_still_applied_when_enabled():
+    errors = np.array([0.0, 6.0] * (N_LINES // 2))
+    df = _survey(errors)
+    result = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+    assert result.applied and not result.warnings  # sanity: this is the reliable case
+
+    assert _heading_correction_should_apply(HeadingCorrectionParams(enabled=True), result) is True
+    assert _heading_correction_should_apply(HeadingCorrectionParams(enabled=False), result) is False
 
 
 def test_unknown_heading_method_is_rejected():
