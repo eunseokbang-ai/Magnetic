@@ -131,12 +131,28 @@ def _parse_generic(text: str) -> pd.DataFrame:
     if all(c in df.columns for c in _COMPASS_COLUMNS):
         compass_x, compass_y, compass_z = (pd.to_numeric(df[c], errors="coerce") for c in _COMPASS_COLUMNS)
 
-    return pd.DataFrame(
+    # Prefer an already heading/system-error-compensated column when the
+    # upload is a "-comp.csv" produced with "Keep Raw Data" on (both the
+    # vendor LabVIEW tool and the companion MagArrow-heading-error-
+    # calibration tool write the corrected values to "MagComp" and leave
+    # "Mag" as the untouched original in that mode) - otherwise the app
+    # would silently grid the raw, uncorrected field even though a
+    # corrected one was uploaded right alongside it. Measured on the
+    # 2026-09 HaeNam M350 block: MagComp already has ~84% of the raw
+    # forward/reverse heading-effect bias removed (5.4 nT -> 0.9 nT), so
+    # using it here means the app's own heading_correction/statistical_
+    # leveling only have a small residual left to clean up rather than
+    # redoing that work from scratch on values that were never used.
+    mag_col = "MagComp" if "MagComp" in df.columns else "Mag"
+    if mag_col == "MagComp":
+        df["MagComp"] = pd.to_numeric(df["MagComp"], errors="coerce")
+
+    result = pd.DataFrame(
         {
             "timestamp": df["timestamp"],
             "lat": df["Latitude"],
             "lon": df["Longitude"],
-            "mag_raw": df["Mag"],
+            "mag_raw": df[mag_col],
             "altitude_msl_m": df["Altitude"] if "Altitude" in df.columns else np.nan,
             "geoid_separation_m": df["HeightOverEllipsoid"] if "HeightOverEllipsoid" in df.columns else np.nan,
             "speed_over_ground": df["SpeedOverGround"] if "SpeedOverGround" in df.columns else np.nan,
@@ -147,6 +163,8 @@ def _parse_generic(text: str) -> pd.DataFrame:
             "compass_z": compass_z,
         }
     )
+    result.attrs["mag_source_column"] = mag_col
+    return result
 
 
 def _parse_sensys_r1(text: str) -> pd.DataFrame:
@@ -427,6 +445,7 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
     )
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     out.attrs["source_format"] = raw.attrs.get("source_format", "generic")
+    out.attrs["mag_source_column"] = raw.attrs.get("mag_source_column", "Mag")
     return out
 
 
@@ -485,6 +504,10 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     # combined, already-mixed dataset.
     for i, p in enumerate(parts):
         p["source_file_index"] = i
+        # Per-row (not just per-batch) so a mixed upload - some files
+        # already have a "MagComp" column, some don't - stays traceable
+        # after everything is concatenated together.
+        p["used_precompensated_mag"] = p.attrs.get("mag_source_column") == "MagComp"
 
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.sort_values("timestamp").reset_index(drop=True)
@@ -496,4 +519,12 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     combined.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     combined.attrs["n_duplicate_timestamps_removed"] = n_duplicate_timestamps_removed
     combined.attrs["source_formats"] = source_formats
+    # How many of the uploaded files already had a "MagComp" column (see
+    # _parse_generic) - surfaced so the user can tell, from the processing
+    # summary, whether an upload's own heading-effect compensation was
+    # actually used rather than silently falling back to the raw field.
+    combined.attrs["n_files_using_precompensated_mag"] = sum(
+        1 for p in parts if p.attrs.get("mag_source_column") == "MagComp"
+    )
+    combined.attrs["n_files_total"] = len(parts)
     return combined

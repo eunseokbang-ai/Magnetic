@@ -54,9 +54,24 @@ class BaseQCParams(BaseModel):
 
 
 class HeadingCorrectionParams(BaseModel):
-    # Off by default - an optional correction the user opts into, not a
-    # baseline QC step every survey needs.
-    enabled: bool = False
+    # On by default (as of the 2026-09 HaeNam M350 survey): this platform's
+    # opposite-heading lines fly at markedly different pitch (theta ~63 deg
+    # vs ~19 deg near the survey's dominant azimuth, vs. ~47/31 deg on the
+    # older M400 rig - see MagArrow-heading-error-calibration's Phase M/N
+    # investigation), which the sensor's heading effect turns into a real,
+    # well-constrained forward/reverse offset. Measured on the 42-file M350
+    # HaeNam block (89 lines): with statistical_leveling already applied,
+    # turning this on as well nearly halves the residual stripe ratio
+    # (1.75% -> 0.90%; jitter 2.27 -> 1.16 nT), and the fitted offset
+    # (5.58 nT) is well above its own spread (2.22 nT), so it does not
+    # trigger the "unreliable" warning below. On the 32-file M400 block from
+    # the same site it changes almost nothing (0.95% either way) and *does*
+    # trigger that warning - the platforms differ enough that this needs
+    # measuring per survey rather than assuming, which is exactly what
+    # leaving it on and reading offset_spread_nt vs. offset_nt achieves;
+    # this mirrors statistical_leveling's own always-on, self-declining
+    # design rather than making the user discover the option.
+    enabled: bool = True
     quiet_percentile: float = Field(40.0, ge=1, le=100)
     max_match_distance_m: Optional[float] = None
     # "local_plane" (default) fits a local plane plus a forward/reverse

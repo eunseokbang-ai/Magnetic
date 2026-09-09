@@ -665,6 +665,16 @@ class Project:
             "n_duplicate_timestamps_removed": d.attrs.get("n_duplicate_timestamps_removed", 0),
             "n_invalid_coords_removed": d.attrs.get("n_invalid_coords_removed", 0),
             "source_formats": d.attrs.get("source_formats", []),
+            # Whether the uploaded files' own "MagComp" column (a prior
+            # heading/system-error compensation, e.g. from the companion
+            # MagArrow-heading-error-calibration tool or the vendor's own
+            # LabVIEW processor with "Keep Raw Data" on) was actually used
+            # in place of the raw field - see io_/drone_loader.py
+            # _parse_generic. Surfaced explicitly because it is easy to
+            # upload a "-comp.csv" and assume its correction was applied
+            # when, before this was tracked, there was no way to tell.
+            "n_files_using_precompensated_mag": d.attrs.get("n_files_using_precompensated_mag", 0),
+            "n_files_total": d.attrs.get("n_files_total", 0),
             "median_speed_mps": _median_speed_mps(d),
             "flight_dates": [dt.isoformat() for dt in self._survey_dates() or []],
         }

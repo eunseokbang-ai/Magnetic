@@ -250,6 +250,24 @@ export default function WorkflowSteps({
                   인식된 파일 형식: {droneSummary.source_formats.join(", ")}
                 </>
               )}
+              {droneSummary.n_files_total > 0 && (
+                <>
+                  <br />
+                  {droneSummary.n_files_using_precompensated_mag > 0 ? (
+                    <span style={{ color: "#166534" }}>
+                      사전 보정값(MagComp) 사용: {droneSummary.n_files_total}개 중{" "}
+                      {droneSummary.n_files_using_precompensated_mag}개 파일
+                      {droneSummary.n_files_using_precompensated_mag < droneSummary.n_files_total &&
+                        " (나머지는 MagComp 컬럼이 없어 원본 Mag 사용)"}
+                    </span>
+                  ) : (
+                    <span style={{ color: "#8a7a5c" }}>
+                      MagComp 컬럼이 없어 원본 Mag 값을 사용합니다 - 헤딩/시스템 오차 보정이 이미 된
+                      "-comp.csv"를 올렸다면, 그 파일에 "Keep Raw Data"로 만든 MagComp 컬럼이 있는지 확인하세요.
+                    </span>
+                  )}
+                </>
+              )}
               {(droneSummary.n_duplicate_timestamps_removed > 0 || droneSummary.n_invalid_coords_removed > 0) && (
                 <>
                   <br />

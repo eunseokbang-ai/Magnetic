@@ -6,7 +6,7 @@ import io
 import numpy as np
 import pytest
 
-from app.io_.drone_loader import DroneLoadError, _detect_format, load_drone_csv
+from app.io_.drone_loader import DroneLoadError, _detect_format, load_drone_csv, load_drone_csvs
 
 
 def _buf(text: str) -> io.BytesIO:
@@ -151,3 +151,64 @@ def test_unrecognized_generic_missing_columns_raises():
     text = "foo,bar\n1,2\n"
     with pytest.raises(DroneLoadError):
         load_drone_csv(_buf(text))
+
+
+def test_generic_prefers_magcomp_over_mag_when_present():
+    """A "-comp.csv" written with "Keep Raw Data" on (both the vendor tool
+    and the companion MagArrow-heading-error-calibration tool do this)
+    keeps "Mag" as the untouched original and puts the corrected value in
+    "MagComp" - the loader must use the corrected one."""
+    rows = ["Date,Time,Latitude,Longitude,Mag,MagComp"]
+    for i in range(20):
+        rows.append(f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{50000 + i},{49000 + i}")
+    df = load_drone_csv(_buf("\n".join(rows)))
+    assert np.isclose(df["mag_raw"].iloc[0], 49000)
+    assert df.attrs["mag_source_column"] == "MagComp"
+
+
+def test_generic_falls_back_to_mag_when_no_magcomp_column():
+    rows = ["Date,Time,Latitude,Longitude,Mag"]
+    for i in range(20):
+        rows.append(f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{50000 + i}")
+    df = load_drone_csv(_buf("\n".join(rows)))
+    assert np.isclose(df["mag_raw"].iloc[0], 50000)
+    assert df.attrs["mag_source_column"] == "Mag"
+
+
+def _generic_text(mag_base, with_magcomp=False, comp_base=None, n=20):
+    header = "Date,Time,Latitude,Longitude,Mag" + (",MagComp" if with_magcomp else "")
+    rows = [header]
+    for i in range(n):
+        line = f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{mag_base + i}"
+        if with_magcomp:
+            line += f",{comp_base + i}"
+        rows.append(line)
+    return "\n".join(rows)
+
+
+def test_load_drone_csvs_tracks_precompensated_mag_per_file():
+    """A batch upload mixing a -comp.csv (has MagComp) with a plain -pre.csv
+    (no MagComp) must report accurately which is which, not just whether
+    *any* file had it - see store.py's drone_summary."""
+    buf_with = _buf(_generic_text(50000, with_magcomp=True, comp_base=49000))
+    buf_without = _buf(_generic_text(60000, with_magcomp=False))
+    combined = load_drone_csvs([buf_with, buf_without])
+
+    assert combined.attrs["n_files_total"] == 2
+    assert combined.attrs["n_files_using_precompensated_mag"] == 1
+
+    per_file = combined.groupby("source_file_index")["used_precompensated_mag"].first()
+    assert bool(per_file[0]) is True
+    assert bool(per_file[1]) is False
+
+    # the file that had MagComp must actually have used it, not raw Mag
+    file0 = combined[combined["source_file_index"] == 0]
+    assert file0["mag_raw"].min() < 50000  # in the 49000s, not 50000s
+
+
+def test_load_drone_csvs_all_files_using_precompensated_mag():
+    buf_a = _buf(_generic_text(50000, with_magcomp=True, comp_base=49000))
+    buf_b = _buf(_generic_text(60000, with_magcomp=True, comp_base=59000))
+    combined = load_drone_csvs([buf_a, buf_b])
+    assert combined.attrs["n_files_using_precompensated_mag"] == 2
+    assert combined.attrs["n_files_total"] == 2

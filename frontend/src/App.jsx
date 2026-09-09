@@ -191,7 +191,9 @@ const DEFAULT_PARAMS = {
     reference: "mean",
   },
   heading_correction: {
-    enabled: false,
+    // On by default - see the matching comment in backend/app/models.py
+    // HeadingCorrectionParams for the measured evidence (M350 HaeNam block).
+    enabled: true,
     quiet_percentile: 40.0,
     max_match_distance_m: null,
     method: "local_plane",

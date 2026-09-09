@@ -445,8 +445,13 @@ def test_lowering_the_trend_window_brings_a_smaller_survey_into_range():
 def test_the_direction_step_is_measured_even_with_the_correction_off():
     """The number people actually want when they see striping is "do the
     two flight directions read differently, and by how much". Getting it
-    must not require turning a correction on and comparing two maps."""
-    _client, _pid, summary = _processed()  # heading_correction left off
+    must not require turning a correction on and comparing two maps.
+
+    heading_correction is on by default now (see models.py
+    HeadingCorrectionParams), so "off" has to be requested explicitly here -
+    the thing under test is the measured-but-not-applied state itself, not
+    whatever the current default happens to be."""
+    _client, _pid, summary = _processed(heading_correction={"enabled": False})
     info = summary["heading_correction"]
 
     assert info["measured"] is True, info["reason"]
@@ -455,7 +460,7 @@ def test_the_direction_step_is_measured_even_with_the_correction_off():
 
 
 def test_measuring_the_direction_step_does_not_change_the_data():
-    off = _processed()[2]
+    off = _processed(heading_correction={"enabled": False})[2]
     on = _processed(heading_correction={"enabled": True})[2]
 
     assert on["heading_correction"]["applied"] is True
@@ -468,7 +473,7 @@ def test_per_line_shifts_are_only_listed_when_they_were_really_applied():
     """The line list shows each line's applied shift; with the correction
     measured but off, reporting one would describe data that was never
     written."""
-    off = _processed()[2]
+    off = _processed(heading_correction={"enabled": False})[2]
     on = _processed(heading_correction={"enabled": True})[2]
 
     assert all(line["heading_shift_nt"] in (None, 0.0) for line in off["lines"])
