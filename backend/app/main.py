@@ -32,6 +32,7 @@ from .models import (
     LineamentRequest,
     LocalTileFolderRequest,
     ManualExcludeRequest,
+    AutoBoundaryRequest,
     DisplayBoundaryRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
@@ -371,6 +372,23 @@ def smooth(project_id: str, req: ManualSmoothRequest):
 def display_boundary(project_id: str, req: DisplayBoundaryRequest):
     project = store.get(project_id)
     return project.set_display_boundary(req)
+
+
+@app.post("/api/projects/{project_id}/display-boundary/auto")
+def auto_display_boundary(project_id: str, req: AutoBoundaryRequest):
+    project = store.get(project_id)
+    return project.auto_display_boundary(req.buffer_m)
+
+
+@app.get("/api/projects/{project_id}/display-boundary/export")
+def export_display_boundary(project_id: str, format: str = "shp", name: str = "boundary"):
+    project = store.get(project_id)
+    data, media_type, filename = project.export_display_boundary(format, name)
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.post("/api/projects/{project_id}/grid")

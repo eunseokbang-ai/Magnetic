@@ -143,7 +143,11 @@ function LineLabels({ lines, visible }) {
       if (l.centroid_lat == null || l.centroid_lon == null) continue;
       const icon = L.divIcon({
         className: "line-number-label",
-        html: `<div style="background:rgba(37,99,235,0.9);color:white;font-size:11px;font-weight:600;padding:1px 5px;border-radius:4px;white-space:nowrap;transform:translate(-50%,-50%);">#${l.line_id}</div>`,
+        // 22px (2x the original 11px): the labels sit over a busy colored
+        // point cloud and were hard to read at a glance while editing
+        // lines. Padding/radius scale with it so the chip stays in
+        // proportion instead of the text crowding its own background.
+        html: `<div style="background:rgba(37,99,235,0.9);color:white;font-size:22px;font-weight:600;padding:2px 10px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-50%);">#${l.line_id}</div>`,
         iconSize: [0, 0],
       });
       L.marker([l.centroid_lat, l.centroid_lon], { icon, interactive: false }).addTo(group);
@@ -755,6 +759,11 @@ function BoundaryLayer({ polygon }) {
       layerRef.current = null;
     }
     if (!polygon || polygon.length < 3) return undefined;
+    // The boundary is either one flat ring [[lat, lon], ...] (drawn by
+    // hand, or auto-generated over a single survey block) or a list of
+    // such rings when the survey splits into separate blocks - see
+    // store.py::boundary_rings. L.polygon takes the nested form directly,
+    // so both shapes render by passing the value through unchanged.
     const layer = L.polygon(polygon, {
       color: "#ea580c",
       weight: 2,

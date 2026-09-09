@@ -239,6 +239,12 @@ export default function App() {
   const [boundaryMode, setBoundaryMode] = useState(false);
   const [boundaryPolygon, setBoundaryPolygon] = useState(null);
   const [boundaryFilename, setBoundaryFilename] = useState("boundary.json");
+  // Buffer distance (m) for the auto-generated boundary - the one number
+  // that decides how far past the outermost flight line the map extends.
+  // Matches ProcessParams.display_boundary_buffer_m's default.
+  const [boundaryBufferM, setBoundaryBufferM] = useState(10);
+  const [autoBoundaryBusy, setAutoBoundaryBusy] = useState(false);
+  const [autoBoundaryInfo, setAutoBoundaryInfo] = useState(null);
   const [nearestIntermagnetCsvFilename, setNearestIntermagnetCsvFilename] = useState("intermagnet_nearest_estimate.csv");
   const [exportingGeotiff, setExportingGeotiff] = useState(false);
   const [savingProject, setSavingProject] = useState(false);
@@ -891,6 +897,15 @@ export default function App() {
     if (processSummary && "display_boundary_polygon" in processSummary) {
       setBoundaryPolygon(processSummary.display_boundary_polygon || null);
     }
+    // Processing reports what its own automatic boundary did (buffer used,
+    // area, any warning about split blocks) - show that, not a stale
+    // result from a previous manual regeneration.
+    if (processSummary && "auto_boundary" in processSummary) {
+      setAutoBoundaryInfo(processSummary.auto_boundary || null);
+      if (processSummary.auto_boundary?.buffer_m) {
+        setBoundaryBufferM(processSummary.auto_boundary.buffer_m);
+      }
+    }
   }, [processSummary]);
 
   const handleToggleBoundaryMode = () => {
@@ -942,6 +957,37 @@ export default function App() {
     if (!boundaryPolygon) return;
     const base = boundaryFilename.trim().replace(/\.json$/i, "") || "boundary";
     api.downloadJson({ polygon: boundaryPolygon }, `${base}.json`);
+  };
+
+  // Regenerate the boundary from the flown lines at the current buffer.
+  // Processing already does this once with the default buffer (see
+  // ProcessParams.auto_display_boundary); this is how the user retunes it
+  // without paying for a full reprocess.
+  const handleAutoBoundary = async () => {
+    if (!projectId) return;
+    try {
+      setError(null);
+      setAutoBoundaryBusy(true);
+      const resp = await api.autoDisplayBoundary(projectId, boundaryBufferM);
+      setBoundaryPolygon(resp.display_boundary_polygon || null);
+      setAutoBoundaryInfo(resp);
+      await refreshCurrentOverlay();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setAutoBoundaryBusy(false);
+    }
+  };
+
+  const handleExportBoundaryGis = async (format) => {
+    if (!projectId || !boundaryPolygon) return;
+    try {
+      setError(null);
+      const base = boundaryFilename.trim().replace(/\.(json|kml|zip)$/i, "") || "boundary";
+      await api.exportDisplayBoundary(projectId, format, base);
+    } catch (e) {
+      handleError(e);
+    }
   };
 
   const handleImportBoundaryFile = async (file) => {
@@ -2271,6 +2317,12 @@ export default function App() {
           boundaryFilename={boundaryFilename}
           setBoundaryFilename={setBoundaryFilename}
           onImportBoundaryFile={handleImportBoundaryFile}
+          boundaryBufferM={boundaryBufferM}
+          setBoundaryBufferM={setBoundaryBufferM}
+          onAutoBoundary={handleAutoBoundary}
+          autoBoundaryBusy={autoBoundaryBusy}
+          autoBoundaryInfo={autoBoundaryInfo}
+          onExportBoundaryGis={handleExportBoundaryGis}
           inspectMode={inspectMode}
           onToggleInspectMode={toggleInspectMode}
           activeTransform={activeTransform}

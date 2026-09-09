@@ -141,6 +141,8 @@ from .processing.depth_estimation import (
     spectral_depth_diagnostic,
     tilt_depth_estimates,
 )
+from .processing.boundary import auto_survey_boundary
+from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from .processing.contacts import detect_magnetic_contacts
 from .processing.lineaments import extract_lineaments
 from .processing.microlevel import apply_microleveling
@@ -212,6 +214,26 @@ class ProjectError(ValueError):
     pass
 
 
+def boundary_rings(polygon) -> list[list[list[float]]]:
+    """Normalize a display boundary to a list of [[lat, lon], ...] rings.
+
+    The stored value is polymorphic for backward compatibility: a boundary
+    the user drew (or any project saved before multi-part support) is a
+    single flat ring [[lat, lon], ...], while an auto-generated boundary
+    over a survey that splits into separate blocks is a list of such
+    rings. The two are told apart unambiguously by looking one level in -
+    a single ring's first element is a [lat, lon] pair of numbers, a
+    multi-ring's first element is itself a ring. Every consumer
+    (masking, export, save, the API response) goes through this so
+    neither shape has to be special-cased anywhere else."""
+    if not polygon:
+        return []
+    first = polygon[0]
+    if first and isinstance(first[0], (list, tuple)):
+        return [list(ring) for ring in polygon]
+    return [list(polygon)]
+
+
 # LRU entry caps for the two per-project result caches below. Both caches
 # are only fully cleared on reprocess/manual-edit, so without a cap a user
 # experimenting with cell sizes/interpolation methods/masking distances
@@ -279,6 +301,11 @@ class Project:
     # (overlay/export) to exactly that outline, on top of the automatic
     # convex-hull extrapolation cap in gridding.py - see set_display_boundary.
     display_boundary_polygon: list[list[float]] | None = None
+    # Diagnostics from the last automatic boundary generation (buffer used,
+    # area, dropped parts/holes, warnings) or {"failed": True, "reason":...}
+    # - surfaced in process_summary so the user can see what the boundary
+    # they didn't draw themselves actually did.
+    auto_boundary_info: dict | None = None
     # point_id -> True (force include, even if auto-excluded) | False (force
     # exclude, even if auto-included). Absent point_ids fall back to the
     # automatic line_id>=0 result.
@@ -951,6 +978,20 @@ class Project:
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
+
+        # Derived from the lines this run just produced, so it has to come
+        # after self.processed/line_spacing_m are in place. Never fatal:
+        # the boundary is a display refinement, and a survey too sparse or
+        # oddly shaped to outline should still process and grid normally
+        # (capped at the convex hull as before), with the reason surfaced
+        # in the summary rather than failing the whole run.
+        self.auto_boundary_info = None
+        if params.auto_display_boundary:
+            try:
+                self.auto_boundary_info = self.auto_display_boundary(params.display_boundary_buffer_m)
+            except ProjectError as exc:
+                self.auto_boundary_info = {"failed": True, "reason": str(exc)}
+
         return self.process_summary()
 
     def _check_file_level_offsets(self, df: pd.DataFrame) -> dict:
@@ -1182,6 +1223,7 @@ class Project:
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling),
             "display_boundary_polygon": self.display_boundary_polygon,
+            "auto_boundary": self.auto_boundary_info,
         }
 
     def run_chat(self, message: str, history: list[dict]) -> dict:
@@ -1409,10 +1451,77 @@ class Project:
         boundary is applied as a cheap mask at render time (see
         _apply_display_boundary), not baked into the cached grid values,
         so drawing/clearing it doesn't force expensive regridding."""
-        if req.polygon is not None and len(req.polygon) < 3:
-            raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
+        if req.polygon is not None:
+            rings = boundary_rings(req.polygon)
+            if not rings or any(len(ring) < 3 for ring in rings):
+                raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
         self.display_boundary_polygon = req.polygon
         return {"display_boundary_polygon": self.display_boundary_polygon}
+
+    def auto_display_boundary(self, buffer_m: float = 10.0) -> dict:
+        """Derive the display boundary from the flown lines themselves -
+        a corridor buffer_m outside the outermost line, with the regular
+        line-to-line spacing closed over so the interior stays solid. See
+        processing/boundary.py for the closing operation and why the
+        merge radius is taken from the line spacing rather than exposed.
+
+        Replaces whatever boundary is currently set. Like
+        set_display_boundary this leaves grid_cache/transform_cache alone
+        (the boundary is a render-time mask, not baked into the grid)."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계가 설정되지 않았습니다 (자료 처리를 먼저 실행하세요).")
+
+        df = self.processed
+        active = self._active_mask()
+        if not active.any():
+            raise ProjectError("경계를 만들 활성 측선 자료가 없습니다.")
+
+        try:
+            result = auto_survey_boundary(
+                df.loc[active, "x"].to_numpy(),
+                df.loc[active, "y"].to_numpy(),
+                df.loc[active, "line_id"].to_numpy(),
+                buffer_m=buffer_m,
+                line_spacing_m=self.line_spacing_m,
+            )
+        except ValueError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        to_wgs84 = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
+        rings = []
+        for ring_xy in result.rings_xy:
+            lon, lat = to_wgs84.transform(ring_xy[:, 0], ring_xy[:, 1])
+            rings.append([[float(la), float(lo)] for la, lo in zip(lat, lon)])
+        # Single-block surveys (the normal case) keep the plain flat-ring
+        # shape, so saved projects and exported boundary JSON stay readable
+        # by anything that predates multi-part support - see boundary_rings.
+        self.display_boundary_polygon = rings[0] if len(rings) == 1 else rings
+
+        return {
+            "display_boundary_polygon": self.display_boundary_polygon,
+            "buffer_m": result.buffer_m,
+            "merge_radius_m": round(result.merge_radius_m, 1),
+            "area_km2": round(result.area_m2 / 1e6, 4),
+            "n_parts": result.n_parts,
+            "n_vertices": sum(len(r) for r in rings),
+            "dropped_holes": result.dropped_holes,
+            "warnings": result.warnings,
+        }
+
+    def export_display_boundary(self, fmt: str, name: str = "boundary") -> tuple[bytes, str, str]:
+        """(bytes, media type, filename) for the current boundary as a
+        zipped shapefile or a KML - see processing/boundary_export.py."""
+        rings = boundary_rings(self.display_boundary_polygon)
+        if not rings:
+            raise ProjectError("먼저 경계를 그리거나 자동 생성하세요.")
+        safe = "".join(c for c in name if c.isalnum() or c in ("-", "_")) or "boundary"
+        if fmt == "shp":
+            return boundary_to_shapefile_zip(rings, safe), "application/zip", f"{safe}_shapefile.zip"
+        if fmt == "kml":
+            return boundary_to_kml(rings, safe), "application/vnd.google-earth.kml+xml", f"{safe}.kml"
+        raise ProjectError(f"지원하지 않는 경계 내보내기 형식입니다: {fmt} (shp 또는 kml)")
 
     def _apply_display_boundary(self, values: np.ndarray, grid: GridResult) -> np.ndarray:
         """Mask `values` (a grid.values-shaped array) to NaN outside the
@@ -1424,18 +1533,24 @@ class Project:
         place), since callers commonly pass in a grid_cache/transform_cache
         entry that must stay valid (boundary-free) for other callers/later
         boundary changes."""
-        if not self.display_boundary_polygon or self.utm_epsg is None:
+        rings = boundary_rings(self.display_boundary_polygon)
+        if not rings or self.utm_epsg is None:
             return values
-        from shapely import contains_xy
+        from shapely import contains_xy, unary_union
         from shapely.geometry import Polygon
 
-        lat = [pt[0] for pt in self.display_boundary_polygon]
-        lon = [pt[1] for pt in self.display_boundary_polygon]
         to_local = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
-        bx, by = to_local.transform(lon, lat)
-        polygon = Polygon(np.column_stack([bx, by]))
+        polygons = []
+        for ring in rings:
+            lat = [pt[0] for pt in ring]
+            lon = [pt[1] for pt in ring]
+            bx, by = to_local.transform(lon, lat)
+            polygons.append(Polygon(np.column_stack([bx, by])))
+        # A survey split into separate blocks keeps every block; a cell is
+        # shown when it falls inside any of them.
+        area = polygons[0] if len(polygons) == 1 else unary_union(polygons)
         easting_2d, northing_2d = np.meshgrid(grid.easting, grid.northing)
-        inside = contains_xy(polygon, easting_2d.ravel(), northing_2d.ravel()).reshape(values.shape)
+        inside = contains_xy(area, easting_2d.ravel(), northing_2d.ravel()).reshape(values.shape)
         return np.where(inside, values, np.nan)
 
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
@@ -2736,9 +2851,19 @@ class Project:
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
-                    boundary_polygon = meta.get("display_boundary_polygon")
-                    if boundary_polygon:
-                        self.set_display_boundary(DisplayBoundaryRequest(polygon=boundary_polygon))
+                    # Restore the saved boundary state exactly, including
+                    # "none". The run_pipeline replay above regenerates an
+                    # automatic boundary (ProcessParams.auto_display_boundary
+                    # defaults on), which would otherwise both overwrite a
+                    # hand-drawn boundary and resurrect one the user had
+                    # deliberately cleared before saving. Keyed on the key's
+                    # presence, not its truthiness, so a save file old enough
+                    # to predate the field keeps the new default instead of
+                    # being forced to "no boundary".
+                    if "display_boundary_polygon" in meta:
+                        self.set_display_boundary(
+                            DisplayBoundaryRequest(polygon=meta.get("display_boundary_polygon"))
+                        )
                     processed = True
 
                 inversion_summary = None

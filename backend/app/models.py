@@ -215,6 +215,17 @@ class ProcessParams(BaseModel):
     crossover_leveling: CrossoverLevelingParams = CrossoverLevelingParams()
     noise_qc: NoiseQcParams = NoiseQcParams()
     notch_filter: NotchFilterParams = NotchFilterParams()
+    # Derive the display boundary from the flown lines at the end of
+    # processing (see store.auto_display_boundary and
+    # processing/boundary.py) instead of leaving the grid capped only at
+    # the convex hull, which over-fills any concave footprint. On by
+    # default because that over-fill is the common case and shows up as
+    # interpolated surface over unflown ground; a boundary the user drew
+    # or imported by hand is replaced on the next processing run, so turn
+    # this off to keep one.
+    auto_display_boundary: bool = True
+    # How far outside the outermost flight line the boundary sits.
+    display_boundary_buffer_m: float = Field(10.0, gt=0)
 
 
 ValueField = Literal["tmi", "anomaly"]
@@ -359,6 +370,14 @@ class DisplayBoundaryRequest(BaseModel):
     lets the user clip exactly to the real survey outline in that case.
     None/omit clears the boundary (shows the full auto-capped extent)."""
     polygon: Optional[list[list[float]]] = None  # [[lat, lon], ...] or None to clear
+
+
+class AutoBoundaryRequest(BaseModel):
+    """Regenerate the display boundary from the flown lines - the same
+    thing processing does by default (ProcessParams.auto_display_boundary),
+    exposed on its own so the buffer can be retuned without reprocessing.
+    See processing/boundary.py."""
+    buffer_m: float = Field(10.0, gt=0)
 
 
 class IntermagnetFetchRequest(BaseModel):

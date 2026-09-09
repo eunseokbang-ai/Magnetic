@@ -157,6 +157,12 @@ export default function WorkflowSteps({
   boundaryFilename,
   setBoundaryFilename,
   onImportBoundaryFile,
+  boundaryBufferM,
+  setBoundaryBufferM,
+  onAutoBoundary,
+  autoBoundaryBusy,
+  autoBoundaryInfo,
+  onExportBoundaryGis,
   inspectMode,
   onToggleInspectMode,
   activeTransform,
@@ -1031,11 +1037,43 @@ export default function WorkflowSteps({
           )}
           <Field
             label={
-              <span title="그리드는 자동으로 실측 측선들이 감싸는 볼록 다각형(convex hull) 바깥으로는 확장되지 않습니다. 하지만 조사구역이 L자 등 오목한 모양이면 그 자동 범위 안에 실제로 측선이 없는 빈 구역이 포함될 수 있습니다 - 지도에 직접 다각형을 그려 그 안쪽만 표시되도록 추가로 제한할 수 있습니다.">
-                표시 경계 (선택) — 지도에 다각형을 그려 그 안쪽만 내삽/외삽 표시 ⓘ
+              <span title="자료 처리를 실행하면 실제 비행한 측선을 기준으로 경계가 자동 생성되어, 측선이 없는 곳까지 내삽/외삽으로 채워지는 것을 막습니다. 버퍼는 가장 바깥 측선에서 경계까지의 거리입니다. 측선 사이의 정상 간격은 자동으로 이어 붙이므로 안쪽은 빈틈 없이 채워지고, 측선 간격보다 훨씬 넓은 빈 구간(결측 측선 등)만 경계 밖으로 빠집니다.">
+                표시 경계 — 측선 기준 자동 생성 (버퍼 조절 가능) ⓘ
               </span>
             }
           >
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ color: "#6b5c42" }}>버퍼</span>
+              <input
+                type="number"
+                min="0.1"
+                step="1"
+                value={boundaryBufferM}
+                onChange={(e) => setBoundaryBufferM(parseFloat(e.target.value) || 0)}
+                style={{ ...inputStyle, width: 70 }}
+                title="가장 바깥 측선에서 경계선까지의 거리(m)"
+              />
+              <span style={{ color: "#6b5c42" }}>m</span>
+              <button style={buttonStyle} onClick={() => onAutoBoundary()} disabled={autoBoundaryBusy}>
+                {autoBoundaryBusy ? "생성 중..." : "이 버퍼로 경계 다시 생성"}
+              </button>
+            </div>
+            {autoBoundaryInfo && !autoBoundaryInfo.failed && (
+              <div style={{ fontSize: 11, color: "#6b5c42", marginBottom: 6 }}>
+                자동 경계 적용됨: 버퍼 {autoBoundaryInfo.buffer_m}m, 면적 {autoBoundaryInfo.area_km2}km²
+                {autoBoundaryInfo.n_parts > 1 ? `, 구역 ${autoBoundaryInfo.n_parts}개` : ""}
+                {(autoBoundaryInfo.warnings || []).map((w, i) => (
+                  <div key={i} style={{ color: "#b45309", marginTop: 2 }}>
+                    ⚠ {w}
+                  </div>
+                ))}
+              </div>
+            )}
+            {autoBoundaryInfo?.failed && (
+              <div style={{ fontSize: 11, color: "#b45309", marginBottom: 6 }}>
+                ⚠ 자동 경계를 만들지 못했습니다: {autoBoundaryInfo.reason} (그리드는 기존 방식대로 표시됩니다)
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button
                 style={{
@@ -1063,8 +1101,26 @@ export default function WorkflowSteps({
                     title="다른 프로젝트에서도 같은 경계를 재사용하려면 알아보기 쉬운 이름으로 바꿀 수 있습니다"
                     style={{ ...inputStyle, width: 160 }}
                   />
-                  <button style={buttonStyle} onClick={() => onExportBoundary()}>
-                    경계 파일로 저장
+                  <button
+                    style={buttonStyle}
+                    onClick={() => onExportBoundary()}
+                    title="이 앱에서 다시 불러오기 위한 형식 (아래 '경계 파일 불러오기'로 재사용)"
+                  >
+                    JSON 저장
+                  </button>
+                  <button
+                    style={buttonStyle}
+                    onClick={() => onExportBoundaryGis("shp")}
+                    title="ESRI 셰이프파일(.shp/.shx/.dbf/.prj)을 zip으로 내려받습니다 - QGIS/ArcGIS에서 바로 열립니다 (WGS84 경위도)"
+                  >
+                    SHP 저장
+                  </button>
+                  <button
+                    style={buttonStyle}
+                    onClick={() => onExportBoundaryGis("kml")}
+                    title="구글어스 등에서 열 수 있는 KML로 내려받습니다 (WGS84 경위도)"
+                  >
+                    KML 저장
                   </button>
                 </>
               )}

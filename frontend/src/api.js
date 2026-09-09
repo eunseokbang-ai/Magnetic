@@ -218,6 +218,19 @@ export function setDisplayBoundary(projectId, polygon) {
   return request(`/projects/${projectId}/display-boundary`, { method: "POST", body: JSON.stringify({ polygon }) });
 }
 
+export function autoDisplayBoundary(projectId, bufferM) {
+  return request(`/projects/${projectId}/display-boundary/auto`, {
+    method: "POST",
+    body: JSON.stringify({ buffer_m: bufferM }),
+  });
+}
+
+export async function exportDisplayBoundary(projectId, format, name) {
+  const query = new URLSearchParams({ format, name }).toString();
+  const blob = await requestBlob(`/projects/${projectId}/display-boundary/export?${query}`);
+  downloadBlob(blob, format === "shp" ? `${name}_shapefile.zip` : `${name}.kml`);
+}
+
 export function estimateOfflineTiles(req) {
   return request(`/tiles/estimate`, { method: "POST", body: JSON.stringify(req) });
 }

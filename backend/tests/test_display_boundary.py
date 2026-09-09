@@ -23,7 +23,12 @@ DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"
 
 
-def _make_processed_project():
+def _make_processed_project(auto_boundary: bool = False):
+    """auto_boundary defaults to False here even though processing itself
+    defaults it to True (ProcessParams.auto_display_boundary): these tests
+    are about the *user-drawn* boundary, and an auto boundary already
+    applied on top would mean "no boundary set" never actually means an
+    unclipped grid. See test_auto_boundary.py for the automatic path."""
     client = TestClient(app)
     r = client.post("/api/projects")
     project_id = r.json()["project_id"]
@@ -32,7 +37,13 @@ def _make_processed_project():
     with open(BASE_CSV, "rb") as f:
         client.post(f"/api/projects/{project_id}/upload/base", files={"files": ("b.csv", f, "text/csv")})
     r = client.post(
-        f"/api/projects/{project_id}/process", json={"line_params": {}, "diurnal_params": {}, "heading_correction": {}}
+        f"/api/projects/{project_id}/process",
+        json={
+            "line_params": {},
+            "diurnal_params": {},
+            "heading_correction": {},
+            "auto_display_boundary": auto_boundary,
+        },
     )
     assert r.status_code == 200, r.text
     return project_store.get(project_id)
