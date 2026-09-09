@@ -1,0 +1,417 @@
+"""Statistical leveling and the local-plane heading correction - the two
+corrections aimed at visible striping.
+
+The synthetic surveys below are built the way the real problem looks: a
+smooth geological field that every line samples honestly, plus a level
+error added per line. A correction works if it takes the striping out
+without taking the geology with it, so most tests here assert on both.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from app.processing.leveling import apply_heading_correction, compute_heading_correction
+from app.processing.microlevel import apply_microleveling
+from app.processing.statistical_leveling import (
+    apply_statistical_leveling,
+    compute_statistical_leveling,
+)
+
+DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
+BASE_CSV = "tests/fixtures/sample_base_station.csv"
+
+SPACING = 50.0
+LINE_LENGTH = 600.0
+N_LINES = 12
+# Lines run north (azimuth 90 in this codebase's atan2(dy, dx) convention),
+# so x is the across-line axis and y the along-line one.
+AZIMUTH = 90.0
+
+
+def _geology(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """A smooth field with real structure at scales well above the line
+    spacing - what a correction must leave alone."""
+    return (
+        30.0 * np.sin(2 * np.pi * x / 900.0)
+        + 20.0 * np.cos(2 * np.pi * y / 700.0)
+        + 0.02 * x
+    )
+
+
+def _survey(line_errors: np.ndarray, alternate_direction: bool = True, n_per_line: int = 120) -> pd.DataFrame:
+    rows = []
+    for i in range(len(line_errors)):
+        x = np.full(n_per_line, i * SPACING)
+        y = np.linspace(0.0, LINE_LENGTH, n_per_line)
+        # Reverse every other line so the flight directions alternate the
+        # way a real boustrophedon survey does.
+        if alternate_direction and i % 2 == 1:
+            y = y[::-1]
+        rows.append(
+            pd.DataFrame({
+                "line_id": i,
+                "x": x,
+                "y": y,
+                "anomaly": _geology(x, y) + line_errors[i],
+            })
+        )
+    return pd.concat(rows, ignore_index=True)
+
+
+def _striping_metric(df: pd.DataFrame, value_col: str = "anomaly") -> float:
+    """Mean |second difference| of the per-line residual from the true
+    geology, across lines - a direct measure of how much each line
+    disagrees with its neighbours beyond a smooth trend."""
+    per_line = []
+    for lid in sorted(df["line_id"].unique()):
+        sub = df[df["line_id"] == lid]
+        residual = sub[value_col].to_numpy() - _geology(sub["x"].to_numpy(), sub["y"].to_numpy())
+        per_line.append(float(np.mean(residual)))
+    lv = np.array(per_line)
+    return float(np.mean(np.abs(lv[2:] - 2 * lv[1:-1] + lv[:-2])))
+
+
+# ---------------------------------------------------------------------------
+# statistical leveling
+# ---------------------------------------------------------------------------
+
+
+def test_random_per_line_offsets_are_largely_removed():
+    rng = np.random.default_rng(3)
+    errors = rng.normal(0.0, 6.0, N_LINES)
+    df = _survey(errors)
+
+    before = _striping_metric(df)
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+    df["leveled"] = apply_statistical_leveling(df, "anomaly", result)
+    after = _striping_metric(df, "leveled")
+
+    assert result.applied, result.reason
+    assert after < 0.2 * before, f"striping {before:.2f} -> {after:.2f} nT is not enough of a reduction"
+    # ...and the reported diagnostic must agree with reality, since that
+    # number is what the user judges the correction by.
+    assert result.roughness_after_nt < result.roughness_before_nt
+
+
+def test_alternating_offsets_are_removed_where_a_single_heading_offset_cannot_be_the_answer():
+    """Even a pure A/B alternation is handled - and unlike the heading
+    correction, without being told the flight directions."""
+    errors = np.where(np.arange(N_LINES) % 2 == 0, 4.0, -4.0)
+    df = _survey(errors)
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+    df["leveled"] = apply_statistical_leveling(df, "anomaly", result)
+
+    assert _striping_metric(df, "leveled") < 0.25 * _striping_metric(df)
+
+
+def test_smooth_geology_survives_when_there_is_no_leveling_error_to_find():
+    """The correction must be nearly a no-op on clean data - a leveling
+    step that always "finds" something would just be eating signal."""
+    df = _survey(np.zeros(N_LINES))
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+    df["leveled"] = apply_statistical_leveling(df, "anomaly", result)
+
+    assert result.applied
+    assert result.max_shift_nt < 1.0, f"shifted clean data by up to {result.max_shift_nt:.2f} nT"
+    assert np.allclose(df["leveled"], df["anomaly"], atol=1.0)
+
+
+def test_correction_preserves_the_survey_mean_level():
+    """Leveling redistributes level between lines; it must not move the
+    whole survey, or every absolute value downstream shifts with it."""
+    rng = np.random.default_rng(11)
+    df = _survey(rng.normal(0.0, 5.0, N_LINES))
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+    shifts = np.array(list(result.line_shifts.values()))
+
+    assert abs(float(np.mean(shifts))) < 1e-9
+
+
+def test_a_narrower_trend_window_is_the_conservative_setting():
+    """The knob works like a filter cutoff, not like "more smoothing is
+    gentler": a narrow window lets the trend follow fast cross-line
+    variation, so less is called error. A line-parallel anomaly - the
+    method's known failure mode, since it looks exactly like a leveling
+    error - is therefore removed less aggressively at a narrow window."""
+    df = _survey(np.zeros(N_LINES))
+    # One line sits on a real line-parallel anomaly.
+    target = df["line_id"] == 6
+    df.loc[target, "anomaly"] += 25.0
+
+    narrow = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=7)
+    wide = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=21)
+
+    assert abs(narrow.line_shifts[6]) < abs(wide.line_shifts[6])
+
+
+def test_trend_window_below_the_supported_minimum_is_rejected():
+    """A window too narrow for the local quadratic silently leaves most of
+    the striping in place, so it is refused rather than accepted."""
+    df = _survey(np.zeros(N_LINES))
+    with pytest.raises(ValueError, match="이상"):
+        compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=5)
+
+
+def test_max_shift_clamp_limits_the_correction_and_says_so():
+    errors = np.zeros(N_LINES)
+    df = _survey(errors)
+    df.loc[df["line_id"] == 5, "anomaly"] += 40.0
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, max_shift_nt=5.0)
+
+    assert max(abs(v) for v in result.line_shifts.values()) <= 5.0 + 1e-9
+    assert any("상한" in w for w in result.warnings)
+
+
+def test_order_1_removes_drift_along_a_single_line():
+    """A line whose level ramps from one end to the other is drift, not a
+    DC offset; order=0 can only take out its average."""
+    df = _survey(np.zeros(N_LINES))
+    target = df["line_id"] == 5
+    # +/-8 nT ramp along the line.
+    df.loc[target, "anomaly"] += (df.loc[target, "y"] / LINE_LENGTH - 0.5) * 16.0
+
+    const = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, order=0)
+    linear = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, order=1, n_segments=4)
+    df["c"] = apply_statistical_leveling(df, "anomaly", const)
+    df["l"] = apply_statistical_leveling(df, "anomaly", linear)
+
+    def residual_range(col):
+        sub = df[target]
+        r = sub[col].to_numpy() - _geology(sub["x"].to_numpy(), sub["y"].to_numpy())
+        return float(np.ptp(r))
+
+    assert linear.line_shifts_linear is not None
+    assert residual_range("l") < 0.6 * residual_range("c")
+
+
+def test_too_few_lines_is_declined_rather_than_guessed_at():
+    df = _survey(np.zeros(3))
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+
+    assert not result.applied
+    assert "측선" in result.reason
+    assert apply_statistical_leveling(df, "anomaly", result).tolist() == df["anomaly"].tolist()
+
+
+def test_non_overlapping_lines_are_reported_not_silently_chained():
+    """Two blocks flown over different ground share no along-line extent,
+    so their relative level is unmeasurable - the user has to be told."""
+    df = _survey(np.zeros(N_LINES))
+    # Push the second half of the lines far along-track, away from the first.
+    df.loc[df["line_id"] >= 6, "y"] += 5 * LINE_LENGTH
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING)
+
+    assert result.applied
+    assert result.n_pairs < N_LINES - 1
+    assert any("겹치지" in w for w in result.warnings)
+
+
+def test_invalid_parameters_are_rejected():
+    df = _survey(np.zeros(N_LINES))
+    with pytest.raises(ValueError):
+        compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, order=2)
+
+
+# ---------------------------------------------------------------------------
+# local-plane heading correction
+# ---------------------------------------------------------------------------
+
+
+def test_local_plane_recovers_a_heading_offset_the_nearest_pair_method_misjudges():
+    """The point of the local-plane fit: the cross-line geological
+    gradient is modelled and removed, instead of leaking into the
+    estimate as it does when two points a full line spacing apart are
+    differenced."""
+    true_offset = 6.0
+    errors = np.where(np.arange(N_LINES) % 2 == 0, true_offset / 2.0, -true_offset / 2.0)
+    df = _survey(errors)
+
+    local = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+    nearest = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="nearest_pair")
+
+    assert local.applied, local.reason
+    # Group A is the even (forward-flown) lines, which carry +offset/2.
+    assert local.offset_nt == pytest.approx(true_offset, abs=0.5)
+    assert abs(local.offset_nt - true_offset) < abs(nearest.offset_nt - true_offset)
+
+
+def test_local_plane_heading_correction_actually_flattens_the_alternation():
+    true_offset = 6.0
+    errors = np.where(np.arange(N_LINES) % 2 == 0, true_offset / 2.0, -true_offset / 2.0)
+    df = _survey(errors)
+
+    result = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+    df["leveled"] = apply_heading_correction(df, "anomaly", result)
+
+    assert _striping_metric(df, "leveled") < 0.2 * _striping_metric(df)
+
+
+def test_local_plane_reports_a_spread_that_flags_a_non_heading_error():
+    """Per-line random error is not a heading effect. The estimate will
+    come out near zero, but silence would be misleading - the spread has
+    to say the model doesn't fit."""
+    rng = np.random.default_rng(7)
+    df = _survey(rng.normal(0.0, 8.0, N_LINES))
+
+    result = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+
+    assert result.applied
+    assert result.offset_spread_nt > abs(result.offset_nt)
+    assert any("통계적 레벨링" in w for w in result.warnings)
+
+
+def test_local_plane_declines_when_every_line_was_flown_the_same_way():
+    df = _survey(np.zeros(N_LINES), alternate_direction=False)
+    result = compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="local_plane")
+
+    assert not result.applied
+    assert "반대 방향" in result.reason
+
+
+def test_unknown_heading_method_is_rejected():
+    df = _survey(np.zeros(N_LINES))
+    with pytest.raises(ValueError):
+        compute_heading_correction(df, "anomaly", AZIMUTH, SPACING, method="magic")
+
+
+# ---------------------------------------------------------------------------
+# micro-leveling modes
+# ---------------------------------------------------------------------------
+
+
+def _corrugated_grid(offsets: np.ndarray, cell: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
+    """A gridded field with smooth geology plus one constant offset per
+    line-spacing-wide column, i.e. exactly the corrugation pattern
+    per-line level errors produce. Returns (clean, corrugated)."""
+    ny, nx = 120, 120
+    xs = np.arange(nx) * cell
+    ys = np.arange(ny) * cell
+    gx, gy = np.meshgrid(xs, ys)
+    clean = 30.0 * np.sin(2 * np.pi * gx / 900.0) + 20.0 * np.cos(2 * np.pi * gy / 700.0)
+    col = np.clip((gx / SPACING).astype(int), 0, len(offsets) - 1)
+    return clean, clean + offsets[col]
+
+
+def test_decorrugation_beats_the_narrow_notch_on_alternating_stripes():
+    """The failure the mode exists to fix: A/B alternation puts its
+    energy at two line spacings, outside a notch centred on one."""
+    offsets = np.where(np.arange(40) % 2 == 0, 5.0, -5.0)
+    clean, corrugated = _corrugated_grid(offsets)
+
+    kwargs = dict(cell_size_m=10.0, line_azimuth_deg=AZIMUTH, line_spacing_m=SPACING, strength=1.0)
+    notch = apply_microleveling(corrugated, mode="notch", **kwargs)
+    deco = apply_microleveling(corrugated, mode="decorrugation", **kwargs)
+
+    def err(a):  # interior only - FFT filters wrap at the edges
+        return float(np.sqrt(np.mean((a - clean)[20:-20, 20:-20] ** 2)))
+
+    assert err(deco) < err(notch)
+    assert err(deco) < 0.5 * err(corrugated)
+
+
+def test_decorrugation_leaves_long_wavelength_geology_alone():
+    clean, _corrugated = _corrugated_grid(np.zeros(40))
+    out = apply_microleveling(
+        clean, cell_size_m=10.0, line_azimuth_deg=AZIMUTH, line_spacing_m=SPACING,
+        strength=1.0, mode="decorrugation",
+    )
+    interior = (slice(20, -20), slice(20, -20))
+    assert float(np.sqrt(np.mean((out - clean)[interior] ** 2))) < 0.1 * float(np.std(clean[interior]))
+
+
+def test_unknown_microlevel_mode_is_rejected():
+    with pytest.raises(ValueError):
+        apply_microleveling(np.zeros((32, 32)), 10.0, AZIMUTH, SPACING, mode="magic")
+
+
+# ---------------------------------------------------------------------------
+# through the API, on the real sample survey
+# ---------------------------------------------------------------------------
+
+
+def _processed(**overrides):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    pid = client.post("/api/projects").json()["project_id"]
+    for endpoint, path in (("drone", DRONE_CSV), ("base", BASE_CSV)):
+        with open(path, "rb") as f:
+            client.post(f"/api/projects/{pid}/upload/{endpoint}", files={"files": ("f.csv", f, "text/csv")})
+    body = {"line_params": {}, "diurnal_params": {}, "heading_correction": {}}
+    body.update(overrides)
+    r = client.post(f"/api/projects/{pid}/process", json=body)
+    assert r.status_code == 200, r.text
+    return client, pid, r.json()
+
+
+def test_statistical_leveling_is_off_by_default_and_reports_why():
+    _client, _pid, summary = _processed()
+    assert summary["statistical_leveling"]["applied"] is False
+    assert "비활성화" in summary["statistical_leveling"]["reason"]
+
+
+def test_statistical_leveling_runs_end_to_end_and_reports_its_effect():
+    _client, _pid, summary = _processed(statistical_leveling={"enabled": True})
+    info = summary["statistical_leveling"]
+
+    assert info["applied"], info["reason"]
+    assert info["n_lines"] >= 4 and info["n_pairs"] >= 1
+    assert info["roughness_after_nt"] <= info["roughness_before_nt"]
+    # A leveling step must redistribute level between lines, not move the
+    # survey - the overall anomaly level has to survive.
+    plain = _processed()[2]
+    assert summary["anomaly_stats"]["mean"] == pytest.approx(plain["anomaly_stats"]["mean"], abs=0.5)
+
+
+def test_heading_correction_defaults_to_the_local_plane_method():
+    _client, _pid, summary = _processed(heading_correction={"enabled": True})
+    info = summary["heading_correction"]
+
+    assert info["applied"], info["reason"]
+    assert info["method"] == "local_plane"
+    # The spread over neighbourhoods is what tells the user whether the
+    # single number means anything, so it has to be reported.
+    assert info["offset_spread_nt"] is not None
+
+
+def test_saved_project_replays_the_leveling_it_was_processed_with():
+    client, pid, summary = _processed(statistical_leveling={"enabled": True, "trend_window_lines": 11})
+    blob = client.get(f"/api/projects/{pid}/save").content
+
+    new_pid = client.post("/api/projects").json()["project_id"]
+    restored = client.post(
+        f"/api/projects/{new_pid}/load", files={"file": ("p.zip", blob, "application/zip")}
+    ).json()["process_summary"]
+
+    assert restored["statistical_leveling"]["applied"]
+    assert restored["statistical_leveling"]["trend_window_lines"] == 11
+    assert restored["statistical_leveling"]["rms_shift_nt"] == pytest.approx(
+        summary["statistical_leveling"]["rms_shift_nt"], rel=1e-6
+    )
+
+
+def test_a_survey_with_too_few_lines_for_the_window_is_flagged():
+    """With fewer lines than the trend window, the window covers the whole
+    survey and there is no scale separation left to make - the number that
+    comes out must not be presented as a trustworthy correction."""
+    df = _survey(np.zeros(8))
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9)
+
+    assert result.applied
+    assert any("추세 창" in w and "덮습니다" in w for w in result.warnings)
+
+
+def test_a_survey_with_plenty_of_lines_is_not_flagged():
+    df = _survey(np.zeros(20))
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9)
+
+    assert not any("덮습니다" in w for w in result.warnings)

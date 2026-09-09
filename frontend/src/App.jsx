@@ -132,6 +132,8 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_strength: 0.8,
   microlevel_angle_tolerance_deg: 15.0,
   microlevel_wavelength_factor: 1.5,
+  microlevel_mode: "decorrugation",
+  microlevel_cutoff_factor: 4.0,
   microlevel_pre_apply: false,
 };
 
@@ -192,6 +194,8 @@ const DEFAULT_PARAMS = {
     enabled: false,
     quiet_percentile: 40.0,
     max_match_distance_m: null,
+    method: "local_plane",
+    neighborhood_radius_factor: 2.0,
   },
   crossover_leveling: {
     enabled: false,
@@ -199,6 +203,13 @@ const DEFAULT_PARAMS = {
     max_crossover_distance_m: 15.0,
     iterative: true,
     leveling_order: 0,
+  },
+  statistical_leveling: {
+    enabled: false,
+    trend_window_lines: 9,
+    order: 0,
+    n_segments: 4,
+    max_shift_nt: null,
   },
   noise_qc: { enabled: true },
   notch_filter: { frequencies_hz: [], quality_factor: 30.0 },
@@ -854,6 +865,8 @@ export default function App() {
         microlevel_strength: transformExtraParams.microlevel_strength,
         microlevel_angle_tolerance_deg: transformExtraParams.microlevel_angle_tolerance_deg,
         microlevel_wavelength_factor: transformExtraParams.microlevel_wavelength_factor,
+        microlevel_mode: transformExtraParams.microlevel_mode,
+        microlevel_cutoff_factor: transformExtraParams.microlevel_cutoff_factor,
       });
       setOverlay(resp);
       setActiveTransform("none");

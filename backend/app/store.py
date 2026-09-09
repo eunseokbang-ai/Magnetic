@@ -146,6 +146,11 @@ from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_z
 from .processing.contacts import detect_magnetic_contacts
 from .processing.lineaments import extract_lineaments
 from .processing.microlevel import apply_microleveling
+from .processing.statistical_leveling import (
+    StatisticalLevelingResult,
+    apply_statistical_leveling,
+    compute_statistical_leveling,
+)
 from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
 from .processing.prospectivity import compute_prospectivity
 from .processing.noise_qc import compute_difference_qc
@@ -320,6 +325,7 @@ class Project:
     dominant_azimuth_deg: float | None = None
     line_spacing_m: float | None = None
     heading_leveling: HeadingLevelingResult | None = None
+    statistical_leveling: StatisticalLevelingResult | None = None
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
@@ -943,6 +949,8 @@ class Project:
                 self.line_spacing_m,
                 quiet_percentile=hp.quiet_percentile,
                 max_match_distance_m=hp.max_match_distance_m,
+                method=hp.method,
+                neighborhood_radius_factor=hp.neighborhood_radius_factor,
             )
             df["anomaly"] = apply_heading_correction(df, "anomaly", self.heading_leveling)
             df["tmi"] = apply_heading_correction(df, "tmi", self.heading_leveling)
@@ -974,6 +982,24 @@ class Project:
             "rms_before_nt": crossover_result.rms_before_nt,
             "rms_after_nt": crossover_result.rms_after_nt,
         }
+
+        # Last of the three leveling steps, so it only has to explain what
+        # the direction-based and tie-line corrections above could not.
+        slp = params.statistical_leveling
+        if slp.enabled:
+            self.statistical_leveling = compute_statistical_leveling(
+                df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m,
+                trend_window_lines=slp.trend_window_lines,
+                order=slp.order,
+                n_segments=slp.n_segments,
+                max_shift_nt=slp.max_shift_nt,
+            )
+            df["anomaly"] = apply_statistical_leveling(df, "anomaly", self.statistical_leveling)
+            df["tmi"] = apply_statistical_leveling(df, "tmi", self.statistical_leveling)
+        else:
+            self.statistical_leveling = StatisticalLevelingResult(
+                False, "사용자가 통계적 레벨링을 비활성화했습니다 (기본값)."
+            )
 
         self.file_level_info = self._check_file_level_offsets(df)
 
@@ -1222,6 +1248,7 @@ class Project:
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,
+            "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
             "noise_qc": self.noise_qc_info,
             "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,
@@ -1794,6 +1821,8 @@ class Project:
             req.microlevel_strength,
             req.microlevel_angle_tolerance_deg,
             req.microlevel_wavelength_factor,
+            req.microlevel_mode,
+            req.microlevel_cutoff_factor,
             req.microlevel_pre_apply,
         )
         cached = _lru_get(self.transform_cache, cache_key)
@@ -1823,6 +1852,8 @@ class Project:
             strength=req.microlevel_strength,
             angle_tolerance_deg=req.microlevel_angle_tolerance_deg,
             wavelength_bandwidth_factor=req.microlevel_wavelength_factor,
+            mode=req.microlevel_mode,
+            cutoff_spacing_factor=req.microlevel_cutoff_factor,
         )
         return replace(grid, values=leveled)
 
@@ -1883,6 +1914,8 @@ class Project:
                     strength=req.microlevel_strength,
                     angle_tolerance_deg=req.microlevel_angle_tolerance_deg,
                     wavelength_bandwidth_factor=req.microlevel_wavelength_factor,
+                    mode=req.microlevel_mode,
+                    cutoff_spacing_factor=req.microlevel_cutoff_factor,
                 ),
                 True,
             )
@@ -3545,6 +3578,27 @@ def _heading_correction_summary(result: "HeadingLevelingResult | None") -> dict:
         "offset_nt": result.offset_nt,
         "n_matched_pairs": result.n_matched_pairs,
         "n_quiet_pairs": result.n_quiet_pairs,
+        "method": result.method,
+        "offset_spread_nt": result.offset_spread_nt,
+        "residual_nt": result.residual_nt,
+        "warnings": result.warnings,
+    }
+
+
+def _statistical_leveling_summary(result: "StatisticalLevelingResult | None") -> dict:
+    if result is None:
+        return {"applied": False, "reason": None}
+    return {
+        "applied": result.applied,
+        "reason": result.reason,
+        "n_lines": result.n_lines,
+        "n_pairs": result.n_pairs,
+        "trend_window_lines": result.trend_window_lines,
+        "max_shift_nt": result.max_shift_nt,
+        "rms_shift_nt": result.rms_shift_nt,
+        "roughness_before_nt": result.roughness_before_nt,
+        "roughness_after_nt": result.roughness_after_nt,
+        "warnings": result.warnings,
     }
 
 

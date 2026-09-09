@@ -204,6 +204,9 @@ export default function WorkflowSteps({
   const updateCrossover = (key, val) => setProcessParams((p) => ({ ...p, crossover_leveling: { ...p.crossover_leveling, [key]: val } }));
   const dp = processParams.diurnal_params;
   const hc = processParams.heading_correction;
+  const sl = processParams.statistical_leveling;
+  const updateStatLevel = (key, val) =>
+    setProcessParams((p) => ({ ...p, statistical_leveling: { ...p.statistical_leveling, [key]: val } }));
 
   const updateLine = (key, val) => setProcessParams((p) => ({ ...p, line_params: { ...p.line_params, [key]: val } }));
   const updateDiurnal = (key, val) => setProcessParams((p) => ({ ...p, diurnal_params: { ...p.diurnal_params, [key]: val } }));
@@ -781,17 +784,98 @@ export default function WorkflowSteps({
 
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={hc.enabled} onChange={(e) => updateHeading("enabled", e.target.checked)} />
-            <span>헤딩(비행방향) 보정 사용 — 캘리브레이션 비행 없이 인접 반대방향 측선의 조용한 구간으로 추정</span>
+            <span>헤딩(비행방향) 보정 사용 — 캘리브레이션 비행 없이 반대방향 측선의 조용한 구간으로 추정</span>
           </label>
           {hc.enabled && (
-            <Field label="조용한 구간 기준 백분위 (%) — 낮을수록 더 엄격하게 조용한 지점만 사용">
-              <input
-                type="number"
-                style={inputStyle}
-                value={hc.quiet_percentile}
-                onChange={(e) => updateHeading("quiet_percentile", parseFloat(e.target.value))}
-              />
-            </Field>
+            <>
+              <Field
+                label={
+                  <span title="국소 평면 방식은 측선 2개 간격 정도의 구역마다 '평면(지질 경사) + 방향별 단차'를 동시에 맞춰, 측선 사이의 실제 지질 변화가 헤딩 오차로 잘못 잡히는 것을 막습니다. 모델이 잘 맞는(=넓고 값이 일정한) 구역만 골라 쓰므로, 조용한 구역을 눈으로 고를 필요가 없습니다. 최근접 점쌍은 기존 방식으로, 측선 간격만큼 떨어진 두 점을 직접 빼기 때문에 지질 경사가 그대로 섞여 들어갑니다.">
+                    헤딩 보정 방법 ⓘ
+                  </span>
+                }
+              >
+                <select style={inputStyle} value={hc.method} onChange={(e) => updateHeading("method", e.target.value)}>
+                  <option value="local_plane">국소 평면 + 방향 단차 (권장)</option>
+                  <option value="nearest_pair">최근접 점쌍 (기존 방식)</option>
+                </select>
+              </Field>
+              <Field
+                label={
+                  hc.method === "local_plane"
+                    ? "조용한 구역 기준 백분위 (%) — 모델 잔차가 작은(=값이 일정한) 구역만 이 비율만큼 사용"
+                    : "조용한 구간 기준 백분위 (%) — 낮을수록 더 엄격하게 조용한 지점만 사용"
+                }
+              >
+                <input
+                  type="number"
+                  style={inputStyle}
+                  value={hc.quiet_percentile}
+                  onChange={(e) => updateHeading("quiet_percentile", parseFloat(e.target.value))}
+                />
+              </Field>
+              {hc.method === "local_plane" && (
+                <Field label="구역 반경 (측선 간격 배수) — 클수록 안정적이지만 '지질이 평면'이라는 가정이 약해집니다">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1.5"
+                    max="6"
+                    style={inputStyle}
+                    value={hc.neighborhood_radius_factor}
+                    onChange={(e) => updateHeading("neighborhood_radius_factor", parseFloat(e.target.value))}
+                  />
+                </Field>
+              )}
+            </>
+          )}
+
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="checkbox" checked={sl.enabled} onChange={(e) => updateStatLevel("enabled", e.target.checked)} />
+            <span title="지도에 세로 줄무늬(스트립)가 남아 있을 때 쓰는 보정입니다. 타이라인도 캘리브레이션 비행도 필요 없이, 각 측선을 좌우 이웃 측선과 비교해 측선마다 다른 레벨 오차를 찾아 없앱니다. 헤딩 보정은 전진/후진 두 방향에 공통된 오프셋 하나만 잡을 수 있어서, 측선마다 제각각인 오차는 이 보정으로만 제거됩니다.">
+              통계적 레벨링 사용 — 이웃 측선 비교로 측선별 레벨 오차 제거 (줄무늬 완화의 핵심) ⓘ
+            </span>
+          </label>
+          {sl.enabled && (
+            <>
+              <Field
+                label={
+                  <span title="이 값보다 좁은 폭으로 측선을 가로질러 변하는 성분을 '레벨 오차'로 보고 제거합니다. 작을수록 보수적(측선 간 급격한 요철만 제거), 클수록 강하게 제거하지만 측선과 나란한 실제 지질 이상대까지 깎일 수 있습니다.">
+                    추세 창 (측선 수) — 작을수록 보수적, 클수록 강하게 제거 ⓘ
+                  </span>
+                }
+              >
+                <input
+                  type="number"
+                  min="7"
+                  max="51"
+                  style={inputStyle}
+                  value={sl.trend_window_lines}
+                  onChange={(e) => updateStatLevel("trend_window_lines", parseInt(e.target.value, 10) || 9)}
+                />
+              </Field>
+              <Field label="보정 형태">
+                <select
+                  style={inputStyle}
+                  value={sl.order}
+                  onChange={(e) => updateStatLevel("order", parseInt(e.target.value, 10))}
+                >
+                  <option value={0}>측선당 상수 (0차)</option>
+                  <option value={1}>측선 방향 1차 — 한 측선 안의 드리프트까지 보정</option>
+                </select>
+              </Field>
+              <Field label="측선당 보정 상한 (nT) — 비워두면 제한 없음. 실제 이상대 위를 지난 측선이 깎이는 것을 막습니다">
+                <input
+                  type="number"
+                  placeholder="제한 없음"
+                  style={inputStyle}
+                  value={sl.max_shift_nt ?? ""}
+                  onChange={(e) =>
+                    updateStatLevel("max_shift_nt", e.target.value === "" ? null : parseFloat(e.target.value))
+                  }
+                />
+              </Field>
+            </>
           )}
 
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -966,13 +1050,46 @@ export default function WorkflowSteps({
               )}
               {processSummary.heading_correction?.applied ? (
                 <span>
-                  헤딩 보정 오프셋: {processSummary.heading_correction.offset_nt?.toFixed(2)} nT (매칭 {processSummary.heading_correction.n_matched_pairs}쌍 중 조용한{" "}
-                  {processSummary.heading_correction.n_quiet_pairs}쌍 사용)
+                  헤딩 보정 오프셋: {processSummary.heading_correction.offset_nt?.toFixed(2)} nT
+                  {processSummary.heading_correction.method === "local_plane" ? (
+                    <>
+                      {" "}
+                      (국소 평면 방식 — 구역 {processSummary.heading_correction.n_matched_pairs}개 중 조용한{" "}
+                      {processSummary.heading_correction.n_quiet_pairs}개 사용, 구역별 산포 ±
+                      {processSummary.heading_correction.offset_spread_nt?.toFixed(2)} nT)
+                    </>
+                  ) : (
+                    <>
+                      {" "}
+                      (매칭 {processSummary.heading_correction.n_matched_pairs}쌍 중 조용한{" "}
+                      {processSummary.heading_correction.n_quiet_pairs}쌍 사용)
+                    </>
+                  )}
                 </span>
               ) : (
                 processSummary.heading_correction?.reason && <span style={{ color: "#b45309" }}>헤딩 보정: {processSummary.heading_correction.reason}</span>
               )}
+              {(processSummary.heading_correction?.warnings || []).map((w, i) => (
+                <div key={i} style={{ color: "#b45309", marginTop: 2 }}>⚠ {w}</div>
+              ))}
               <br />
+              {processSummary.statistical_leveling?.applied ? (
+                <div style={{ marginTop: 2 }}>
+                  통계적 레벨링: 측선 {processSummary.statistical_leveling.n_lines}개 보정 (인접쌍{" "}
+                  {processSummary.statistical_leveling.n_pairs}개), 보정량 RMS{" "}
+                  {processSummary.statistical_leveling.rms_shift_nt?.toFixed(2)} / 최대{" "}
+                  {processSummary.statistical_leveling.max_shift_nt?.toFixed(2)} nT, 측선간 요철{" "}
+                  {processSummary.statistical_leveling.roughness_before_nt?.toFixed(2)} →{" "}
+                  {processSummary.statistical_leveling.roughness_after_nt?.toFixed(2)} nT
+                </div>
+              ) : (
+                processSummary.statistical_leveling?.reason && (
+                  <div style={{ color: "#8a7a5c", marginTop: 2 }}>통계적 레벨링: {processSummary.statistical_leveling.reason}</div>
+                )
+              )}
+              {(processSummary.statistical_leveling?.warnings || []).map((w, i) => (
+                <div key={i} style={{ color: "#b45309", marginTop: 2 }}>⚠ {w}</div>
+              ))}
               {processSummary.diurnal?.mode === "assume_constant" ? (
                 <div style={{ color: "#b45309", marginTop: 4 }}>⚠ {processSummary.diurnal.note}</div>
               ) : (
@@ -1347,6 +1464,22 @@ export default function WorkflowSteps({
           )}
           {(activeTransform === "microlevel" || transformExtraParams.microlevel_pre_apply) && (
             <>
+              <Field
+                label={
+                  <span title="측선별 레벨 오차가 만드는 줄무늬는 파장 하나가 아니라 여러 파장에 걸쳐 있습니다. 측선마다 값이 다르면 측선 간격 파장에, 전진/후진이 번갈아 어긋나면 측선 간격의 2배 파장에, 그 아래로도 배음이 계속 생깁니다. 디코러게이션(고역통과)은 차단 파장보다 짧은 측선직각 성분을 한꺼번에 제거하므로 이 전부를 잡습니다. 노치는 측선 간격 한 파장만 좁게 제거하므로 지질 신호는 더 잘 보존하지만 줄무늬는 일부만 사라집니다.">
+                    필터 방식 ⓘ
+                  </span>
+                }
+              >
+                <select
+                  style={inputStyle}
+                  value={transformExtraParams.microlevel_mode}
+                  onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_mode: e.target.value }))}
+                >
+                  <option value="decorrugation">디코러게이션 (고역통과, 권장)</option>
+                  <option value="notch">노치 (측선 간격 한 파장만)</option>
+                </select>
+              </Field>
               <Field label={`보정 강도: ${transformExtraParams.microlevel_strength}`}>
                 <input
                   type="range"
@@ -1365,22 +1498,42 @@ export default function WorkflowSteps({
                   onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_angle_tolerance_deg: parseFloat(e.target.value) }))}
                 />
               </Field>
-              <Field
-                label={
-                  <span title="UAV 자력탐사 가이드라인의 디코러게이션 규칙: 저역통과 파장은 타이라인 간격의 2배, 고역통과 파장은 측선 간격의 2배가 일반적입니다. 값을 키우면 더 넓은 파장대(가이드라인 규칙에 가까운 폭)를 완화합니다.">
-                    파장 대역폭 배수 (측선 간격 기준, 클수록 더 넓은 파장대를 완화) ⓘ
-                  </span>
-                }
-              >
-                <input
-                  type="number"
-                  step="0.1"
-                  min="1.01"
-                  style={inputStyle}
-                  value={transformExtraParams.microlevel_wavelength_factor}
-                  onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_wavelength_factor: parseFloat(e.target.value) }))}
-                />
-              </Field>
+              {transformExtraParams.microlevel_mode === "decorrugation" ? (
+                <Field
+                  label={
+                    <span title="측선 간격의 몇 배보다 짧은 측선직각 성분을 제거할지 정합니다. UAV 자력탐사 가이드라인의 통상값은 측선 간격의 4배입니다. 키우면 더 긴 파장까지 제거되어 줄무늬는 더 잘 사라지지만, 측선과 나란한 실제 지질 신호도 함께 깎입니다.">
+                      차단 파장 (측선 간격 배수) — 이보다 짧은 측선직각 성분 제거 ⓘ
+                    </span>
+                  }
+                >
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="1.5"
+                    max="20"
+                    style={inputStyle}
+                    value={transformExtraParams.microlevel_cutoff_factor}
+                    onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_cutoff_factor: parseFloat(e.target.value) }))}
+                  />
+                </Field>
+              ) : (
+                <Field
+                  label={
+                    <span title="노치의 폭입니다. 측선 간격 파장을 중심으로 이 배수만큼 위아래 대역을 완화합니다.">
+                      파장 대역폭 배수 (측선 간격 기준, 클수록 더 넓은 파장대를 완화) ⓘ
+                    </span>
+                  }
+                >
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="1.01"
+                    style={inputStyle}
+                    value={transformExtraParams.microlevel_wavelength_factor}
+                    onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_wavelength_factor: parseFloat(e.target.value) }))}
+                  />
+                </Field>
+              )}
             </>
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

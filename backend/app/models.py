@@ -59,6 +59,39 @@ class HeadingCorrectionParams(BaseModel):
     enabled: bool = False
     quiet_percentile: float = Field(40.0, ge=1, le=100)
     max_match_distance_m: Optional[float] = None
+    # "local_plane" (default) fits a local plane plus a forward/reverse
+    # step over overlapping neighbourhoods, so the estimate is not
+    # contaminated by the geological gradient across the line gap the way
+    # the older "nearest_pair" point-matching is. See processing/leveling.py.
+    method: Literal["local_plane", "nearest_pair"] = "local_plane"
+    # local_plane only: neighbourhood radius as a multiple of the line
+    # spacing. Must stay >= 1.5 or a neighbourhood can't hold the three
+    # lines needed to separate gradient from step.
+    neighborhood_radius_factor: float = Field(2.0, ge=1.5, le=6.0)
+
+
+class StatisticalLevelingParams(BaseModel):
+    """Per-line level correction from the survey's own neighbouring lines -
+    no tie lines, no calibration flight. This is the correction that
+    targets visible striping; see processing/statistical_leveling.py."""
+
+    # Off by default like the other leveling steps: it can suppress real
+    # line-parallel geology, so it's the user's call, not automatic.
+    enabled: bool = False
+    # How many lines a feature must span to count as geology rather than
+    # leveling error. Smaller = more conservative; larger removes more
+    # error and more line-parallel geology with it.
+    trend_window_lines: int = Field(9, ge=7, le=51)
+    # 0 = one constant shift per line. 1 = shift varies linearly along
+    # each line, which also catches drift within one long line.
+    order: int = Field(0, ge=0, le=1)
+    # order=1 only: how many along-line segments the per-line correction
+    # is estimated over before the straight line is fitted through them.
+    n_segments: int = Field(4, ge=2, le=20)
+    # Optional clamp (nT) on any single line's correction, so a line that
+    # genuinely flew over a strong anomaly isn't flattened into its
+    # neighbours. None = no clamp.
+    max_shift_nt: Optional[float] = Field(None, gt=0)
 
 
 class DespikeParams(BaseModel):
@@ -213,6 +246,10 @@ class ProcessParams(BaseModel):
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
     crossover_leveling: CrossoverLevelingParams = CrossoverLevelingParams()
+    # Runs after the two above: they remove what they can explain (a
+    # direction-dependent offset, a tie-line-measured shift), and this
+    # takes out whatever per-line level error is left.
+    statistical_leveling: StatisticalLevelingParams = StatisticalLevelingParams()
     noise_qc: NoiseQcParams = NoiseQcParams()
     notch_filter: NotchFilterParams = NotchFilterParams()
     # Derive the display boundary from the flown lines at the end of
@@ -291,6 +328,15 @@ class GridRequest(HillshadeParams, ContourParams):
     microlevel_strength: float = Field(0.8, ge=0, le=1)
     microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
     microlevel_wavelength_factor: float = Field(1.5, gt=1)
+    # "decorrugation" (default) removes all across-line energy shorter
+    # than microlevel_cutoff_factor line spacings - the classic Minty
+    # micro-levelling high-pass, and the one that actually catches
+    # striping, which spans a harmonic series rather than one wavelength.
+    # "notch" is the narrower band-reject around one line spacing;
+    # microlevel_wavelength_factor applies to it alone. See
+    # processing/microlevel.py.
+    microlevel_mode: Literal["decorrugation", "notch"] = "decorrugation"
+    microlevel_cutoff_factor: float = Field(4.0, gt=1, le=20)
 
 
 class TransformRequest(HillshadeParams, ContourParams):
@@ -317,6 +363,15 @@ class TransformRequest(HillshadeParams, ContourParams):
     microlevel_strength: float = Field(0.8, ge=0, le=1)
     microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
     microlevel_wavelength_factor: float = Field(1.5, gt=1)
+    # "decorrugation" (default) removes all across-line energy shorter
+    # than microlevel_cutoff_factor line spacings - the classic Minty
+    # micro-levelling high-pass, and the one that actually catches
+    # striping, which spans a harmonic series rather than one wavelength.
+    # "notch" is the narrower band-reject around one line spacing;
+    # microlevel_wavelength_factor applies to it alone. See
+    # processing/microlevel.py.
+    microlevel_mode: Literal["decorrugation", "notch"] = "decorrugation"
+    microlevel_cutoff_factor: float = Field(4.0, gt=1, le=20)
     # Applies microleveling (using the three params above) to the base grid
     # *before* computing whatever transform is requested (RTP/2VD/AS/etc.,
     # or even "none"), instead of microleveling only being its own
