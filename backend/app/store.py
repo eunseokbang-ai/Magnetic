@@ -150,6 +150,7 @@ from .processing.statistical_leveling import (
     StatisticalLevelingResult,
     apply_statistical_leveling,
     compute_statistical_leveling,
+    measure_striping,
 )
 from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
 from .processing.prospectivity import compute_prospectivity
@@ -326,6 +327,7 @@ class Project:
     line_spacing_m: float | None = None
     heading_leveling: HeadingLevelingResult | None = None
     statistical_leveling: StatisticalLevelingResult | None = None
+    striping_info: dict | None = None
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
@@ -983,6 +985,12 @@ class Project:
             "rms_after_nt": crossover_result.rms_after_nt,
         }
 
+        # Measured before the per-line correction runs, so it describes
+        # the survey as flown - the number to compare between flights,
+        # settings, or aircraft. Always computed, including when the
+        # correction below declines.
+        self.striping_info = measure_striping(df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m)
+
         # Last of the three leveling steps, so it only has to explain what
         # the direction-based and tie-line corrections above could not.
         slp = params.statistical_leveling
@@ -998,7 +1006,7 @@ class Project:
             df["tmi"] = apply_statistical_leveling(df, "tmi", self.statistical_leveling)
         else:
             self.statistical_leveling = StatisticalLevelingResult(
-                False, "사용자가 통계적 레벨링을 비활성화했습니다 (기본값)."
+                False, "사용자가 통계적 레벨링을 비활성화했습니다."
             )
 
         self.file_level_info = self._check_file_level_offsets(df)
@@ -1249,6 +1257,7 @@ class Project:
             "heading_correction": _heading_correction_summary(self.heading_leveling),
             "crossover_leveling": self.crossover_info,
             "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
+            "striping": self.striping_info,
             "noise_qc": self.noise_qc_info,
             "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,

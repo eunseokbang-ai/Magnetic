@@ -205,7 +205,7 @@ const DEFAULT_PARAMS = {
     leveling_order: 0,
   },
   statistical_leveling: {
-    enabled: false,
+    enabled: true,
     trend_window_lines: 9,
     order: 0,
     n_segments: 4,

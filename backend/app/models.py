@@ -75,12 +75,19 @@ class StatisticalLevelingParams(BaseModel):
     no tie lines, no calibration flight. This is the correction that
     targets visible striping; see processing/statistical_leveling.py."""
 
-    # Off by default like the other leveling steps: it can suppress real
-    # line-parallel geology, so it's the user's call, not automatic.
-    enabled: bool = False
-    # How many lines a feature must span to count as geology rather than
-    # leveling error. Smaller = more conservative; larger removes more
-    # error and more line-parallel geology with it.
+    # On by default, unlike the other leveling steps: per-line level error
+    # is present in most surveys and is the usual cause of visible
+    # striping, and this is the only correction here that can remove it.
+    # It declines rather than guesses when the survey is too small to
+    # separate error from geology (see processing/statistical_leveling.py),
+    # so leaving it on costs nothing on data it cannot help.
+    enabled: bool = True
+    # How many lines the local trend is fitted over. There is a sweet spot
+    # rather than a safe direction - too narrow and the trend follows the
+    # error itself, too wide and it stops following the geology and its
+    # own misfit gets removed as if it were error. See the measured table
+    # in processing/statistical_leveling.py. The survey needs two more
+    # lines than this, or the correction is skipped.
     trend_window_lines: int = Field(9, ge=7, le=51)
     # 0 = one constant shift per line. 1 = shift varies linearly along
     # each line, which also catches drift within one long line.

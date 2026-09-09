@@ -35,15 +35,38 @@ parallel to the flight lines (a line-parallel dike a line or two wide)
 looks exactly like a leveling error and will be partly removed along
 with it.
 
-trend_window_lines is the knob for that trade-off, and it works the way
-a filter cutoff does, not the way "more smoothing is gentler" intuition
-suggests: it sets how many lines a feature must span to count as
-geology. A *narrow* window lets the trend follow fast cross-line
-variation, so only the very fastest line-to-line jitter is left to
-correct - conservative. A *wide* window holds the trend flat over more
-lines, so more of what varies across them is called error and removed -
-aggressive, and more likely to take line-parallel geology with it. This
-is why the correction is off by default and reports what it changed.
+trend_window_lines is the knob for that trade-off, and it does not behave
+the way either intuition about it suggests. It is not "more smoothing is
+gentler", and it is not a clean filter cutoff either. Measured on
+synthetic surveys (30 lines, geology curving over ~18 of them):
+
+  window   per-line error left   invented on clean data   line-parallel
+                                                          anomaly kept
+       7                   20%                  0.5 nT              6%
+       9                   16%                  1.1 nT              7%
+      15                   10%                  3.3 nT             20%
+      21                   13%                 11.9 nT             52%
+      27                   18%                 25.0 nT             96%
+
+Too narrow and the local trend follows the per-line error itself, so
+little is corrected. Too wide and the local quadratic can no longer
+follow the geology across the window's span; its own misfit is then what
+gets subtracted, and the correction becomes invented structure - 25 nT of
+it on data with no leveling error in it at all. Note the last column
+rising with it: a wide window does preserve a line-parallel anomaly, but
+only because the trend has stopped tracking anything, which is not a
+safety margin worth having.
+
+So there is a sweet spot rather than a direction, and it sits a little
+below the number of lines the geology takes to curve. The default of 9
+is near it and errs narrow. Because a too-wide window is actively
+harmful rather than merely aggressive, the correction also checks itself:
+it recomputes at the narrowest supported window and warns when widening
+has inflated the correction far more than finding real error ever does
+(see _WINDOW_STABILITY_RATIO).
+
+This correction runs by default. It declines outright, changing nothing,
+on any survey with fewer lines than the window can be run over.
 """
 from __future__ import annotations
 
@@ -54,10 +77,6 @@ import pandas as pd
 
 from .lines import cross_track_coordinate
 
-# Fewer lines than this and "smooth across lines vs. jitter across lines"
-# is not a distinction the data can support - a local trend fitted to 3
-# lines has nothing to average.
-_MIN_LINES = 4
 # An adjacent pair sharing less than this fraction of the shorter line's
 # length is not compared: a handful of overlapping samples at one end
 # gives a difference dominated by whatever geology sits there.
@@ -76,6 +95,27 @@ _MIN_SAMPLES_PER_PAIR = 8
 # measured balance of striping removed against clean-data bias
 # (~10% residual striping, under 1 nT moved on data with no error in it).
 _MIN_TREND_WINDOW = 7
+# The trend window has to be narrower than the survey, or every line sits
+# inside every other line's window and there is no "smooth across the
+# survey vs. jitter between neighbours" split left to make. Two spare
+# lines is the minimum that leaves the running window something to run
+# over; below it the correction is declined rather than applied - it is on
+# by default now, and a correction nobody can check is worse than none.
+_TREND_WINDOW_HEADROOM_LINES = 2
+
+
+# How much bigger the correction may get, relative to the one the
+# narrowest supported window produces, before the extra width is treated
+# as misfit rather than as more leveling error found. Measured on
+# synthetic surveys: with real per-line error present, widening the window
+# from 7 to 27 lines changes the correction by at most ~2.5x, while on a
+# survey with no error at all the same widening inflates it 66x.
+_WINDOW_STABILITY_RATIO = 3.0
+
+
+def required_lines(trend_window_lines: int) -> int:
+    """How many survey lines this correction needs at a given window."""
+    return trend_window_lines + _TREND_WINDOW_HEADROOM_LINES
 
 
 @dataclass
@@ -191,6 +231,167 @@ def _cross_line_roughness(levels: np.ndarray) -> float:
     return float(np.mean(np.abs(levels[2:] - 2.0 * levels[1:-1] + levels[:-2])))
 
 
+def _line_profiles(
+    kept: pd.DataFrame, value_col: str, dominant_azimuth_deg: float
+) -> tuple[dict[int, tuple[np.ndarray, np.ndarray]], dict[int, float]]:
+    """Each line reduced to (along-track coordinate, value) arrays, plus
+    where it sits on the cross-line axis so lines can be put in
+    across-survey order. Lines too short to compare are dropped."""
+    along = _along_track_unit(dominant_azimuth_deg)
+    x = kept["x"].to_numpy(dtype=float)
+    y = kept["y"].to_numpy(dtype=float)
+    s_all = x * along[0] + y * along[1]
+    cross_all = cross_track_coordinate(x, y, dominant_azimuth_deg)
+    v_all = kept[value_col].to_numpy(dtype=float)
+    lid_all = kept["line_id"].to_numpy()
+
+    finite = np.isfinite(s_all) & np.isfinite(v_all)
+    per_line: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    line_cross: dict[int, float] = {}
+    for lid in sorted(int(v) for v in kept["line_id"].unique()):
+        m = (lid_all == lid) & finite
+        if m.sum() < _MIN_SAMPLES_PER_PAIR:
+            continue
+        per_line[lid] = (s_all[m], v_all[m])
+        line_cross[lid] = float(np.median(cross_all[m]))
+    return per_line, line_cross
+
+
+def _pairwise_deltas(
+    per_line: dict[int, tuple[np.ndarray, np.ndarray]],
+    ordered: list[int],
+    line_spacing_m: float | None,
+    n_seg: int,
+) -> tuple[np.ndarray, int]:
+    """deltas[k][i] = (line i's level - line i+1's level) over segment k of
+    what the two lines share, NaN where they don't share enough of it to
+    compare. Also returns how many adjacent pairs could be compared at
+    all. Both lines are reduced the same way (median per along-track bin)
+    so a difference reflects their levels, not their sampling."""
+    step = max(1.0, (line_spacing_m or 50.0) * _RESAMPLE_STEP_FRACTION)
+    deltas = np.full((n_seg, max(len(ordered) - 1, 0)), np.nan)
+    n_pairs = 0
+    for i in range(len(ordered) - 1):
+        s_a, v_a = per_line[ordered[i]]
+        s_b, v_b = per_line[ordered[i + 1]]
+        lo, hi = max(s_a.min(), s_b.min()), min(s_a.max(), s_b.max())
+        shared = hi - lo
+        shorter = min(np.ptp(s_a), np.ptp(s_b))
+        if shared <= 0 or shorter <= 0 or shared < _MIN_OVERLAP_FRACTION * shorter:
+            continue
+
+        edges = np.arange(lo, hi + step, step)
+        if len(edges) < _MIN_SAMPLES_PER_PAIR + 1:
+            edges = np.linspace(lo, hi, _MIN_SAMPLES_PER_PAIR + 1)
+        diff = _profile(s_a, v_a, edges) - _profile(s_b, v_b, edges)
+        if np.isfinite(diff).sum() < _MIN_SAMPLES_PER_PAIR:
+            continue
+        n_pairs += 1
+
+        centres = 0.5 * (edges[:-1] + edges[1:])
+        # Segment boundaries are taken over the pair's own shared span, so
+        # segment k means "the k-th fraction of what these two lines have
+        # in common" for every pair alike.
+        seg_idx = np.clip(((centres - lo) / max(shared, 1e-9) * n_seg).astype(int), 0, n_seg - 1)
+        for k in range(n_seg):
+            d = diff[(seg_idx == k) & np.isfinite(diff)]
+            if d.size >= max(3, _MIN_SAMPLES_PER_PAIR // n_seg):
+                deltas[k, i] = float(np.median(d))
+    return deltas, n_pairs
+
+
+def _chain(deltas_row: np.ndarray) -> np.ndarray:
+    """Turn the pairwise differences into an apparent level per line. A
+    pair that couldn't be measured contributes no step, which chains the
+    two sides together at whatever level they already had rather than
+    breaking the sequence in two."""
+    return -np.concatenate([[0.0], np.nancumsum(np.where(np.isfinite(deltas_row), deltas_row, 0.0))])
+
+
+def _corrections_for_window(deltas: np.ndarray, trend_window_lines: int) -> np.ndarray:
+    """Per-segment, per-line corrections at one trend window: chain the
+    pairwise differences into levels, subtract the local trend, and negate
+    what's left. Demeaned so the survey's overall level is unchanged."""
+    corrections = np.zeros_like(deltas, shape=(deltas.shape[0], deltas.shape[1] + 1))
+    for k in range(deltas.shape[0]):
+        levels = _chain(deltas[k])
+        jitter = levels - _running_trend(levels, trend_window_lines)
+        corrections[k] = -(jitter - np.mean(jitter))
+    return corrections
+
+
+def _chained_line_levels(
+    kept: pd.DataFrame, value_col: str, dominant_azimuth_deg: float, line_spacing_m: float | None
+) -> np.ndarray | None:
+    """The per-line level sequence on its own, for measurement rather than
+    correction. None when too few lines could be compared."""
+    per_line, line_cross = _line_profiles(kept, value_col, dominant_azimuth_deg)
+    if len(per_line) < 3:
+        return None
+    ordered = sorted(per_line, key=lambda lid: line_cross[lid])
+    deltas, n_pairs = _pairwise_deltas(per_line, ordered, line_spacing_m, 1)
+    if n_pairs == 0:
+        return None
+    return _chain(deltas[0])
+
+
+def measure_striping(
+    df: pd.DataFrame,
+    value_col: str,
+    dominant_azimuth_deg: float,
+    line_spacing_m: float | None,
+) -> dict:
+    """How badly this survey stripes, as a number, independent of whether
+    any correction is applied.
+
+    Reported for every survey so the effect can be compared rather than
+    eyeballed - between two flights, between processing settings, or
+    between two aircraft, since striping severity is a property of the
+    platform (vibration, current draw, how far the sensor hangs below the
+    airframe) as much as of the magnetometer.
+
+    Two figures come back. `line_level_jitter_nt` is the mean disagreement
+    between a line and its immediate neighbours beyond a smooth trend, in
+    nT - the absolute size of the problem. `stripe_ratio_pct` is that as a
+    percentage of the survey's own anomaly range, which is the one to
+    compare across surveys: the same 2 nT of jitter is invisible over a
+    strongly magnetic area and dominates a quiet one.
+
+    Needs only three lines (it is a second difference), so it is available
+    on surveys far too small for the correction itself.
+    """
+    kept = df[df["line_id"] >= 0]
+    values = kept[value_col].to_numpy(dtype=float)
+    values = values[np.isfinite(values)]
+    line_ids = sorted(int(v) for v in kept["line_id"].unique())
+    if len(line_ids) < 3 or values.size == 0:
+        return {
+            "available": False,
+            "reason": "줄무늬 세기를 재려면 측선이 3개 이상 필요합니다.",
+            "n_lines": len(line_ids),
+        }
+
+    levels = _chained_line_levels(kept, value_col, dominant_azimuth_deg, line_spacing_m)
+    if levels is None or len(levels) < 3:
+        return {
+            "available": False,
+            "reason": "인접 측선끼리 겹치는 구간이 부족해 줄무늬 세기를 잴 수 없습니다.",
+            "n_lines": len(line_ids),
+        }
+
+    jitter = _cross_line_roughness(levels)
+    # Robust spread of the field itself, so one spike can't make a badly
+    # striped survey look clean by inflating the denominator.
+    signal = float(np.percentile(values, 95) - np.percentile(values, 5))
+    return {
+        "available": True,
+        "n_lines": len(line_ids),
+        "line_level_jitter_nt": round(jitter, 3),
+        "signal_range_nt": round(signal, 3),
+        "stripe_ratio_pct": round(100.0 * jitter / signal, 2) if signal > 1e-9 else None,
+    }
+
+
 def compute_statistical_leveling(
     df: pd.DataFrame,
     value_col: str,
@@ -201,11 +402,10 @@ def compute_statistical_leveling(
     n_segments: int = 4,
     max_shift_nt: float | None = None,
 ) -> StatisticalLevelingResult:
-    """trend_window_lines: how many lines a feature must span to be
-    treated as geology rather than leveling error - the cross-line cutoff
-    described in the module docstring. Smaller = more conservative
-    (corrects only the fastest line-to-line jitter); larger = removes more
-    error and more line-parallel signal with it.
+    """trend_window_lines: how many lines the local trend is fitted over -
+    see the module docstring for the measured trade-off and why there is a
+    sweet spot rather than a "safe direction". Needs the survey to have
+    two more lines than this, or the correction is declined.
 
     order: 0 (default) = one constant shift per line. 1 = the shift is
     allowed to vary linearly along each line, which catches drift within a
@@ -227,74 +427,34 @@ def compute_statistical_leveling(
     if order not in (0, 1):
         raise ValueError("order는 0(측선당 상수) 또는 1(측선 방향 1차)이어야 합니다.")
 
+    required = required_lines(trend_window_lines)
     kept = df[df["line_id"] >= 0]
     line_ids = sorted(int(v) for v in kept["line_id"].unique())
-    if len(line_ids) < _MIN_LINES:
+    if len(line_ids) < required:
         return StatisticalLevelingResult(
             False,
-            f"통계적 레벨링에는 측선이 최소 {_MIN_LINES}개 필요합니다 (현재 {len(line_ids)}개) - "
-            "인접 측선의 추세와 측선별 오차를 구분할 수 없습니다.",
+            f"측선이 {len(line_ids)}개뿐이라 통계적 레벨링을 건너뛰었습니다 "
+            f"(추세 창 {trend_window_lines}개에는 측선 {required}개 이상 필요) - "
+            "창이 탐사 전체를 덮으면 측선별 오차와 지질 추세를 구분할 수 없어, "
+            "믿을 수 없는 보정을 적용하는 대신 자료를 그대로 둡니다. "
+            f"추세 창을 최소값({_MIN_TREND_WINDOW})까지 줄이면 측선 "
+            f"{required_lines(_MIN_TREND_WINDOW)}개부터 사용할 수 있습니다.",
             n_lines=len(line_ids),
+            trend_window_lines=trend_window_lines,
         )
 
-    along = _along_track_unit(dominant_azimuth_deg)
-    x = kept["x"].to_numpy(dtype=float)
-    y = kept["y"].to_numpy(dtype=float)
-    s_all = x * along[0] + y * along[1]
-    cross_all = cross_track_coordinate(x, y, dominant_azimuth_deg)
-    v_all = kept[value_col].to_numpy(dtype=float)
-    lid_all = kept["line_id"].to_numpy()
-
-    finite = np.isfinite(s_all) & np.isfinite(v_all)
-    per_line: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-    line_cross: dict[int, float] = {}
-    for lid in line_ids:
-        m = (lid_all == lid) & finite
-        if m.sum() < _MIN_SAMPLES_PER_PAIR:
-            continue
-        per_line[lid] = (s_all[m], v_all[m])
-        line_cross[lid] = float(np.median(cross_all[m]))
-    if len(per_line) < _MIN_LINES:
+    per_line, line_cross = _line_profiles(kept, value_col, dominant_azimuth_deg)
+    if len(per_line) < required:
         return StatisticalLevelingResult(
-            False, "통계적 레벨링에 쓸 수 있는 유효 측선이 부족합니다.", n_lines=len(per_line)
+            False,
+            f"통계적 레벨링에 쓸 수 있는 유효 측선이 부족합니다 "
+            f"({len(per_line)}개, {required}개 이상 필요).",
+            n_lines=len(per_line)
         )
 
     ordered = sorted(per_line, key=lambda lid: line_cross[lid])
-    step = max(1.0, (line_spacing_m or 50.0) * _RESAMPLE_STEP_FRACTION)
     n_seg = max(1, n_segments) if order == 1 else 1
-
-    # deltas[k][i] = (line i's level - line i+1's level) in segment k, NaN
-    # where the pair doesn't share enough of that segment to compare.
-    deltas = np.full((n_seg, len(ordered) - 1), np.nan)
-    n_pairs = 0
-    for i in range(len(ordered) - 1):
-        s_a, v_a = per_line[ordered[i]]
-        s_b, v_b = per_line[ordered[i + 1]]
-        lo, hi = max(s_a.min(), s_b.min()), min(s_a.max(), s_b.max())
-        shared = hi - lo
-        shorter = min(np.ptp(s_a), np.ptp(s_b))
-        if shared <= 0 or shorter <= 0 or shared < _MIN_OVERLAP_FRACTION * shorter:
-            continue
-
-        edges = np.arange(lo, hi + step, step)
-        if len(edges) < _MIN_SAMPLES_PER_PAIR + 1:
-            edges = np.linspace(lo, hi, _MIN_SAMPLES_PER_PAIR + 1)
-        prof_a = _profile(s_a, v_a, edges)
-        prof_b = _profile(s_b, v_b, edges)
-        diff = prof_a - prof_b
-        if np.isfinite(diff).sum() < _MIN_SAMPLES_PER_PAIR:
-            continue
-        n_pairs += 1
-
-        centres = 0.5 * (edges[:-1] + edges[1:])
-        # Segment boundaries are taken over the pair's own shared span, so
-        # segment k means "the k-th fraction of what these two lines have
-        # in common" for every pair alike.
-        seg_idx = np.clip(((centres - lo) / max(shared, 1e-9) * n_seg).astype(int), 0, n_seg - 1)
-        for k in range(n_seg):
-            d = diff[(seg_idx == k) & np.isfinite(diff)]
-            if d.size >= max(3, _MIN_SAMPLES_PER_PAIR // n_seg):
-                deltas[k, i] = float(np.median(d))
+    deltas, n_pairs = _pairwise_deltas(per_line, ordered, line_spacing_m, n_seg)
 
     if n_pairs == 0:
         return StatisticalLevelingResult(
@@ -307,15 +467,28 @@ def compute_statistical_leveling(
     warnings: list[str] = []
     # Corrections per segment, then reduced to a constant (order=0) or a
     # straight line in s (order=1) per survey line.
-    corrections = np.zeros((n_seg, len(ordered)))
-    for k in range(n_seg):
-        d = deltas[k]
-        # A pair we couldn't measure contributes no step, which chains the
-        # two sides together at whatever level they already had rather
-        # than breaking the sequence in two.
-        levels = -np.concatenate([[0.0], np.nancumsum(np.where(np.isfinite(d), d, 0.0))])
-        jitter = levels - _running_trend(levels, trend_window_lines)
-        corrections[k] = -(jitter - np.mean(jitter))
+    corrections = _corrections_for_window(deltas, trend_window_lines)
+
+    # Widening the trend window past what the geology supports is the one
+    # way this correction can do real damage: once a local quadratic can no
+    # longer follow the field over the window's span, its own misfit is
+    # what gets removed, and the result is invented structure rather than
+    # leveling. The symptom is specific enough to test for - a survey with
+    # genuine per-line error gives nearly the same correction at any
+    # window (the error is there to be found either way), while on a
+    # survey without it the correction balloons with the window. So
+    # compare against the narrowest supported window and say so.
+    if trend_window_lines > _MIN_TREND_WINDOW:
+        reference = _corrections_for_window(deltas, _MIN_TREND_WINDOW)
+        ref_rms = float(np.sqrt(np.mean(reference**2)))
+        this_rms = float(np.sqrt(np.mean(corrections**2)))
+        if ref_rms > 1e-9 and this_rms / ref_rms > _WINDOW_STABILITY_RATIO:
+            warnings.append(
+                f"추세 창을 {trend_window_lines}개로 넓히자 보정량이 최소 창({_MIN_TREND_WINDOW}개) 대비 "
+                f"{this_rms / ref_rms:.1f}배로 커졌습니다 - 창이 지질 변화를 따라가지 못해 "
+                "레벨 오차가 아니라 추세 맞춤 오차를 지우고 있을 가능성이 높습니다. "
+                f"추세 창을 {_MIN_TREND_WINDOW}~11개로 줄이세요."
+            )
 
     if max_shift_nt is not None and max_shift_nt > 0:
         clamped = int(np.sum(np.abs(corrections) > max_shift_nt))
@@ -329,6 +502,7 @@ def compute_statistical_leveling(
     line_shifts = {lid: float(corrections[:, i].mean()) for i, lid in enumerate(ordered)}
     line_shifts_linear: dict | None = None
     if order == 1 and n_seg > 1:
+        along = _along_track_unit(dominant_azimuth_deg)
         line_shifts_linear = {}
         for i, lid in enumerate(ordered):
             s_line, _v = per_line[lid]
@@ -350,7 +524,7 @@ def compute_statistical_leveling(
                 float(along[0]), float(along[1]),
             )
 
-    levels_before = -np.concatenate([[0.0], np.nancumsum(np.where(np.isfinite(deltas[0]), deltas[0], 0.0))])
+    levels_before = _chain(deltas[0])
     shifts_ordered = np.array([line_shifts[lid] for lid in ordered])
     result = StatisticalLevelingResult(
         applied=True,
@@ -366,18 +540,6 @@ def compute_statistical_leveling(
         line_shifts_linear=line_shifts_linear,
         warnings=warnings,
     )
-    if len(ordered) < trend_window_lines + 2:
-        # The running window then spans the whole survey, so there is no
-        # "smooth across the survey vs. jitter between neighbours" split
-        # left to make - every line is inside every other line's trend
-        # window, and what comes out is whatever the survey-wide fit
-        # happens not to explain. Still applied (it is small and the user
-        # asked for it), but it should not be read as a leveling estimate.
-        result.warnings.append(
-            f"측선이 {len(ordered)}개뿐이라 추세 창({trend_window_lines}개)이 탐사 전체를 덮습니다 - "
-            "측선별 오차와 지질 추세를 구분할 수 없으니 보정량을 신뢰하지 마세요 "
-            f"(추세 창을 줄이거나, 측선이 {trend_window_lines + 2}개 이상인 자료에 사용하세요)."
-        )
     if n_pairs < len(ordered) - 1:
         result.warnings.append(
             f"인접 측선 {len(ordered) - 1}쌍 중 {n_pairs}쌍만 비교할 수 있었습니다 - "

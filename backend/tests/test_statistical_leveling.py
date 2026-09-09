@@ -132,21 +132,33 @@ def test_correction_preserves_the_survey_mean_level():
     assert abs(float(np.mean(shifts))) < 1e-9
 
 
-def test_a_narrower_trend_window_is_the_conservative_setting():
-    """The knob works like a filter cutoff, not like "more smoothing is
-    gentler": a narrow window lets the trend follow fast cross-line
-    variation, so less is called error. A line-parallel anomaly - the
-    method's known failure mode, since it looks exactly like a leveling
-    error - is therefore removed less aggressively at a narrow window."""
-    df = _survey(np.zeros(N_LINES))
-    # One line sits on a real line-parallel anomaly.
-    target = df["line_id"] == 6
-    df.loc[target, "anomaly"] += 25.0
+def test_a_too_wide_trend_window_invents_corrections_and_is_caught():
+    """The knob's dangerous end. Past the span the geology stays quadratic
+    over, the trend stops following the field and its own misfit is what
+    gets subtracted - on data with no leveling error at all. The
+    self-check has to catch that, because this correction runs by
+    default."""
+    df = _survey(np.zeros(30))  # no leveling error whatsoever
 
-    narrow = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=7)
-    wide = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=21)
+    ok = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9)
+    too_wide = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=27)
 
-    assert abs(narrow.line_shifts[6]) < abs(wide.line_shifts[6])
+    assert ok.max_shift_nt < 2.0, "the default-ish window must barely touch clean data"
+    assert too_wide.max_shift_nt > 10.0, "fixture no longer reproduces the failure this guards"
+    assert not any("추세 창" in w for w in ok.warnings)
+    assert any("추세 창" in w and "배로 커졌습니다" in w for w in too_wide.warnings)
+
+
+def test_the_window_self_check_stays_quiet_when_the_error_is_real():
+    """The same check must not cry wolf: where there is genuine per-line
+    error, a wider window finds much the same correction, so widening is
+    not evidence of misfit."""
+    df = _survey(np.random.default_rng(3).normal(0.0, 6.0, 30))
+
+    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=15)
+
+    assert result.applied
+    assert not any("배로 커졌습니다" in w for w in result.warnings)
 
 
 def test_trend_window_below_the_supported_minimum_is_rejected():
@@ -353,23 +365,35 @@ def _processed(**overrides):
     return client, pid, r.json()
 
 
-def test_statistical_leveling_is_off_by_default_and_reports_why():
+def test_statistical_leveling_is_on_by_default():
     _client, _pid, summary = _processed()
-    assert summary["statistical_leveling"]["applied"] is False
-    assert "비활성화" in summary["statistical_leveling"]["reason"]
+    assert summary["statistical_leveling"] is not None
+    # The sample survey has only 4 lines, so the default-on step declines
+    # here - see the no-op test below.
+    assert "비활성화" not in (summary["statistical_leveling"]["reason"] or "")
 
 
-def test_statistical_leveling_runs_end_to_end_and_reports_its_effect():
-    _client, _pid, summary = _processed(statistical_leveling={"enabled": True})
-    info = summary["statistical_leveling"]
+def test_default_on_leveling_is_a_true_no_op_on_a_survey_too_small_for_it():
+    """Being on by default only stays safe if declining really means
+    "changed nothing" - not "applied something small"."""
+    on = _processed()[2]
+    off = _processed(statistical_leveling={"enabled": False})[2]
 
-    assert info["applied"], info["reason"]
-    assert info["n_lines"] >= 4 and info["n_pairs"] >= 1
-    assert info["roughness_after_nt"] <= info["roughness_before_nt"]
-    # A leveling step must redistribute level between lines, not move the
-    # survey - the overall anomaly level has to survive.
-    plain = _processed()[2]
-    assert summary["anomaly_stats"]["mean"] == pytest.approx(plain["anomaly_stats"]["mean"], abs=0.5)
+    assert on["statistical_leveling"]["applied"] is False
+    assert "측선" in on["statistical_leveling"]["reason"]
+    for key in ("mean", "std", "min", "max"):
+        assert on["anomaly_stats"][key] == pytest.approx(off["anomaly_stats"][key], rel=1e-12)
+
+
+def test_striping_is_measured_even_when_the_correction_declines():
+    """The severity number is what makes two systems comparable, so it has
+    to be there on surveys too small to correct."""
+    _client, _pid, summary = _processed()
+    st = summary["striping"]
+
+    assert st["available"], st.get("reason")
+    assert st["line_level_jitter_nt"] > 0
+    assert st["stripe_ratio_pct"] is not None
 
 
 def test_heading_correction_defaults_to_the_local_plane_method():
@@ -383,7 +407,7 @@ def test_heading_correction_defaults_to_the_local_plane_method():
     assert info["offset_spread_nt"] is not None
 
 
-def test_saved_project_replays_the_leveling_it_was_processed_with():
+def test_saved_project_replays_the_leveling_settings_it_was_processed_with():
     client, pid, summary = _processed(statistical_leveling={"enabled": True, "trend_window_lines": 11})
     blob = client.get(f"/api/projects/{pid}/save").content
 
@@ -392,26 +416,27 @@ def test_saved_project_replays_the_leveling_it_was_processed_with():
         f"/api/projects/{new_pid}/load", files={"file": ("p.zip", blob, "application/zip")}
     ).json()["process_summary"]
 
-    assert restored["statistical_leveling"]["applied"]
+    assert restored["statistical_leveling"] == summary["statistical_leveling"]
     assert restored["statistical_leveling"]["trend_window_lines"] == 11
-    assert restored["statistical_leveling"]["rms_shift_nt"] == pytest.approx(
-        summary["statistical_leveling"]["rms_shift_nt"], rel=1e-6
-    )
+    assert restored["striping"] == summary["striping"]
 
 
-def test_a_survey_with_too_few_lines_for_the_window_is_flagged():
+def test_a_survey_with_too_few_lines_for_the_window_is_declined_not_applied():
     """With fewer lines than the trend window, the window covers the whole
-    survey and there is no scale separation left to make - the number that
-    comes out must not be presented as a trustworthy correction."""
+    survey and there is no scale separation left to make. Since this runs
+    by default, the data must be left alone rather than corrected by a
+    number nobody can check - and the reason has to say how to proceed."""
     df = _survey(np.zeros(8))
     result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9)
 
-    assert result.applied
-    assert any("추세 창" in w and "덮습니다" in w for w in result.warnings)
+    assert not result.applied
+    assert "11개 이상 필요" in result.reason and "9개부터" in result.reason
+    assert np.array_equal(apply_statistical_leveling(df, "anomaly", result), df["anomaly"].to_numpy())
 
 
-def test_a_survey_with_plenty_of_lines_is_not_flagged():
-    df = _survey(np.zeros(20))
-    result = compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9)
+def test_lowering_the_trend_window_brings_a_smaller_survey_into_range():
+    """The escape hatch the decline message points at has to actually work."""
+    df = _survey(np.zeros(9))
 
-    assert not any("덮습니다" in w for w in result.warnings)
+    assert not compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=9).applied
+    assert compute_statistical_leveling(df, "anomaly", AZIMUTH, SPACING, trend_window_lines=7).applied

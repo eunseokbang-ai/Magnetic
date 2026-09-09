@@ -833,15 +833,15 @@ export default function WorkflowSteps({
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={sl.enabled} onChange={(e) => updateStatLevel("enabled", e.target.checked)} />
             <span title="지도에 세로 줄무늬(스트립)가 남아 있을 때 쓰는 보정입니다. 타이라인도 캘리브레이션 비행도 필요 없이, 각 측선을 좌우 이웃 측선과 비교해 측선마다 다른 레벨 오차를 찾아 없앱니다. 헤딩 보정은 전진/후진 두 방향에 공통된 오프셋 하나만 잡을 수 있어서, 측선마다 제각각인 오차는 이 보정으로만 제거됩니다.">
-              통계적 레벨링 사용 — 이웃 측선 비교로 측선별 레벨 오차 제거 (줄무늬 완화의 핵심) ⓘ
+              통계적 레벨링 사용 — 이웃 측선 비교로 측선별 레벨 오차 제거 (줄무늬 완화의 핵심, 기본 켜짐) ⓘ
             </span>
           </label>
           {sl.enabled && (
             <>
               <Field
                 label={
-                  <span title="이 값보다 좁은 폭으로 측선을 가로질러 변하는 성분을 '레벨 오차'로 보고 제거합니다. 작을수록 보수적(측선 간 급격한 요철만 제거), 클수록 강하게 제거하지만 측선과 나란한 실제 지질 이상대까지 깎일 수 있습니다.">
-                    추세 창 (측선 수) — 작을수록 보수적, 클수록 강하게 제거 ⓘ
+                  <span title="측선 몇 개 범위로 추세(지질)를 맞출지 정합니다. '클수록 안전' 같은 방향성이 없고 적정값이 따로 있습니다. 너무 좁으면 추세가 오차 자체를 따라가 보정이 거의 안 되고, 너무 넓으면 추세가 지질 변화를 못 따라가 그 맞춤 오차를 레벨 오차인 양 빼버립니다(오차가 전혀 없는 자료에서도 수십 nT를 만들어냄). 기본값 9는 적정 구간에서 약간 보수적인 쪽입니다. 너무 넓게 잡으면 프로그램이 스스로 감지해 경고합니다.">
+                    추세 창 (측선 수) — 기본값 9 근처를 권장 ⓘ
                   </span>
                 }
               >
@@ -1073,6 +1073,18 @@ export default function WorkflowSteps({
                 <div key={i} style={{ color: "#b45309", marginTop: 2 }}>⚠ {w}</div>
               ))}
               <br />
+              {processSummary.striping?.available && (
+                <div
+                  style={{ marginTop: 2 }}
+                  title="측선이 좌우 이웃과 얼마나 어긋나 있는지를 nT로 잰 값입니다(줄무늬의 절대 크기). 괄호 안은 그 값을 이 탐사 자체의 자기이상 범위로 나눈 비율로, 서로 다른 탐사·시스템·기체를 비교할 때는 이 비율을 보세요 - 같은 2nT라도 자성이 강한 지역에서는 안 보이고 조용한 지역에서는 지배적입니다. 보정 전 값이라 설정을 바꿔가며 비교할 수 있습니다."
+                >
+                  줄무늬 세기(보정 전): 측선간 어긋남 {processSummary.striping.line_level_jitter_nt?.toFixed(2)} nT
+                  {processSummary.striping.stripe_ratio_pct != null && (
+                    <> (이상 범위의 {processSummary.striping.stripe_ratio_pct}%)</>
+                  )}{" "}
+                  ⓘ
+                </div>
+              )}
               {processSummary.statistical_leveling?.applied ? (
                 <div style={{ marginTop: 2 }}>
                   통계적 레벨링: 측선 {processSummary.statistical_leveling.n_lines}개 보정 (인접쌍{" "}
