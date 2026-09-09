@@ -229,8 +229,12 @@ def test_processing_applies_an_auto_boundary_by_default_and_it_clips_the_grid():
     client, project_id, summary = _processed_project()
 
     assert summary["display_boundary_polygon"], "auto boundary should be on by default"
-    assert summary["auto_boundary"]["buffer_m"] == 10.0
     project = project_store.get(project_id)
+    # The default buffer is one line spacing, not a fixed metre value - a
+    # 10m buffer on a ~100m-spaced survey clips the map to a thin ribbon.
+    assert summary["auto_boundary"]["buffer_auto"] is True
+    assert summary["auto_boundary"]["buffer_m"] == pytest.approx(project.line_spacing_m, abs=0.1)
+    assert summary["auto_boundary"]["buffer_m"] > 20.0, "fixture spacing is ~98m, so this must not be the old 10m"
     grid_request = {"value": "anomaly", "cell_size_m": 20.0, "method": "nearest"}
 
     client.post(f"/api/projects/{project_id}/grid", json=grid_request)
@@ -257,6 +261,36 @@ def test_regenerating_with_a_bigger_buffer_grows_the_boundary():
 
     assert large["area_km2"] > small["area_km2"]
     assert large["buffer_m"] == 40.0
+    assert large["buffer_auto"] is False, "an explicit buffer must not be reported as auto"
+
+
+def test_omitting_the_buffer_falls_back_to_the_line_spacing():
+    """An explicit 10m request and an omitted buffer must differ, because
+    the omitted one resolves to the survey's ~98m line spacing."""
+    client, project_id, _summary = _processed_project()
+    project = project_store.get(project_id)
+
+    fixed = client.post(f"/api/projects/{project_id}/display-boundary/auto", json={"buffer_m": 10.0}).json()
+    auto = client.post(f"/api/projects/{project_id}/display-boundary/auto", json={}).json()
+
+    assert fixed["buffer_auto"] is False and fixed["buffer_m"] == 10.0
+    assert auto["buffer_auto"] is True
+    assert auto["buffer_m"] == pytest.approx(project.line_spacing_m, abs=0.1)
+    assert auto["area_km2"] > fixed["area_km2"]
+
+
+def test_auto_buffer_falls_back_to_a_fixed_default_without_a_line_spacing():
+    """Single-line/irregular surveys have no spacing to scale from, so the
+    auto buffer has to land somewhere sane and say why."""
+    client, project_id, _summary = _processed_project()
+    project = project_store.get(project_id)
+    project.line_spacing_m = None
+
+    info = project.auto_display_boundary()
+
+    assert info["buffer_m"] == 10.0
+    assert info["buffer_auto"] is True
+    assert any("측선 간격을 추정하지 못해 버퍼를" in w for w in info["warnings"])
 
 
 def test_boundary_export_endpoint_serves_both_formats_and_rejects_others():

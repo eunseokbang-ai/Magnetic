@@ -1049,18 +1049,35 @@ export default function WorkflowSteps({
                 min="0.1"
                 step="1"
                 value={boundaryBufferM}
-                onChange={(e) => setBoundaryBufferM(parseFloat(e.target.value) || 0)}
+                // Blank is a real value here - it means "auto = 측선 간격" -
+                // so keep it instead of coercing to a number.
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setBoundaryBufferM(raw === "" ? "" : parseFloat(raw) || 0);
+                }}
+                placeholder="자동"
                 style={{ ...inputStyle, width: 70 }}
-                title="가장 바깥 측선에서 경계선까지의 거리(m)"
+                title="가장 바깥 측선에서 경계선까지의 거리(m). 비워두면 측선 간격으로 자동 설정됩니다."
               />
               <span style={{ color: "#6b5c42" }}>m</span>
               <button style={buttonStyle} onClick={() => onAutoBoundary()} disabled={autoBoundaryBusy}>
-                {autoBoundaryBusy ? "생성 중..." : "이 버퍼로 경계 다시 생성"}
+                {autoBoundaryBusy ? "생성 중..." : boundaryBufferM === "" ? "자동 버퍼로 경계 생성" : "이 버퍼로 경계 다시 생성"}
               </button>
+              {boundaryBufferM !== "" && (
+                <button
+                  style={buttonStyle}
+                  onClick={() => setBoundaryBufferM("")}
+                  disabled={autoBoundaryBusy}
+                  title="버퍼를 비워 측선 간격 자동값으로 되돌립니다."
+                >
+                  자동값으로
+                </button>
+              )}
             </div>
             {autoBoundaryInfo && !autoBoundaryInfo.failed && (
               <div style={{ fontSize: 11, color: "#6b5c42", marginBottom: 6 }}>
-                자동 경계 적용됨: 버퍼 {autoBoundaryInfo.buffer_m}m, 면적 {autoBoundaryInfo.area_km2}km²
+                자동 경계 적용됨: 버퍼 {autoBoundaryInfo.buffer_m}m
+                {autoBoundaryInfo.buffer_auto ? " (측선 간격 자동)" : ""}, 면적 {autoBoundaryInfo.area_km2}km²
                 {autoBoundaryInfo.n_parts > 1 ? `, 구역 ${autoBoundaryInfo.n_parts}개` : ""}
                 {(autoBoundaryInfo.warnings || []).map((w, i) => (
                   <div key={i} style={{ color: "#b45309", marginTop: 2 }}>

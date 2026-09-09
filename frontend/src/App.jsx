@@ -241,8 +241,10 @@ export default function App() {
   const [boundaryFilename, setBoundaryFilename] = useState("boundary.json");
   // Buffer distance (m) for the auto-generated boundary - the one number
   // that decides how far past the outermost flight line the map extends.
-  // Matches ProcessParams.display_boundary_buffer_m's default.
-  const [boundaryBufferM, setBoundaryBufferM] = useState(10);
+  // Empty means "let the backend pick one line spacing", which is what
+  // processing itself does (ProcessParams.display_boundary_buffer_m=None);
+  // it gets filled in with the resolved value once processing reports back.
+  const [boundaryBufferM, setBoundaryBufferM] = useState("");
   const [autoBoundaryBusy, setAutoBoundaryBusy] = useState(false);
   const [autoBoundaryInfo, setAutoBoundaryInfo] = useState(null);
   const [nearestIntermagnetCsvFilename, setNearestIntermagnetCsvFilename] = useState("intermagnet_nearest_estimate.csv");
@@ -968,9 +970,14 @@ export default function App() {
     try {
       setError(null);
       setAutoBoundaryBusy(true);
-      const resp = await api.autoDisplayBoundary(projectId, boundaryBufferM);
+      // Blank field = null = "one line spacing", same as processing's default.
+      const bufferM = boundaryBufferM === "" || boundaryBufferM === null ? null : Number(boundaryBufferM);
+      const resp = await api.autoDisplayBoundary(projectId, bufferM);
       setBoundaryPolygon(resp.display_boundary_polygon || null);
       setAutoBoundaryInfo(resp);
+      // Show whatever the backend actually used, so an auto run stops
+      // looking like an empty box.
+      if (resp.buffer_m) setBoundaryBufferM(resp.buffer_m);
       await refreshCurrentOverlay();
     } catch (e) {
       handleError(e);

@@ -224,8 +224,11 @@ class ProcessParams(BaseModel):
     # or imported by hand is replaced on the next processing run, so turn
     # this off to keep one.
     auto_display_boundary: bool = True
-    # How far outside the outermost flight line the boundary sits.
-    display_boundary_buffer_m: float = Field(10.0, gt=0)
+    # How far outside the outermost flight line the boundary sits. None
+    # (the default) means "one line spacing", resolved per-survey in
+    # store.auto_display_boundary - a fixed metre value is either far too
+    # tight on a 100 m-spaced survey or too loose on a 5 m-spaced one.
+    display_boundary_buffer_m: Optional[float] = Field(None, gt=0)
 
 
 ValueField = Literal["tmi", "anomaly"]
@@ -376,8 +379,9 @@ class AutoBoundaryRequest(BaseModel):
     """Regenerate the display boundary from the flown lines - the same
     thing processing does by default (ProcessParams.auto_display_boundary),
     exposed on its own so the buffer can be retuned without reprocessing.
-    See processing/boundary.py."""
-    buffer_m: float = Field(10.0, gt=0)
+    See processing/boundary.py. buffer_m=None means "one line spacing",
+    the same default processing uses."""
+    buffer_m: Optional[float] = Field(None, gt=0)
 
 
 class IntermagnetFetchRequest(BaseModel):

@@ -247,6 +247,12 @@ def boundary_rings(polygon) -> list[list[list[float]]]:
 _GRID_CACHE_MAX_ENTRIES = 4
 _TRANSFORM_CACHE_MAX_ENTRIES = 8
 
+# Display-boundary buffer used when the caller asks for the automatic
+# default (buffer_m=None) but the line spacing could not be estimated -
+# a single-line survey, or lines too irregular to read a spacing from.
+# See Project.auto_display_boundary.
+_FALLBACK_BOUNDARY_BUFFER_M = 10.0
+
 
 def _lru_get(cache: dict, key):
     """Return cache[key] (refreshing its recency) or None. Python dicts
@@ -1458,12 +1464,19 @@ class Project:
         self.display_boundary_polygon = req.polygon
         return {"display_boundary_polygon": self.display_boundary_polygon}
 
-    def auto_display_boundary(self, buffer_m: float = 10.0) -> dict:
+    def auto_display_boundary(self, buffer_m: float | None = None) -> dict:
         """Derive the display boundary from the flown lines themselves -
         a corridor buffer_m outside the outermost line, with the regular
         line-to-line spacing closed over so the interior stays solid. See
         processing/boundary.py for the closing operation and why the
         merge radius is taken from the line spacing rather than exposed.
+
+        buffer_m=None means "one line spacing", which is the default: the
+        useful buffer scales with the survey, since the grid is only
+        trustworthy about that far off the outermost line anyway, and a
+        fixed value chokes a 100m-spaced survey while ballooning a
+        5m-spaced one. Falls back to _FALLBACK_BOUNDARY_BUFFER_M when the
+        spacing is unknown (single line / irregular lines).
 
         Replaces whatever boundary is currently set. Like
         set_display_boundary this leaves grid_cache/transform_cache alone
@@ -1477,6 +1490,18 @@ class Project:
         active = self._active_mask()
         if not active.any():
             raise ProjectError("경계를 만들 활성 측선 자료가 없습니다.")
+
+        auto_buffer = buffer_m is None
+        extra_warnings: list[str] = []
+        if auto_buffer:
+            if self.line_spacing_m and self.line_spacing_m > 0:
+                buffer_m = float(self.line_spacing_m)
+            else:
+                buffer_m = _FALLBACK_BOUNDARY_BUFFER_M
+                extra_warnings.append(
+                    f"측선 간격을 추정하지 못해 버퍼를 기본값 {_FALLBACK_BOUNDARY_BUFFER_M:.0f}m로 잡았습니다 - "
+                    "경계가 좁으면 버퍼를 직접 지정하세요."
+                )
 
         try:
             result = auto_survey_boundary(
@@ -1501,13 +1526,18 @@ class Project:
 
         return {
             "display_boundary_polygon": self.display_boundary_polygon,
-            "buffer_m": result.buffer_m,
+            # Rounded only for display/round-tripping through the UI input;
+            # the geometry above used the full-precision value.
+            "buffer_m": round(result.buffer_m, 1),
+            # True when the buffer above was derived from the line spacing
+            # rather than given by the caller, so the UI can say so.
+            "buffer_auto": auto_buffer,
             "merge_radius_m": round(result.merge_radius_m, 1),
             "area_km2": round(result.area_m2 / 1e6, 4),
             "n_parts": result.n_parts,
             "n_vertices": sum(len(r) for r in rings),
             "dropped_holes": result.dropped_holes,
-            "warnings": result.warnings,
+            "warnings": extra_warnings + result.warnings,
         }
 
     def export_display_boundary(self, fmt: str, name: str = "boundary") -> tuple[bytes, str, str]:
