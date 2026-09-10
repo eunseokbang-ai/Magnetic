@@ -2919,6 +2919,26 @@ export default function App() {
             ⚠ {overlay.rtp_latitude_warning}
           </div>
         )}
+        {overlay?.striping?.available && (
+          <div
+            style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#4a3d28", background: "#f7f2e6", border: "1px solid #e6dac0", borderRadius: 6 }}
+            title="지금 보고 있는 그리드의 줄무늬를 파장으로 측정한 값입니다. 줄무늬는 원인마다 파장이 다르고 처방도 반대라서, 눈으로 보는 대신 이 숫자로 원인을 가릅니다. 세기(%)는 그리드 전체 변동 중 줄무늬 대역이 차지하는 비율이라, 설정을 바꿔가며 비교하는 데 쓰면 됩니다."
+          >
+            <b>줄무늬 진단</b> — 파장 {overlay.striping.peak_wavelength_m}m (
+            {overlay.striping.peak_wavelength_cells}셀
+            {overlay.striping.peak_wavelength_spacings != null && `, 측선 간격의 ${overlay.striping.peak_wavelength_spacings}배`}
+            ), 세기 {overlay.striping.amplitude_pct}% ⓘ
+            <div style={{ marginTop: 3 }}>{overlay.striping.verdict}</div>
+            {overlay.striping_base_grid?.available && (
+              // Which of the two carries it says whether the transform made
+              // the striping or only revealed what the base grid already had.
+              <div style={{ marginTop: 3, color: "#8a7a5c" }}>
+                원본 그리드 자체: 파장 {overlay.striping_base_grid.peak_wavelength_m}m, 세기{" "}
+                {overlay.striping_base_grid.amplitude_pct}%
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

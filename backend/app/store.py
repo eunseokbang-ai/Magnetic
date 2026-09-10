@@ -146,6 +146,7 @@ from .processing.boundary import auto_survey_boundary
 from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from .processing.contacts import detect_magnetic_contacts
 from .processing.lineaments import extract_lineaments
+from .processing.grid_diagnostics import diagnose_striping
 from .processing.microlevel import apply_microleveling
 from .processing.statistical_leveling import (
     StatisticalLevelingResult,
@@ -1781,6 +1782,7 @@ class Project:
         overlay["extrema"] = _extrema_locations(grid.values, grid.easting, grid.northing, self.utm_epsg)
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
+        overlay["striping"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
         if req.show_contours:
             overlay["contours"] = compute_contours(
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
@@ -1974,6 +1976,15 @@ class Project:
             )
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
+    def _striping_diagnostic(self, values: np.ndarray, cell_size_m: float) -> dict:
+        """Corrugation wavelength/strength of a displayed grid - see
+        processing/grid_diagnostics.py. Never fatal: a diagnostic that can
+        break the map it is describing is worse than no diagnostic."""
+        try:
+            return diagnose_striping(values, cell_size_m, self.dominant_azimuth_deg, self.line_spacing_m)
+        except Exception as exc:  # noqa: BLE001 - diagnostics must not break rendering
+            return {"available": False, "reason": f"줄무늬 분석 실패: {exc}"}
+
     def get_transform_overlay(self, req: TransformRequest) -> dict:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
@@ -1996,6 +2007,11 @@ class Project:
         overlay["extrema"] = _extrema_locations(values, grid.easting, grid.northing, self.utm_epsg)
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
+        # Both the displayed transform and the grid it came from: which of
+        # the two carries the corrugation is exactly what says whether a
+        # transform introduced it or only revealed what was already there.
+        overlay["striping"] = self._striping_diagnostic(values, grid.cell_size_m)
+        overlay["striping_base_grid"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
         overlay["transform"] = req.transform
         if req.show_contours:
