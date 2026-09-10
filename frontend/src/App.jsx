@@ -135,6 +135,8 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_mode: "decorrugation",
   microlevel_cutoff_factor: 4.0,
   microlevel_pre_apply: false,
+  derivative_presmooth: true,
+  derivative_presmooth_factor: 0.4,
 };
 
 const DEFAULT_PARAMS = {

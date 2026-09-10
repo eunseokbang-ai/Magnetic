@@ -119,6 +119,7 @@ from .processing.render import (
 )
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import (
+    limit_to_line_spacing_resolution,
     RTP_LOW_LATITUDE_INCLINATION_DEG,
     analytic_signal,
     derivative_easting,
@@ -250,6 +251,15 @@ def boundary_rings(polygon) -> list[list[list[float]]]:
 # arrays each) so they get the smaller cap; transform entries hold one
 # values array each. Module-level (not per-instance) so tests can lower
 # them without building huge grids.
+# Transforms that differentiate (or otherwise amplify high wavenumbers)
+# and so must not see structure finer than the survey actually resolves.
+# "none"/"detrend"/"upward_continuation" don't amplify, and "microlevel"
+# is itself a filter aimed at that scale, so none of them are pre-smoothed.
+_RESOLUTION_LIMITED_TRANSFORMS = frozenset({
+    "rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta",
+    "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
+})
+
 _GRID_CACHE_MAX_ENTRIES = 4
 _TRANSFORM_CACHE_MAX_ENTRIES = 8
 
@@ -1852,6 +1862,8 @@ class Project:
             req.microlevel_mode,
             req.microlevel_cutoff_factor,
             req.microlevel_pre_apply,
+            req.derivative_presmooth,
+            req.derivative_presmooth_factor,
         )
         cached = _lru_get(self.transform_cache, cache_key)
         if cached is not None:
@@ -1889,6 +1901,19 @@ class Project:
         transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
+        # Derivative-based transforms amplify whatever the interpolator
+        # invented between the flight lines; smoothing to the grid's real
+        # across-line resolution first is what keeps them measuring the
+        # ground instead of the gridding. See
+        # processing/transforms.py:limit_to_line_spacing_resolution.
+        if transform in _RESOLUTION_LIMITED_TRANSFORMS and getattr(req, "derivative_presmooth", True):
+            grid = replace(
+                grid,
+                values=limit_to_line_spacing_resolution(
+                    grid.values, grid.cell_size_m, self.line_spacing_m,
+                    factor=req.derivative_presmooth_factor,
+                ),
+            )
         if transform != "microlevel":
             # matters most for derivative-based transforms (RTP/1VD/tilt/
             # etc.), which amplify whatever line-parallel corrugation is

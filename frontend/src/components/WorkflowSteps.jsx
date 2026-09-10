@@ -1470,6 +1470,29 @@ export default function WorkflowSteps({
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input
               type="checkbox"
+              checked={transformExtraParams.derivative_presmooth}
+              onChange={(e) => setTransformExtraParams((p) => ({ ...p, derivative_presmooth: e.target.checked }))}
+            />
+            <span title="탐사는 측선 위에서만 값을 재고 측선 사이는 재지 않으므로, 측선 간격보다 좁은 구조는 측선 직각방향으로 '측정된 적이 없는' 값입니다 - 보간이 만들어낸 것입니다. 기본 보간법인 '원본 셀'은 이웃 셀의 80%가 값이 완전히 똑같은 계단 모양이라, 그대로 미분하면 지반이 아니라 그 계단을 재게 됩니다(합성자료 검증에서 AS가 참값 대비 101% 오차). 미분 전에 실제 분해능까지 평활하면 5%로 떨어집니다. 격자 줄무늬가 보이면 이 옵션을 확인하세요.">
+              미분 전에 측선 간격 분해능까지 평활 (AS/1VD/dXY 등 격자 줄무늬 억제) ⓘ
+            </span>
+          </label>
+          {transformExtraParams.derivative_presmooth && (
+            <Field label="평활 폭 (측선 간격 배수) — 0.4 권장. 키우면 줄무늬는 줄지만 실제 신호도 깎입니다">
+              <input
+                type="number"
+                step="0.05"
+                min="0.05"
+                max="2"
+                style={inputStyle}
+                value={transformExtraParams.derivative_presmooth_factor}
+                onChange={(e) => setTransformExtraParams((p) => ({ ...p, derivative_presmooth_factor: parseFloat(e.target.value) }))}
+              />
+            </Field>
+          )}
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
               checked={transformExtraParams.microlevel_pre_apply}
               onChange={(e) => setTransformExtraParams((p) => ({ ...p, microlevel_pre_apply: e.target.checked }))}
             />

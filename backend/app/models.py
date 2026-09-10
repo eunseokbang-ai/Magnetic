@@ -387,6 +387,17 @@ class TransformRequest(HillshadeParams, ContourParams):
     continuation_height_m: Optional[float] = Field(None, gt=0)
     # transform="detrend" only: order of the polynomial regional surface removed (1=plane, 2=quadratic, 3=cubic).
     trend_order: int = Field(1, ge=1, le=3)
+    # Low-pass the base grid to its real across-line resolution before
+    # any derivative-based transform (see
+    # processing/transforms.py:limit_to_line_spacing_resolution). On by
+    # default: with the default "raw cell" gridding, differentiating the
+    # unsmoothed grid measures the interpolator's flat blocks rather than
+    # the field - the analytic signal came out 101% wrong against a known
+    # answer, versus 5% with this on.
+    derivative_presmooth: bool = True
+    # Smoothing width as a fraction of the line spacing. 0.4 was the
+    # measured optimum; larger starts erasing real signal.
+    derivative_presmooth_factor: float = Field(0.4, gt=0, le=2.0)
     # transform="microlevel" only: see processing/microlevel.py for what each controls.
     microlevel_strength: float = Field(0.8, ge=0, le=1)
     microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
