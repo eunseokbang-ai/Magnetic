@@ -2919,6 +2919,33 @@ export default function App() {
             ⚠ {overlay.rtp_latitude_warning}
           </div>
         )}
+        {overlay?.raw_cell_derivative_warning && (
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>
+            ⚠ {overlay.raw_cell_derivative_warning}
+          </div>
+        )}
+        {overlay?.derivative_presmooth?.applies && (
+          // Says whether the across-line filter actually ran. It can
+          // decline for reasons invisible on the map, and a filter that
+          // quietly does nothing looks exactly like a broken one.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.derivative_presmooth.applied ? "#4a3d28" : "#b45309",
+                        background: overlay.derivative_presmooth.applied ? "#f7f2e6" : "#fffbeb",
+                        border: `1px solid ${overlay.derivative_presmooth.applied ? "#e6dac0" : "#fde68a"}` }}>
+            {overlay.derivative_presmooth.applied ? (
+              <>
+                측선직각 평활 적용됨 — 차단 파장 {overlay.derivative_presmooth.cutoff_m}m (
+                {overlay.derivative_presmooth.cutoff_cells}셀
+                {overlay.derivative_presmooth.from_line_spacing
+                  ? `, 측선 간격 ${overlay.derivative_presmooth.line_spacing_m?.toFixed(0)}m 기준`
+                  : ", 측선 간격을 몰라 셀 크기 기준 기본값"}
+                )
+              </>
+            ) : (
+              <>⚠ 측선직각 평활이 적용되지 않았습니다: {overlay.derivative_presmooth.reason}</>
+            )}
+          </div>
+        )}
         {overlay?.striping?.available && (
           <div
             style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#4a3d28", background: "#f7f2e6", border: "1px solid #e6dac0", borderRadius: 6 }}

@@ -120,6 +120,7 @@ from .processing.render import (
 from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
 from .processing.transforms import (
     limit_to_line_spacing_resolution,
+    resolution_cutoff_m,
     RTP_LOW_LATITUDE_INCLINATION_DEG,
     analytic_signal,
     derivative_easting,
@@ -1976,6 +1977,30 @@ class Project:
             )
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
+    def _presmooth_report(self, req, cell_size_m: float) -> dict:
+        """Whether the across-line filter ran on this transform and at what
+        cutoff. Reported because it can decline for reasons nobody can see
+        from the map - no line-spacing estimate, or cells already coarser
+        than the cutoff - and a filter that quietly does nothing is
+        indistinguishable from one that is broken."""
+        if req.transform not in _RESOLUTION_LIMITED_TRANSFORMS:
+            return {"applies": False, "reason": "이 변환은 미분 계열이 아니라 평활 대상이 아닙니다."}
+        if not getattr(req, "derivative_presmooth", True):
+            return {"applies": True, "applied": False, "reason": "사용자가 껐습니다."}
+        cutoff = resolution_cutoff_m(cell_size_m, self.line_spacing_m, req.derivative_presmooth_factor)
+        if cutoff is None:
+            return {
+                "applies": True, "applied": False,
+                "reason": f"셀 크기({cell_size_m:.0f}m)가 차단 파장보다 커서 지울 것이 없습니다.",
+            }
+        return {
+            "applies": True, "applied": True,
+            "cutoff_m": round(cutoff, 1),
+            "cutoff_cells": round(cutoff / cell_size_m, 1),
+            "line_spacing_m": self.line_spacing_m,
+            "from_line_spacing": bool(self.line_spacing_m and self.line_spacing_m > 0),
+        }
+
     def _raw_cell_derivative_warning(self, req) -> str | None:
         """Derivatives of a "raw cell" grid measure the interpolator. Each
         cell takes its nearest sounding's value, so the grid is flat blocks
@@ -2032,6 +2057,7 @@ class Project:
         overlay["striping_base_grid"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
+        overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
         overlay["transform"] = req.transform
         if req.show_contours:
             overlay["contours"] = compute_contours(

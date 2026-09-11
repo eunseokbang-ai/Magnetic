@@ -232,13 +232,14 @@ def test_it_does_not_pretend_to_rescue_a_raw_cell_grid():
     assert filtered > smooth_gridded, "but gridding smoothly is what actually fixes this"
 
 
-def test_smoothing_is_skipped_when_it_would_do_nothing_or_cannot_be_sized():
+def test_smoothing_is_skipped_only_when_there_is_genuinely_nothing_to_remove():
+    """Cells coarser than any useful cutoff already hold nothing shorter,
+    so the filter steps aside. An unknown line spacing is NOT such a case
+    - see test_it_still_filters_when_the_line_spacing_is_unknown."""
     g, _truth = _gridded("nearest")
 
-    # No line spacing known - nothing to size the filter from.
-    assert limit_to_line_spacing_resolution(g.values, CELL, None) is g.values
-    # Cells already as coarse as the cutoff.
     assert limit_to_line_spacing_resolution(g.values, 100.0, SPACING) is g.values
+    assert limit_to_line_spacing_resolution(g.values, CELL, None) is not g.values
 
 
 def test_the_filter_keeps_the_masked_area_masked():
@@ -284,3 +285,33 @@ def test_derived_grids_are_presmoothed_by_default_and_it_can_be_turned_off():
     off = _cell_scale_striping(project.last_overlay.values)
 
     assert on < off, "the default must be the smoother one"
+
+
+def test_it_still_filters_when_the_line_spacing_is_unknown():
+    """Silently doing nothing was how this went unnoticed on real data: the
+    user saw striping, the filter was on, and it had declined because the
+    survey had no line-spacing estimate. Detail a few cells across is
+    unresolved by any survey whatever its line spacing, so there is always
+    something safe to remove."""
+    yy, xx = np.mgrid[0:200, 0:200] * CELL
+    base = 300 * np.sin(2 * np.pi * xx / 1500)
+    striped = base + 15 * np.sin(2 * np.pi * xx / (3 * CELL))
+
+    out = limit_to_line_spacing_resolution(striped, CELL, None)
+
+    inner = (slice(40, -40), slice(40, -40))
+    left = float(np.std((out - limit_to_line_spacing_resolution(base, CELL, None))[inner]))
+    assert left < 0.3 * 15.0, f"{left:.2f} nT of 15 survived with no line spacing"
+
+
+def test_the_cutoff_it_will_use_is_reportable_before_running():
+    """So the API can say whether the filter ran and at what width - a
+    filter that can quietly decline has to be observable from outside."""
+    from app.processing.transforms import resolution_cutoff_m
+
+    assert resolution_cutoff_m(10.0, 100.0, 1.0) == 100.0
+    assert resolution_cutoff_m(10.0, 100.0, 0.5) == 50.0
+    # No spacing: falls back to a few cells rather than declining.
+    assert resolution_cutoff_m(10.0, None, 1.0) == 40.0
+    # Cells coarser than any useful cutoff: genuinely nothing to do.
+    assert resolution_cutoff_m(100.0, 100.0, 1.0) is None

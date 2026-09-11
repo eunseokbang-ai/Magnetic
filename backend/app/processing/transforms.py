@@ -38,6 +38,27 @@ _ACROSS_LINE_TOLERANCE_DEG = 30.0
 # survey reports as its dominant azimuth - verified on the real grid at
 # 0, 90 and 91 degrees - so the caller's azimuth is not needed at all.
 _ACROSS_LINE_REFERENCE_AZIMUTH_DEG = 90.0
+# Cutoff used when the line spacing could not be estimated, in cells.
+# Silently doing nothing was the wrong behaviour: the filter's whole job
+# is to drop across-line detail the survey never resolved, and detail
+# only a few cells across is never resolved by any survey, whatever its
+# line spacing. 4 cells measured within a factor of two of the
+# spacing-derived cutoff on real data.
+_FALLBACK_CUTOFF_CELLS = 4.0
+
+
+def resolution_cutoff_m(cell_size_m: float, line_spacing_m: float | None, factor: float) -> float | None:
+    """Cutoff wavelength limit_to_line_spacing_resolution will use, or None
+    if it will do nothing. Exposed so callers can report which - a filter
+    that silently no-ops when the line spacing is unknown is impossible to
+    debug from the outside, which is exactly how it went unnoticed."""
+    if cell_size_m <= 0 or factor <= 0:
+        return None
+    if line_spacing_m and line_spacing_m > 0:
+        cutoff = factor * line_spacing_m
+    else:
+        cutoff = _FALLBACK_CUTOFF_CELLS * cell_size_m
+    return cutoff if cutoff >= 2.0 * cell_size_m else None
 
 
 def _wavenumbers(n_north: int, n_east: int, d_north: float, d_east: float):
@@ -142,13 +163,8 @@ def limit_to_line_spacing_resolution(
     No-op when the line spacing is unknown or the cutoff falls below what
     the grid can represent.
     """
-    if not line_spacing_m or line_spacing_m <= 0 or cell_size_m <= 0 or factor <= 0:
-        return grid
-    cutoff_m = factor * line_spacing_m
-    if cutoff_m < 2.0 * cell_size_m:
-        # Cells this coarse already hold nothing shorter than the cutoff.
-        return grid
-    if not np.isfinite(grid).any():
+    cutoff_m = resolution_cutoff_m(cell_size_m, line_spacing_m, factor)
+    if cutoff_m is None or not np.isfinite(grid).any():
         return grid
 
     padded, mask, pad_widths = _pad_and_fill(grid)
