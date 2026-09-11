@@ -1871,7 +1871,8 @@ class Project:
         cached = _lru_get(self.transform_cache, cache_key)
         if cached is not None:
             return cached
-        result = self._compute_transform_values(grid, req)
+        values, symmetric = self._compute_transform_values(grid, req)
+        result = (self._post_filter_transform(values, grid, req), symmetric)
         _lru_put(self.transform_cache, cache_key, result, _TRANSFORM_CACHE_MAX_ENTRIES)
         return result
 
@@ -1976,6 +1977,35 @@ class Project:
                 True,
             )
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
+
+    def _post_filter_transform(self, values: np.ndarray, grid: GridResult, req) -> np.ndarray:
+        """Run the across-line filter over the transform's *output* as well
+        as its input.
+
+        Filtering the input alone leaves the input at the numerical floor
+        but the output still carrying cell-scale texture, because the
+        derivative multiplies whatever is left by the wavenumber - on the
+        real survey grid an input at 0.0001% of variance in the 2-4 cell
+        band came out as 0.32% of the second derivative's. A second pass
+        over the output takes that to 0.068%, and the analytic signal from
+        0.013% to 0.001%. It is close to free: the two hundred strongest
+        analytic-signal peaks keep 98.4% of their amplitude, because a
+        compact target is isotropic and this filter only touches
+        across-line directions.
+
+        Non-negative transforms (AS, THDR) are clipped back at zero - the
+        filter can push a near-zero cell slightly below, and a negative
+        analytic signal is meaningless."""
+        if req.transform not in _RESOLUTION_LIMITED_TRANSFORMS or not getattr(req, "derivative_presmooth", True):
+            return values
+        filtered = limit_to_line_spacing_resolution(
+            values, grid.cell_size_m, self.line_spacing_m, factor=req.derivative_presmooth_factor
+        )
+        if filtered is values:
+            return values
+        if np.nanmin(values) >= 0.0:
+            filtered = np.where(np.isnan(filtered), filtered, np.maximum(filtered, 0.0))
+        return filtered
 
     def _presmooth_report(self, req, cell_size_m: float) -> dict:
         """Whether the across-line filter ran on this transform and at what
