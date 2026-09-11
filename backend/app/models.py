@@ -390,14 +390,16 @@ class TransformRequest(HillshadeParams, ContourParams):
     # Low-pass the base grid to its real across-line resolution before
     # any derivative-based transform (see
     # processing/transforms.py:limit_to_line_spacing_resolution). On by
-    # default: with the default "raw cell" gridding, differentiating the
-    # unsmoothed grid measures the interpolator's flat blocks rather than
-    # the field - the analytic signal came out 101% wrong against a known
-    # answer, versus 5% with this on.
+    # default: differentiation multiplies amplitude by the wavenumber, so
+    # across-line detail the survey never resolved - invisible in the
+    # anomaly map - arrives in AS and the second derivatives eighty times
+    # stronger, as the fine hatching those grids show. The filter is
+    # directional, so compact targets keep their amplitude.
     derivative_presmooth: bool = True
-    # Smoothing width as a fraction of the line spacing. 0.4 was the
-    # measured optimum; larger starts erasing real signal.
-    derivative_presmooth_factor: float = Field(0.4, gt=0, le=2.0)
+    # Cutoff wavelength as a fraction of the line spacing. 1.0 is the
+    # measured optimum: the artifact bottoms out there and 93% of a
+    # compact dipole survives. Higher does not keep helping.
+    derivative_presmooth_factor: float = Field(1.0, gt=0, le=3.0)
     # transform="microlevel" only: see processing/microlevel.py for what each controls.
     microlevel_strength: float = Field(0.8, ge=0, le=1)
     microlevel_angle_tolerance_deg: float = Field(15.0, gt=0, le=45)

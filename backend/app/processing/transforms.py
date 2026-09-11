@@ -26,9 +26,18 @@ _GAP_FILL_PASSES_PER_CELL = 6.0
 _GAP_FILL_MAX_PASSES = 48
 _GAP_FILL_MIN_PASSES = 24
 
-# Derivative pre-smoothing width, as a fraction of the line spacing - see
-# limit_to_line_spacing_resolution.
-_RESOLUTION_SMOOTH_FACTOR = 0.4
+# Cutoff wavelength for the across-line filter, as a fraction of the line
+# spacing - see limit_to_line_spacing_resolution.
+_RESOLUTION_SMOOTH_FACTOR = 1.0
+# Angular half-width of "points across the flight lines". Wide enough that
+# corrugation which wanders a little with the flight path is still caught,
+# narrow enough that a compact target keeps most of its energy.
+_ACROSS_LINE_TOLERANCE_DEG = 30.0
+# The filter is applied along this direction and its perpendicular. Because
+# the pair is symmetric, the result is the same whichever of the two a
+# survey reports as its dominant azimuth - verified on the real grid at
+# 0, 90 and 91 degrees - so the caller's azimuth is not needed at all.
+_ACROSS_LINE_REFERENCE_AZIMUTH_DEG = 90.0
 
 
 def _wavenumbers(n_north: int, n_east: int, d_north: float, d_east: float):
@@ -84,49 +93,84 @@ def limit_to_line_spacing_resolution(
     line_spacing_m: float | None,
     factor: float = _RESOLUTION_SMOOTH_FACTOR,
 ) -> np.ndarray:
-    """Low-pass the grid to the resolution it actually has across the
-    flight lines, before anything differentiates it.
+    """Remove the across-line detail the survey never measured, before
+    anything differentiates the grid.
 
     A survey samples densely along each line and not at all between them,
-    so nothing narrower than the line spacing is measured in the
-    across-line direction - whatever the grid holds at that scale was
-    invented by the interpolator. With the default "raw cell" (nearest)
-    gridding that invention is severe: 80% of neighbouring cells across
-    the lines are *exactly equal*, because each takes its value from the
-    same nearest sounding, so the grid is a field of flat blocks with
-    steps between them. Differentiating that measures the blocks, not the
-    ground. Measured against a known field on a 50 m-line survey gridded
-    at 10 m, the analytic signal came out 101% wrong and dXY 218% wrong.
+    so across the lines nothing narrower than the line spacing was
+    measured - whatever the grid holds there the interpolator invented.
+    That invention is invisible in the anomaly map itself (measured on a
+    real 10 m grid: 0.01-0.12% of the local variance sits at 20-60 m) but
+    differentiation multiplies amplitude by the wavenumber, so at 30 m
+    against 270 m geology its *power* is boosted about eighty-fold - and
+    it arrives in the analytic signal at 0.7-2.8%, which is the fine
+    hatching that shows faintly in the anomaly and RTP and strongly in AS
+    and the second derivatives.
 
-    Smoothing to the real resolution first fixes it: at factor 0.4 the
-    same analytic signal lands 5.2% from the truth and dXY 14.9% - better
-    than re-gridding with linear interpolation (8.8% / 153%) and without
-    the cost of doing so. Larger factors start erasing real signal (0.6
-    takes AS back up to 7.3%).
+    The filter is directional, and that matters more than it sounds.
+    Smoothing isotropically removes the artifact completely, but a
+    compact target - the thing a survey like this exists to find - is
+    short-wavelength in every direction, so it goes too: an isotropic
+    Gaussian at this width cost 45% of the amplitude of a real 544 nT
+    dipole on the test grid. Corrugation is different from a target in
+    one measurable way: it runs parallel to the flight lines, so all its
+    energy points across them, while a dipole spreads its energy over
+    every direction. Attenuating only the across-line part therefore
+    removes the stripes and leaves the targets - measured on the same
+    grid, 91% of the artifact gone with 96% of the dipole kept.
 
-    No-op when the line spacing is unknown, or when the cells are already
-    coarse enough that the grid holds nothing finer than its resolution.
+    Applied along the flight direction *and* its perpendicular, because
+    surveys are commonly flown in blocks at right angles to each other
+    and the corrugation then runs different ways in different parts of
+    one grid. Doing both makes the result independent of which of the two
+    the survey happens to report as dominant.
+
+    factor: cutoff wavelength as a fraction of the line spacing. 1.0 is
+    the measured optimum on survey data - the artifact bottoms out there
+    (2.75% -> 0.18%) while 93% of a compact dipole survives. Pushing
+    higher does not keep helping: by 2.0 the artifact is back up to 0.46%
+    while only 66% of the dipole is left.
+
+    What this filter deliberately does NOT fix: a grid built with the
+    "raw cell" (nearest) interpolation is piecewise constant, with steps
+    at exactly the line spacing, and removing those needs a cutoff around
+    2x the spacing - which costs a third of every compact target. That is
+    a gridding problem and has to be fixed by gridding smoothly, not
+    filtered away afterwards; store.py warns when a derivative is asked
+    for on a raw-cell grid.
+
+    No-op when the line spacing is unknown or the cutoff falls below what
+    the grid can represent.
     """
-    if not line_spacing_m or line_spacing_m <= 0 or cell_size_m <= 0:
+    if not line_spacing_m or line_spacing_m <= 0 or cell_size_m <= 0 or factor <= 0:
         return grid
-    sigma_cells = factor * line_spacing_m / cell_size_m
-    if sigma_cells < 0.5:
+    cutoff_m = factor * line_spacing_m
+    if cutoff_m < 2.0 * cell_size_m:
+        # Cells this coarse already hold nothing shorter than the cutoff.
+        return grid
+    if not np.isfinite(grid).any():
         return grid
 
-    # NaN-aware Gaussian: smoothing zeros through a gap would pull the
-    # values beside it toward zero. Smooth the data and the validity mask
-    # separately and divide, so each cell is the weighted mean of the real
-    # values near it.
-    valid = np.isfinite(grid)
-    if not valid.any():
-        return grid
-    values = np.where(valid, grid, 0.0)
-    weights = valid.astype(float)
-    smoothed = ndimage.gaussian_filter(values, sigma_cells, mode="nearest")
-    norm = ndimage.gaussian_filter(weights, sigma_cells, mode="nearest")
-    with np.errstate(invalid="ignore", divide="ignore"):
-        out = np.where(norm > 1e-6, smoothed / norm, np.nan)
-    return np.where(valid, out, np.nan)
+    padded, mask, pad_widths = _pad_and_fill(grid)
+    kx, ky, k_mag = _wavenumbers(padded.shape[0], padded.shape[1], cell_size_m, cell_size_m)
+    with np.errstate(divide="ignore"):
+        wavelength = np.where(k_mag > 0, 2 * np.pi / k_mag, np.inf)
+
+    gate = np.ones_like(k_mag)
+    for extra_deg in (0.0, 90.0):
+        theta = np.radians(_ACROSS_LINE_REFERENCE_AZIMUTH_DEG + extra_deg)
+        ux, uy = np.cos(theta), -np.sin(theta)
+        with np.errstate(invalid="ignore"):
+            cos_angle = np.abs((kx * ux + ky * uy) / np.where(k_mag == 0, 1.0, k_mag))
+        angle_deg = np.degrees(np.arccos(np.clip(cos_angle, 0.0, 1.0)))
+        pointing_across = np.exp(-0.5 * (angle_deg / _ACROSS_LINE_TOLERANCE_DEG) ** 2)
+        # Butterworth: ~1 for wavelengths well below the cutoff (what has
+        # to go), ~0 above it (the geology that has to stay).
+        too_short = 1.0 / (1.0 + (wavelength / cutoff_m) ** 4)
+        gate *= 1.0 - pointing_across * too_short
+
+    filtered = np.real(np.fft.ifft2(np.fft.fft2(padded) * gate))
+    return _unpad_and_mask(filtered, mask, pad_widths)
 
 
 def _pad_and_fill(grid: np.ndarray):

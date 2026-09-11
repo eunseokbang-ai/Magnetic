@@ -1976,6 +1976,24 @@ class Project:
             )
         raise ProjectError(f"알 수 없는 변환입니다: {transform}")
 
+    def _raw_cell_derivative_warning(self, req) -> str | None:
+        """Derivatives of a "raw cell" grid measure the interpolator. Each
+        cell takes its nearest sounding's value, so the grid is flat blocks
+        with steps at exactly the line spacing, and differentiating that
+        put the analytic signal 101% away from a known answer on test data.
+        No post-filter rescues it: removing steps at the line spacing needs
+        a cutoff around twice that, which also costs a third of the
+        amplitude of every compact target. The fix is to grid smoothly, so
+        say so rather than quietly producing a map of the gridding."""
+        if req.transform not in _RESOLUTION_LIMITED_TRANSFORMS or req.method != "nearest":
+            return None
+        return (
+            "보간 방법이 '원본 셀'입니다 - 각 셀이 가장 가까운 측점 값을 그대로 받는 계단형 격자라, "
+            "미분 계열(AS/1VD/dXY 등)은 지반이 아니라 그 계단을 재게 됩니다(검증자료에서 AS 오차 101%). "
+            "필터로는 측선 간격 단차를 지우려면 실제 이상대 진폭까지 1/3을 잃어야 해서 해결되지 않습니다 - "
+            "파생그리드를 볼 때는 보간 방법을 '선형'이나 '큐빅' 이상으로 바꾸세요."
+        )
+
     def _striping_diagnostic(self, values: np.ndarray, cell_size_m: float) -> dict:
         """Corrugation wavelength/strength of a displayed grid - see
         processing/grid_diagnostics.py. Never fatal: a diagnostic that can
@@ -2013,6 +2031,7 @@ class Project:
         overlay["striping"] = self._striping_diagnostic(values, grid.cell_size_m)
         overlay["striping_base_grid"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
+        overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["transform"] = req.transform
         if req.show_contours:
             overlay["contours"] = compute_contours(

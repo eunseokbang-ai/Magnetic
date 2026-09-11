@@ -150,60 +150,86 @@ def test_raw_cell_gridding_really_is_piecewise_constant():
     assert np.mean(d[finite] == 0) > 0.5
 
 
-def test_presmoothing_makes_the_analytic_signal_track_the_real_field():
+def test_the_filter_removes_the_unresolved_across_line_detail():
+    """What the filter is actually for: across the lines a survey resolves
+    nothing below the line spacing, and differentiation multiplies that
+    invented detail by the wavenumber. Measured on a real survey grid the
+    analytic signal carried 2.75% of local variance at 20-60 m; the filter
+    takes it to 0.18%."""
+    yy, xx = np.mgrid[0:200, 0:200] * CELL
+    base = 300 * np.sin(2 * np.pi * xx / 1500) + 200 * np.cos(2 * np.pi * yy / 1800)
+    # Unresolved across-line detail: shorter than the line spacing, running
+    # parallel to the lines.
+    unresolved = base + 15 * np.sin(2 * np.pi * xx / (0.4 * SPACING))
+
+    filtered = limit_to_line_spacing_resolution(unresolved, CELL, SPACING)
+
+    inner = (slice(40, -40), slice(40, -40))
+    left = float(np.std((filtered - limit_to_line_spacing_resolution(base, CELL, SPACING))[inner]))
+    assert left < 0.25 * 15.0, f"{left:.2f} nT of the 15 nT artifact survived"
+
+
+def test_the_filter_removes_stripes_running_either_way():
+    """Surveys are flown in blocks at right angles, so one grid can carry
+    corrugation running both ways - which is exactly what the real grid
+    showed (83% of neighbouring tiles agreed on a direction, but both
+    directions were present). The filter has to catch both without being
+    told which."""
+    yy, xx = np.mgrid[0:200, 0:200] * CELL
+    base = 300 * np.sin(2 * np.pi * xx / 1500) + 200 * np.cos(2 * np.pi * yy / 1800)
+    clean = limit_to_line_spacing_resolution(base, CELL, SPACING)
+    inner = (slice(40, -40), slice(40, -40))
+
+    for axis, coord in (("vertical stripes", xx), ("horizontal stripes", yy)):
+        striped = base + 15 * np.sin(2 * np.pi * coord / (0.4 * SPACING))
+        left = float(np.std((limit_to_line_spacing_resolution(striped, CELL, SPACING) - clean)[inner]))
+        assert left < 0.25 * 15.0, f"{axis}: {left:.2f} nT of 15 survived"
+
+
+def test_the_filter_keeps_a_compact_target_an_isotropic_one_would_erase():
+    """Why the filter is directional rather than a plain smooth. A buried
+    object is short-wavelength in every direction, so an isotropic filter
+    wide enough to kill corrugation takes the target with it - on the real
+    survey grid it cost 45% of a 544 nT dipole's amplitude. Corrugation
+    only points across the lines, so attenuating just that direction
+    separates the two: 96% of the dipole kept."""
+    from scipy import ndimage
+
+    yy, xx = np.mgrid[0:200, 0:200] * CELL
+    r2 = (xx - 1000.0) ** 2 + (yy - 1000.0) ** 2
+    dipole = 400.0 * (yy - 1000.0) / 60.0 * np.exp(-r2 / (2 * 60.0**2))
+    grid = 300 * np.sin(2 * np.pi * xx / 1500) + dipole
+    target = (slice(70, 130), slice(70, 130))
+
+    def peak_to_peak(a):
+        return float(np.max(a[target]) - np.min(a[target]))
+
+    before = peak_to_peak(grid)
+    directional = peak_to_peak(limit_to_line_spacing_resolution(grid, CELL, SPACING))
+    isotropic = peak_to_peak(ndimage.gaussian_filter(grid, 0.4 * SPACING / CELL, mode="nearest"))
+
+    assert directional > 0.85 * before, f"directional kept only {directional / before:.0%}"
+    assert directional > isotropic, "the directional filter must beat the isotropic one it replaced"
+
+
+def test_it_does_not_pretend_to_rescue_a_raw_cell_grid():
+    """An honest limitation, pinned so it cannot be quietly forgotten. A
+    nearest-gridded surface steps at exactly the line spacing; clearing
+    that needs a cutoff near twice the spacing, which costs a third of
+    every compact target. So the filter helps but does not fix it - the
+    fix is to grid smoothly, and the API warns about it (see
+    store._raw_cell_derivative_warning)."""
     g, truth_field = _gridded("nearest")
     truth = analytic_signal(truth_field, CELL)
 
     raw = _relative_error(analytic_signal(g.values, CELL), truth)
-    smoothed = _relative_error(
+    filtered = _relative_error(
         analytic_signal(limit_to_line_spacing_resolution(g.values, CELL, SPACING), CELL), truth
     )
+    smooth_gridded = _relative_error(analytic_signal(_gridded("linear")[0].values, CELL), truth)
 
-    assert raw > 0.5, "fixture no longer reproduces the problem this guards"
-    assert smoothed < 0.15
-    assert smoothed < raw / 5
-
-
-def test_presmoothing_helps_the_second_derivative_too():
-    g, truth_field = _gridded("nearest")
-    truth = second_derivative_en(truth_field, CELL)
-
-    raw = _relative_error(second_derivative_en(g.values, CELL), truth)
-    smoothed = _relative_error(
-        second_derivative_en(limit_to_line_spacing_resolution(g.values, CELL, SPACING), CELL), truth
-    )
-
-    assert smoothed < raw / 5
-
-
-def test_presmoothing_beats_paying_for_a_smoother_interpolation():
-    """Worth knowing, because re-gridding is the obvious alternative fix
-    and it is both slower and less accurate here."""
-    g_near, truth_field = _gridded("nearest")
-    g_lin, _ = _gridded("linear")
-    truth = analytic_signal(truth_field, CELL)
-
-    smoothed = _relative_error(
-        analytic_signal(limit_to_line_spacing_resolution(g_near.values, CELL, SPACING), CELL), truth
-    )
-    linear = _relative_error(analytic_signal(g_lin.values, CELL), truth)
-
-    assert smoothed < linear
-
-
-@pytest.mark.parametrize("cell", [10.0, 20.0])
-def test_the_smoothing_width_follows_the_cell_size(cell):
-    """The width is set in metres (a fraction of the line spacing), so it
-    has to help at any cell size, not just the one it was tuned at."""
-    g, truth_field = _gridded("nearest", cell=cell)
-    truth = analytic_signal(truth_field, cell)
-
-    raw = _relative_error(analytic_signal(g.values, cell), truth)
-    smoothed = _relative_error(
-        analytic_signal(limit_to_line_spacing_resolution(g.values, cell, SPACING), cell), truth
-    )
-
-    assert smoothed < raw / 3
+    assert filtered < raw / 2, "it should still help substantially"
+    assert filtered > smooth_gridded, "but gridding smoothly is what actually fixes this"
 
 
 def test_smoothing_is_skipped_when_it_would_do_nothing_or_cannot_be_sized():
@@ -211,11 +237,11 @@ def test_smoothing_is_skipped_when_it_would_do_nothing_or_cannot_be_sized():
 
     # No line spacing known - nothing to size the filter from.
     assert limit_to_line_spacing_resolution(g.values, CELL, None) is g.values
-    # Cells already as coarse as the resolution limit.
+    # Cells already as coarse as the cutoff.
     assert limit_to_line_spacing_resolution(g.values, 100.0, SPACING) is g.values
 
 
-def test_smoothing_keeps_the_masked_area_masked():
+def test_the_filter_keeps_the_masked_area_masked():
     """It must not bleed values into cells the survey never covered."""
     g, _truth = _gridded("nearest")
     values = g.values.copy()
