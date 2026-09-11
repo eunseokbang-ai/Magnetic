@@ -29,6 +29,9 @@ _GAP_FILL_MIN_PASSES = 24
 # Cutoff wavelength for the across-line filter, as a fraction of the line
 # spacing - see limit_to_line_spacing_resolution.
 _RESOLUTION_SMOOTH_FACTOR = 1.0
+# Where the wavenumber-domain operators start rolling off, as a fraction
+# of the grid's Nyquist wavenumber - see _nyquist_taper.
+_NYQUIST_TAPER_START_FRACTION = 0.8
 # Angular half-width of "points across the flight lines". Wide enough that
 # corrugation which wanders a little with the flight path is still caught,
 # narrow enough that a compact target keeps most of its energy.
@@ -185,6 +188,7 @@ def limit_to_line_spacing_resolution(
         too_short = 1.0 / (1.0 + (wavelength / cutoff_m) ** 4)
         gate *= 1.0 - pointing_across * too_short
 
+    gate *= _nyquist_taper(k_mag, cell_size_m)
     filtered = np.real(np.fft.ifft2(np.fft.fft2(padded) * gate))
     return _unpad_and_mask(filtered, mask, pad_widths)
 
@@ -218,6 +222,46 @@ def _unpad_and_mask(padded: np.ndarray, mask: np.ndarray, pad_widths: tuple[int,
     pad_n, pad_e = pad_widths
     cropped = padded[pad_n : padded.shape[0] - pad_n, pad_e : padded.shape[1] - pad_e]
     return np.where(mask, np.nan, cropped)
+
+
+def _nyquist_taper(k_mag: np.ndarray, cell_size_m: float) -> np.ndarray:
+    """Raised-cosine roll-off to zero at the grid's Nyquist wavenumber,
+    applied as part of limit_to_line_spacing_resolution.
+
+    Each of these operators weights by some power of k, so its gain is
+    largest at exactly the two-cell wavelength - the one wavelength a grid
+    cannot represent as anything but a checkerboard. Whatever lands there
+    (the gridder's own interpolation seams, the ragged cell-scale edge of
+    the data mask, the last of the gap fill's kink) therefore leaves a
+    second derivative amplified harder than anything real, as a spike
+    sitting on exactly 2 cells.
+
+    Measured on the 74-file HaeNam block's dxy (10 m cells, linear grid,
+    across-line presmoothing already applied): power below 21 m was 1159
+    against 7909 for the >100 m geology - a sixth of the map. With this
+    taper it is 0.02 - a 65,000-fold cut - while the 22-100 m band loses
+    0.09% and the >100 m band nothing measurable. Nothing real is given
+    up: a 10 m grid interpolated from 50 m line spacing has no resolvable
+    signal at two cells to begin with.
+
+    Kept deliberately narrow (flat until 0.8 Nyquist). The spike sits at
+    Nyquist itself, so nulling the last sliver is enough, and a wider
+    roll-off starts costing grids whose cell size genuinely matches their
+    data - reaching down to half Nyquist broke four of this suite's
+    synthetic recovery tests, where features do sit a few cells across.
+
+    Belongs here rather than inside _apply_filter, even though it is the
+    derivative operators whose gain peaks at Nyquist. "Two cells is not
+    real" is a statement about *this survey's* sampling, and only the
+    callers that know the line spacing can make it. Applied blindly to
+    every grid handed to a transform it stops being true: on a grid whose
+    cell size genuinely matches its data, it broadened the analytic
+    signal enough to push a known 30 m contact's depth estimate to 50 m.
+    """
+    k_nyquist = np.pi / cell_size_m
+    k_start = _NYQUIST_TAPER_START_FRACTION * k_nyquist
+    ramp = 0.5 * (1.0 + np.cos(np.pi * (k_mag - k_start) / (k_nyquist - k_start)))
+    return np.where(k_mag <= k_start, 1.0, np.where(k_mag >= k_nyquist, 0.0, ramp))
 
 
 def _apply_filter(grid: np.ndarray, cell_size_m: float, filter_fn) -> np.ndarray:
