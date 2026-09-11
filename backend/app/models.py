@@ -443,6 +443,42 @@ class TransformRequest(HillshadeParams, ContourParams):
     # get cleaned up before a derivative-based transform amplifies it,
     # rather than only after. No-op when transform="microlevel" itself.
     microlevel_pre_apply: bool = False
+    # What to do about the band along the edge of the data, where every
+    # derived grid is partly measuring its own boundary rather than the
+    # ground: "off" (nothing), "outline" (draw the line where the margin
+    # ends, hide nothing) or "mask" (blank the band out). Off by default -
+    # a target sitting on the survey edge is real data and hiding it
+    # without being asked would be worse than the streak. See
+    # processing/edge_margin.py for why marking is the remedy and no
+    # filter is.
+    # Continue the field into the ground outside the survey with a fitted
+    # equivalent-source layer before transforming, instead of copying the
+    # nearest reading out into it. On by default: measured against a known
+    # answer on three synthetic worlds masked to a real survey footprint,
+    # the error a derivative inherits from the boundary in quiet ground
+    # falls from 19-47x the true signal to 1.4-2.2x, and the strongest
+    # anomalies keep 100.0% of their amplitude. Costs one solve (~11 s per
+    # 480k-cell grid), cached on the grid contents, so only the first
+    # transform of a grid waits. See processing/continuation.py.
+    boundary_continuation: bool = True
+    # Replace the grid with the field of an equivalent source layer at
+    # this depth, in line spacings, before computing the transform. None
+    # or 0 leaves the grid alone. This is the strongest tool here against
+    # line-parallel striping in the second derivatives, because a source
+    # distribution at depth h cannot produce structure finer than h, so
+    # what it removes is what the survey could not resolve - measured on
+    # the Haenam grid, dXX striping 24.7% -> 3.7% at 1.6 line spacings
+    # while the strongest anomalies keep 75% of their derivative
+    # amplitude, against 6.9% / 72% for the across-line filter tuned to
+    # match. 1.6 is the conservative setting, 2.0 the clean one. Needs a
+    # line-spacing estimate; declines visibly without one.
+    equivalent_source_factor: Optional[float] = Field(None, gt=0, le=4.0)
+    boundary_margin_mode: Literal["off", "outline", "mask"] = "off"
+    # Width of that band. None = the gridding's own extrapolation radius
+    # (max(2 cells, 1.2x line spacing)), i.e. exactly the strip whose
+    # values were extrapolated outward from the flight lines rather than
+    # interpolated between them.
+    boundary_margin_m: Optional[float] = Field(None, gt=0)
 
 
 class PolygonExportRequest(BaseModel):

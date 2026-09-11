@@ -137,6 +137,14 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_pre_apply: false,
   derivative_presmooth: true,
   derivative_presmooth_factor: 1.0,
+  boundary_continuation: true,
+  // Off by default: it trades real amplitude for a cleaner picture, which
+  // is the user's call. 1.6 (line spacings) is the conservative setting.
+  equivalent_source_factor: null,
+  // Off: a target sitting on the survey edge is real data, and hiding it
+  // without being asked would be worse than the streak it removes.
+  boundary_margin_mode: "off",
+  boundary_margin_m: null, // null = the gridding's own extrapolation radius
 };
 
 const DEFAULT_PARAMS = {
@@ -2946,6 +2954,70 @@ export default function App() {
             )}
           </div>
         )}
+        {overlay?.boundary_continuation?.applies && (
+          // It declines on a grid with no gaps, which is correct but
+          // invisible - and if it is off, the derivative is back to
+          // inheriting whatever sits on the survey boundary.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.boundary_continuation.applied ? "#4a3d28" : "#8a7a5c",
+                        background: overlay.boundary_continuation.applied ? "#f7f2e6" : "#faf7f0",
+                        border: `1px solid ${overlay.boundary_continuation.applied ? "#e6dac0" : "#e9e2d2"}` }}>
+            {overlay.boundary_continuation.applied ? (
+              <>
+                탐사 바깥 등가 소스층 연속 적용됨 — 빈 땅 {overlay.boundary_continuation.gap_pct}% (
+                {overlay.boundary_continuation.n_gap_cells?.toLocaleString()}셀)을 측정값 대신 소스 모델의 자기장으로 채웠습니다
+              </>
+            ) : (
+              <>탐사 바깥 등가 소스층 연속: 적용 안 함 — {overlay.boundary_continuation.reason}</>
+            )}
+          </div>
+        )}
+        {overlay?.equivalent_source?.applies && (
+          // The misfit is the number that makes a smoothed deliverable
+          // defensible: it says in nanotesla what was given up.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.equivalent_source.applied ? "#4a3d28" : "#b45309",
+                        background: overlay.equivalent_source.applied ? "#f7f2e6" : "#fffbeb",
+                        border: `1px solid ${overlay.equivalent_source.applied ? "#e6dac0" : "#fde68a"}` }}>
+            {overlay.equivalent_source.applied ? (
+              <>
+                <b>등가 소스층 적용</b> — 깊이 {overlay.equivalent_source.depth_m}m (측선 간격의{" "}
+                {overlay.equivalent_source.factor}배), 실측 재현 오차{" "}
+                <b>{overlay.equivalent_source.misfit_nt} nT</b>
+                {overlay.equivalent_source.field_std_nt != null && (
+                  <> (자기장 표준편차 {overlay.equivalent_source.field_std_nt} nT의 {overlay.equivalent_source.misfit_pct}%)</>
+                )}
+                <div style={{ marginTop: 3, color: "#8a7a5c" }}>
+                  이 수치가 "무엇을 얼마나 매끈하게 했는지"의 근거입니다 - 보고서에 그대로 쓰실 수 있습니다.
+                </div>
+              </>
+            ) : (
+              <>⚠ 등가 소스층이 적용되지 않았습니다: {overlay.equivalent_source.reason}</>
+            )}
+          </div>
+        )}
+        {overlay?.boundary_margin && overlay.boundary_margin.mode !== "off" && (
+          // How much of the map the margin covers, and - just as important
+          // - that the streak it marks fades slowly, so being outside the
+          // margin is not a clean bill of health.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.boundary_margin.applied ? "#4a3d28" : "#b45309",
+                        background: overlay.boundary_margin.applied ? "#f7f2e6" : "#fffbeb",
+                        border: `1px solid ${overlay.boundary_margin.applied ? "#e6dac0" : "#fde68a"}` }}>
+            {overlay.boundary_margin.applied ? (
+              <>
+                <b>경계 여백 {overlay.boundary_margin.mode === "mask" ? "가림" : "표시"}</b> — 폭{" "}
+                {overlay.boundary_margin.margin_m}m ({overlay.boundary_margin.margin_cells}셀
+                {overlay.boundary_margin.from_extrapolation_radius ? ", 격자 외삽 거리 기준" : ""}), 그리드의{" "}
+                {overlay.boundary_margin.pct_of_grid}%
+                {overlay.boundary_margin.reason && <div style={{ marginTop: 3 }}>⚠ {overlay.boundary_margin.reason}</div>}
+                <div style={{ marginTop: 3, color: "#8a7a5c" }}>{overlay.boundary_margin.note}</div>
+              </>
+            ) : (
+              <>⚠ 경계 여백이 적용되지 않았습니다: {overlay.boundary_margin.reason}</>
+            )}
+          </div>
+        )}
         {overlay?.striping?.available && (
           <div
             style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#4a3d28", background: "#f7f2e6", border: "1px solid #e6dac0", borderRadius: 6 }}
@@ -2964,6 +3036,24 @@ export default function App() {
                 {overlay.striping_base_grid.amplitude_pct}%
               </div>
             )}
+          </div>
+        )}
+        {processSummary?.line_resolution?.available && (
+          // Whether the striping above is something processing can act on
+          // at all. Measured on the points, before gridding: once gridded,
+          // the gap between the lines has already been filled with a guess
+          // and the question cannot be asked any more.
+          <div
+            style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                     color: processSummary.line_resolution.unresolved_pct >= 50 ? "#b45309" : "#4a3d28",
+                     background: processSummary.line_resolution.unresolved_pct >= 50 ? "#fffbeb" : "#f7f2e6",
+                     border: `1px solid ${processSummary.line_resolution.unresolved_pct >= 50 ? "#fde68a" : "#e6dac0"}` }}
+            title="각 측선의 값을 양옆 두 측선의 평균과 비교합니다. 측선 간격이 자기장 변화를 따라잡고 있다면 가운데 측선은 양옆의 평균으로 거의 예측되고, 예측되지 않는 부분이 곧 '측선 사이에서는 측정된 적이 없는' 성분입니다. 격자는 그 부분을 보간으로 지어낼 수밖에 없고, 미분 계열 파생그리드에서 측선방향 줄무늬로 드러납니다. 측선방향 평활을 아무리 키워도 이 비율은 거의 줄지 않습니다 - 측선 사이의 정보는 애초에 없기 때문입니다."
+          >
+            <b>측선 간격 분해능</b> — 이웃 측선이 못 보는 성분{" "}
+            {processSummary.line_resolution.unresolved_pct}% (측선 간격{" "}
+            {processSummary.line_resolution.line_spacing_m}m, 비교 {processSummary.line_resolution.n_triples}쌍) ⓘ
+            <div style={{ marginTop: 3 }}>{processSummary.line_resolution.verdict}</div>
           </div>
         )}
       </div>

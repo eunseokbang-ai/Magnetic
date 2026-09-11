@@ -146,6 +146,14 @@ from .processing.depth_estimation import (
 from .processing.boundary import auto_survey_boundary
 from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from .processing.contacts import detect_magnetic_contacts
+from .processing.continuation import (
+    continuation_report,
+    equivalent_source_field,
+    field_depth_cells,
+    source_continuation_fill,
+)
+from .processing.edge_margin import apply_margin, margin_mask, margin_outline
+from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
 from .processing.grid_diagnostics import diagnose_striping
 from .processing.microlevel import apply_microleveling
@@ -262,6 +270,13 @@ _RESOLUTION_LIMITED_TRANSFORMS = frozenset({
     "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
 })
 
+# Transforms whose FFT has to invent values outside the survey, and which
+# therefore benefit from the equivalent-source continuation (see
+# processing/continuation.py). Upward continuation is in here too - it is
+# an FFT filter like the rest - while "detrend" (a least-squares surface)
+# and "microlevel" (its own directional filter) are not.
+_CONTINUATION_TRANSFORMS = _RESOLUTION_LIMITED_TRANSFORMS | frozenset({"upward_continuation"})
+
 _GRID_CACHE_MAX_ENTRIES = 4
 _TRANSFORM_CACHE_MAX_ENTRIES = 8
 
@@ -343,6 +358,7 @@ class Project:
     heading_correction_applied: bool = False
     statistical_leveling: StatisticalLevelingResult | None = None
     striping_info: dict | None = None
+    line_resolution_info: dict | None = None
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
@@ -1022,6 +1038,24 @@ class Project:
         # correction below declines.
         self.striping_info = measure_striping(df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m)
 
+        # Whether the line spacing resolves this field at all. Measured on
+        # the points rather than the grid, because once gridded the
+        # question is unanswerable: the gridder has already filled the gaps
+        # between the lines with its own guess. See
+        # processing/line_resolution.py for why this is the number that
+        # explains line-parallel striping on the Haenam block, after six
+        # processing-side explanations were measured and ruled out.
+        try:
+            self.line_resolution_info = assess_line_resolution(
+                df.loc[active, "x"].to_numpy(),
+                df.loc[active, "y"].to_numpy(),
+                df.loc[active, "anomaly"].to_numpy(),
+                df.loc[active, "line_id"].to_numpy(),
+                self.dominant_azimuth_deg,
+            )
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail a run
+            self.line_resolution_info = {"available": False, "reason": f"측선 분해능 진단 실패: {exc}"}
+
         # Last of the three leveling steps, so it only has to explain what
         # the direction-based and tie-line corrections above could not.
         slp = params.statistical_leveling
@@ -1289,6 +1323,7 @@ class Project:
             "crossover_leveling": self.crossover_info,
             "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
             "striping": self.striping_info,
+            "line_resolution": self.line_resolution_info,
             "noise_qc": self.noise_qc_info,
             "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,
@@ -1650,6 +1685,81 @@ class Project:
         inside = contains_xy(area, easting_2d.ravel(), northing_2d.ravel()).reshape(values.shape)
         return np.where(inside, values, np.nan)
 
+    def _boundary_margin(self, values: np.ndarray, grid: GridResult, req, with_outline: bool = True) -> tuple[np.ndarray, dict]:
+        """Mark - or blank out - the band along the edge of the data where a
+        derived grid is partly measuring its own boundary.
+
+        Every FFT transform has to invent values where the grid is NaN, and
+        an anomaly cut by the coverage boundary throws a streak along the
+        grid axes from that invented continuation; on synthetic data the
+        same anomaly mid-survey leaks 0.000% and two cells from the edge
+        leaks 0.757%, still visible 200 cells away. No fill fixes it (the
+        best harmonic continuation measured *worse* than nearest-fill) and
+        tapering costs a quarter of the real edge signal, so this marks the
+        band instead of pretending to correct it - see
+        processing/edge_margin.py for the full table.
+
+        The distance is measured from the *base grid's* coverage, not from
+        whatever the display boundary polygon leaves visible: it is the
+        gridding's extrapolation that fabricates values, so a user polygon
+        drawn well inside the data should shrink the margin to nothing
+        rather than carve a fresh band out of good interior cells.
+
+        Returns (values, report); `values` is untouched unless the mode is
+        "mask". Set with_outline=False for exports, which have nowhere to
+        draw a line and would only pay for the contouring.
+        """
+        mode = getattr(req, "boundary_margin_mode", "off")
+        if mode == "off":
+            return values, {"mode": "off", "applied": False}
+        margin_m = getattr(req, "boundary_margin_m", None)
+        auto = margin_m is None
+        if auto:
+            margin_m = self._resolve_max_distance(req.cell_size_m, req.max_distance_m)
+        report = {
+            "mode": mode,
+            "applied": True,
+            "margin_m": round(float(margin_m), 1),
+            "margin_cells": round(float(margin_m) / grid.cell_size_m, 1),
+            "from_extrapolation_radius": auto,
+            # The streak decays slowly, so "outside the margin" is not a
+            # clean bill of health - say so wherever this is displayed.
+            "note": (
+                "경계 여백은 격자가 측선 사이를 보간한 것이 아니라 바깥으로 외삽한 구간입니다. "
+                "파생그리드에서 경계에 걸친 이상대가 만드는 줄무늬는 이 구간에서 가장 강하지만 "
+                "멀리까지 천천히 약해지므로, 여백 바깥이라고 해서 줄무늬가 없다는 뜻은 아닙니다."
+            ),
+        }
+        mask = margin_mask(grid.values, grid.cell_size_m, float(margin_m))
+        n_valid = int(np.isfinite(values).sum())
+        n_masked = int((mask & np.isfinite(values)).sum())
+        report["n_cells_in_margin"] = n_masked
+        report["pct_of_grid"] = round(100.0 * n_masked / n_valid, 1) if n_valid else 0.0
+
+        if mode == "mask":
+            if n_valid and n_masked >= n_valid:
+                # Blanking the entire map is never the useful answer; the
+                # margin is simply wider than the survey is.
+                report["applied"] = False
+                report["reason"] = (
+                    f"여백 폭({report['margin_m']}m)이 탐사 폭보다 넓어 전체가 가려집니다 - 폭을 줄이세요."
+                )
+                return values, report
+            values = apply_margin(values, mask)
+        elif with_outline:
+            paths = margin_outline(grid.values, grid.cell_size_m, float(margin_m), grid.easting, grid.northing)
+            to_wgs84 = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
+            outline = []
+            for path in paths:
+                lon, lat = to_wgs84.transform(path[:, 0], path[:, 1])
+                outline.append([[float(a), float(b)] for a, b in zip(lat, lon)])
+            report["outline"] = outline
+            if not outline:
+                report["reason"] = (
+                    f"여백 폭({report['margin_m']}m) 안쪽에 남는 영역이 없어 선을 그릴 수 없습니다 - 폭을 줄이세요."
+                )
+        return values, report
+
     def _resolve_max_distance(self, cell_size_m: float, max_distance_m: float | None) -> float:
         if max_distance_m is not None:
             return max_distance_m
@@ -1867,11 +1977,18 @@ class Project:
             req.microlevel_pre_apply,
             req.derivative_presmooth,
             req.derivative_presmooth_factor,
+            getattr(req, "equivalent_source_factor", None),
         )
+        cache_key = cache_key + (getattr(req, "boundary_continuation", True),)
         cached = _lru_get(self.transform_cache, cache_key)
         if cached is not None:
             return cached
         values, symmetric = self._compute_transform_values(grid, req)
+        # The continuation hands the transform a grid with no holes in it,
+        # so the transform no longer masks its own output - put the survey
+        # footprint back. A no-op on every other path, where the transform
+        # has already masked exactly these cells.
+        values = np.where(np.isnan(grid.values), np.nan, values)
         result = (self._post_filter_transform(values, grid, req), symmetric)
         _lru_put(self.transform_cache, cache_key, result, _TRANSFORM_CACHE_MAX_ENTRIES)
         return result
@@ -1905,6 +2022,23 @@ class Project:
         transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
+        # Continue the field into the empty ground with a fitted source
+        # layer before anything else touches the grid, so both the
+        # across-line filter below and the transform itself see one
+        # complete field instead of measurements next to invented values.
+        # See processing/continuation.py for what this is worth: in quiet
+        # ground the error a derivative inherits from the boundary drops
+        # from 19-47x the true signal to 1.4-2.2x, with the strongest
+        # anomalies keeping 100.0% of their amplitude.
+        if transform in _CONTINUATION_TRANSFORMS and getattr(req, "boundary_continuation", True):
+            grid = replace(grid, values=source_continuation_fill(grid.values))
+        # Then, optionally, replace the field itself with what a source
+        # layer at depth predicts. This is the striping remedy that
+        # measured best on the real grid - see processing/continuation.py
+        # ::equivalent_source_field for the table it is chosen from.
+        depth = self._equivalent_source_depth(req, grid.cell_size_m)
+        if transform in _CONTINUATION_TRANSFORMS and depth is not None:
+            grid = replace(grid, values=equivalent_source_field(grid.values, depth)[0])
         # Derivative-based transforms amplify whatever the interpolator
         # invented between the flight lines; smoothing to the grid's real
         # across-line resolution first is what keeps them measuring the
@@ -2007,6 +2141,55 @@ class Project:
             filtered = np.where(np.isnan(filtered), filtered, np.maximum(filtered, 0.0))
         return filtered
 
+    def _equivalent_source_depth(self, req, cell_size_m: float) -> float | None:
+        """Depth in cells for the equivalent-source field, or None when the
+        option is off or the line spacing is unknown."""
+        factor = getattr(req, "equivalent_source_factor", None)
+        if not factor:
+            return None
+        return field_depth_cells(self.line_spacing_m, cell_size_m, factor)
+
+    def _equivalent_source_report(self, req, grid: GridResult) -> dict:
+        """Whether the grid was replaced by a fitted source layer's field,
+        how deep the layer sat, and how well it reproduces the readings.
+        The misfit is the number that makes this defensible to a client:
+        it says in nanotesla what the smoothing cost."""
+        factor = getattr(req, "equivalent_source_factor", None)
+        if req.transform not in _CONTINUATION_TRANSFORMS or not factor:
+            return {"applies": False}
+        depth = self._equivalent_source_depth(req, grid.cell_size_m)
+        if depth is None:
+            return {
+                "applies": True, "applied": False,
+                "reason": "측선 간격을 추정할 수 없어 등가층 깊이를 정할 수 없습니다 (측선이 2개 이상 필요).",
+            }
+        _field, misfit = equivalent_source_field(grid.values, depth)
+        measured = grid.values[np.isfinite(grid.values)]
+        return {
+            "applies": True, "applied": True,
+            "factor": factor,
+            "depth_m": round(depth * grid.cell_size_m, 1),
+            "depth_cells": round(depth, 1),
+            "misfit_nt": round(misfit, 2),
+            "field_std_nt": round(float(measured.std()), 1) if measured.size else None,
+            "misfit_pct": round(100.0 * misfit / float(measured.std()), 1) if measured.size and measured.std() else None,
+        }
+
+    def _continuation_report(self, req, grid: GridResult) -> dict:
+        """Whether the field outside the survey was continued with a fitted
+        source layer, and how much ground that was. Reported because it can
+        decline invisibly - a grid with no gaps, or too few readings to fit
+        a layer to - and because a user who turns it off should see that
+        the derivative is back to inheriting its boundary."""
+        if req.transform not in _CONTINUATION_TRANSFORMS:
+            return {"applies": False}
+        if not getattr(req, "boundary_continuation", True):
+            return {"applies": True, "applied": False, "reason": "사용자가 껐습니다."}
+        info = continuation_report(grid.values)
+        if not info["applicable"]:
+            return {"applies": True, "applied": False, "reason": info["reason"]}
+        return {"applies": True, "applied": True, "gap_pct": info["gap_pct"], "n_gap_cells": info["n_gap_cells"]}
+
     def _presmooth_report(self, req, cell_size_m: float) -> dict:
         """Whether the across-line filter ran on this transform and at what
         cutoff. Reported because it can decline for reasons nobody can see
@@ -2065,6 +2248,9 @@ class Project:
         )
         values, symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
+        # Before the colour stretch, so a masked margin cannot stretch the
+        # scale around values the user has just said not to trust.
+        values, margin_report = self._boundary_margin(values, grid, req)
 
         cmap = req.cmap or DEFAULT_CMAPS["derivative"]
         overlay = grid_to_png_overlay(
@@ -2088,6 +2274,9 @@ class Project:
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
+        overlay["boundary_continuation"] = self._continuation_report(req, grid)
+        overlay["equivalent_source"] = self._equivalent_source_report(req, grid)
+        overlay["boundary_margin"] = margin_report
         overlay["transform"] = req.transform
         if req.show_contours:
             overlay["contours"] = compute_contours(
@@ -2122,6 +2311,10 @@ class Project:
         )
         values, symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
+        # Exported files carry the same margin decision as the screen -
+        # a GeoTIFF that quietly puts back what the map is hiding would be
+        # the one that ends up in a report.
+        values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
         if req.colored:
             cmap = req.cmap or DEFAULT_CMAPS["derivative"]
             return grid_to_geotiff_bytes_colored(
@@ -2149,6 +2342,7 @@ class Project:
         )
         values, _symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
+        values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
         return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
 
     def export_grid_surfer_grd(self, req: GridRequest) -> bytes:
@@ -2167,6 +2361,7 @@ class Project:
         )
         values, _symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
+        values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
         return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
 
     def export_polygon_bln(self, polygon_latlon: list[list[float]]) -> bytes:

@@ -316,6 +316,36 @@ function ContourLayer({ contours }) {
   return null;
 }
 
+// The inner edge of the boundary margin (store.py::_boundary_margin):
+// outside this line a derived grid is partly measuring its own coverage
+// boundary rather than the ground. Dashed and unobtrusive on purpose -
+// it is a caution line, not a survey outline, and in "표시" mode it hides
+// nothing, so it has to be legible without covering the map.
+function BoundaryMarginLayer({ outline }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    for (const path of outline || []) {
+      if (!path || path.length < 2) continue;
+      const line = L.polyline(path, { color: "#b45309", weight: 1.4, opacity: 0.9, dashArray: "6 4" });
+      line.bindTooltip("경계 여백 — 바깥쪽은 격자 외삽 구간이라 파생그리드 줄무늬가 강합니다", { sticky: true });
+      group.addLayer(line);
+    }
+  }, [outline]);
+
+  return null;
+}
+
 // Leaflet maps here never rotate (no bearing/heading control), so a north
 // arrow is purely a static "up = north" indicator, not a computed rotation.
 function NorthArrow() {
@@ -905,6 +935,9 @@ export default function MapView({
           <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />
         ))}
       {overlay?.contours && <ContourLayer contours={overlay.contours} />}
+      {overlay?.boundary_margin?.outline?.length > 0 && (
+        <BoundaryMarginLayer outline={overlay.boundary_margin.outline} />
+      )}
 
       {confidenceOverlay &&
         (confidenceOverlay.topleft && confidenceOverlay.topright && confidenceOverlay.bottomleft ? (
