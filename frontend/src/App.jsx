@@ -137,6 +137,7 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_pre_apply: false,
   derivative_presmooth: true,
   derivative_presmooth_factor: 0.4,
+  boundary_continuation: true,
   // Off: a target sitting on the survey edge is real data, and hiding it
   // without being asked would be worse than the streak it removes.
   boundary_margin_mode: "off",
@@ -2947,6 +2948,24 @@ export default function App() {
               </>
             ) : (
               <>⚠ 측선직각 평활이 적용되지 않았습니다: {overlay.derivative_presmooth.reason}</>
+            )}
+          </div>
+        )}
+        {overlay?.boundary_continuation?.applies && (
+          // It declines on a grid with no gaps, which is correct but
+          // invisible - and if it is off, the derivative is back to
+          // inheriting whatever sits on the survey boundary.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.boundary_continuation.applied ? "#4a3d28" : "#8a7a5c",
+                        background: overlay.boundary_continuation.applied ? "#f7f2e6" : "#faf7f0",
+                        border: `1px solid ${overlay.boundary_continuation.applied ? "#e6dac0" : "#e9e2d2"}` }}>
+            {overlay.boundary_continuation.applied ? (
+              <>
+                탐사 바깥 등가 소스층 연속 적용됨 — 빈 땅 {overlay.boundary_continuation.gap_pct}% (
+                {overlay.boundary_continuation.n_gap_cells?.toLocaleString()}셀)을 측정값 대신 소스 모델의 자기장으로 채웠습니다
+              </>
+            ) : (
+              <>탐사 바깥 등가 소스층 연속: 적용 안 함 — {overlay.boundary_continuation.reason}</>
             )}
           </div>
         )}

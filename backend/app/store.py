@@ -146,6 +146,7 @@ from .processing.depth_estimation import (
 from .processing.boundary import auto_survey_boundary
 from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from .processing.contacts import detect_magnetic_contacts
+from .processing.continuation import continuation_report, source_continuation_fill
 from .processing.edge_margin import apply_margin, margin_mask, margin_outline
 from .processing.lineaments import extract_lineaments
 from .processing.grid_diagnostics import diagnose_striping
@@ -262,6 +263,13 @@ _RESOLUTION_LIMITED_TRANSFORMS = frozenset({
     "rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta",
     "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz",
 })
+
+# Transforms whose FFT has to invent values outside the survey, and which
+# therefore benefit from the equivalent-source continuation (see
+# processing/continuation.py). Upward continuation is in here too - it is
+# an FFT filter like the rest - while "detrend" (a least-squares surface)
+# and "microlevel" (its own directional filter) are not.
+_CONTINUATION_TRANSFORMS = _RESOLUTION_LIMITED_TRANSFORMS | frozenset({"upward_continuation"})
 
 _GRID_CACHE_MAX_ENTRIES = 4
 _TRANSFORM_CACHE_MAX_ENTRIES = 8
@@ -1944,10 +1952,16 @@ class Project:
             req.derivative_presmooth,
             req.derivative_presmooth_factor,
         )
+        cache_key = cache_key + (getattr(req, "boundary_continuation", True),)
         cached = _lru_get(self.transform_cache, cache_key)
         if cached is not None:
             return cached
         values, symmetric = self._compute_transform_values(grid, req)
+        # The continuation hands the transform a grid with no holes in it,
+        # so the transform no longer masks its own output - put the survey
+        # footprint back. A no-op on every other path, where the transform
+        # has already masked exactly these cells.
+        values = np.where(np.isnan(grid.values), np.nan, values)
         result = (self._post_filter_transform(values, grid, req), symmetric)
         _lru_put(self.transform_cache, cache_key, result, _TRANSFORM_CACHE_MAX_ENTRIES)
         return result
@@ -1981,6 +1995,16 @@ class Project:
         transform = req.transform
         if self.inclination_deg is None:
             raise ProjectError("IGRF 계산이 필요합니다 (자료 처리를 먼저 실행하세요).")
+        # Continue the field into the empty ground with a fitted source
+        # layer before anything else touches the grid, so both the
+        # across-line filter below and the transform itself see one
+        # complete field instead of measurements next to invented values.
+        # See processing/continuation.py for what this is worth: in quiet
+        # ground the error a derivative inherits from the boundary drops
+        # from 19-47x the true signal to 1.4-2.2x, with the strongest
+        # anomalies keeping 100.0% of their amplitude.
+        if transform in _CONTINUATION_TRANSFORMS and getattr(req, "boundary_continuation", True):
+            grid = replace(grid, values=source_continuation_fill(grid.values))
         # Derivative-based transforms amplify whatever the interpolator
         # invented between the flight lines; smoothing to the grid's real
         # across-line resolution first is what keeps them measuring the
@@ -2083,6 +2107,21 @@ class Project:
             filtered = np.where(np.isnan(filtered), filtered, np.maximum(filtered, 0.0))
         return filtered
 
+    def _continuation_report(self, req, grid: GridResult) -> dict:
+        """Whether the field outside the survey was continued with a fitted
+        source layer, and how much ground that was. Reported because it can
+        decline invisibly - a grid with no gaps, or too few readings to fit
+        a layer to - and because a user who turns it off should see that
+        the derivative is back to inheriting its boundary."""
+        if req.transform not in _CONTINUATION_TRANSFORMS:
+            return {"applies": False}
+        if not getattr(req, "boundary_continuation", True):
+            return {"applies": True, "applied": False, "reason": "사용자가 껐습니다."}
+        info = continuation_report(grid.values)
+        if not info["applicable"]:
+            return {"applies": True, "applied": False, "reason": info["reason"]}
+        return {"applies": True, "applied": True, "gap_pct": info["gap_pct"], "n_gap_cells": info["n_gap_cells"]}
+
     def _presmooth_report(self, req, cell_size_m: float) -> dict:
         """Whether the across-line filter ran on this transform and at what
         cutoff. Reported because it can decline for reasons nobody can see
@@ -2167,6 +2206,7 @@ class Project:
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
+        overlay["boundary_continuation"] = self._continuation_report(req, grid)
         overlay["boundary_margin"] = margin_report
         overlay["transform"] = req.transform
         if req.show_contours:

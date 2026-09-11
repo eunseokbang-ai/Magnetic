@@ -428,6 +428,16 @@ class TransformRequest(HillshadeParams, ContourParams):
     # without being asked would be worse than the streak. See
     # processing/edge_margin.py for why marking is the remedy and no
     # filter is.
+    # Continue the field into the ground outside the survey with a fitted
+    # equivalent-source layer before transforming, instead of copying the
+    # nearest reading out into it. On by default: measured against a known
+    # answer on three synthetic worlds masked to a real survey footprint,
+    # the error a derivative inherits from the boundary in quiet ground
+    # falls from 19-47x the true signal to 1.4-2.2x, and the strongest
+    # anomalies keep 100.0% of their amplitude. Costs one solve (~11 s per
+    # 480k-cell grid), cached on the grid contents, so only the first
+    # transform of a grid waits. See processing/continuation.py.
+    boundary_continuation: bool = True
     boundary_margin_mode: Literal["off", "outline", "mask"] = "off"
     # Width of that band. None = the gridding's own extrapolation radius
     # (max(2 cells, 1.2x line spacing)), i.e. exactly the strip whose
