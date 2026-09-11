@@ -79,7 +79,7 @@ const DEFAULT_QC_CERTIFICATE_PARAMS = {
 const DEFAULT_LINEAMENT_PARAMS = {
   value: "anomaly",
   cell_size_m: 10.0,
-  method: "nearest",
+  method: "linear",
   source: "thd",
   percentile_threshold: 90.0,
   min_segment_points: 4,
@@ -94,7 +94,7 @@ const DEFAULT_AS_DEPTH_PARAMS = { percentile_threshold: 90.0, search_radius_cell
 const DEFAULT_CONTACT_PARAMS = {
   value: "anomaly",
   cell_size_m: 10.0,
-  method: "nearest",
+  method: "linear",
   heights_m: [0.0, 20.0, 40.0, 60.0, 80.0],
   percentile_threshold: 80.0,
   min_persistence: 0.5,
@@ -106,7 +106,7 @@ const DEFAULT_CONTACT_PARAMS = {
 const DEFAULT_PROSPECTIVITY_PARAMS = {
   value: "anomaly",
   cell_size_m: 10.0,
-  method: "nearest",
+  method: "linear",
   purpose: "magnetite_fe",
   weights: { asa: 0.3, thd: 0.2, structure: 0.2, contact: 0.2, susceptibility: 0.1 },
   decay_length_m: 200.0,
@@ -136,7 +136,7 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_cutoff_factor: 4.0,
   microlevel_pre_apply: false,
   derivative_presmooth: true,
-  derivative_presmooth_factor: 0.4,
+  derivative_presmooth_factor: 1.0,
 };
 
 const DEFAULT_PARAMS = {
@@ -246,7 +246,7 @@ export default function App() {
   // 편집도 가능해진다 (backend: ManualExcludeRequest.include_ramp).
   const [showRampPoints, setShowRampPoints] = useState(false);
   const [gridCellSize, setGridCellSize] = useState(10.0);
-  const [gridMethod, setGridMethod] = useState("nearest");
+  const [gridMethod, setGridMethod] = useState("linear");
   const [gridMaxDistance, setGridMaxDistance] = useState(null);
   const [alongLineSmooth, setAlongLineSmooth] = useState(true);
   const [alongLineSmoothWavelength, setAlongLineSmoothWavelength] = useState(null);
@@ -1645,7 +1645,7 @@ export default function App() {
     try {
       setTiltDepthError(null);
       setTiltDepthRunning(true);
-      const resp = await api.runTiltDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest", ...tiltDepthParams });
+      const resp = await api.runTiltDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: gridMethod, ...tiltDepthParams });
       setTiltDepthResult(resp);
     } catch (e) {
       setTiltDepthError(e.message || String(e));
@@ -1658,7 +1658,7 @@ export default function App() {
     try {
       setAsDepthError(null);
       setAsDepthRunning(true);
-      const resp = await api.runAnalyticSignalDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest", ...asDepthParams });
+      const resp = await api.runAnalyticSignalDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: gridMethod, ...asDepthParams });
       setAsDepthResult(resp);
     } catch (e) {
       setAsDepthError(e.message || String(e));
@@ -1671,7 +1671,7 @@ export default function App() {
     try {
       setSpectralDepthError(null);
       setSpectralDepthRunning(true);
-      const resp = await api.runSpectralDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: "nearest" });
+      const resp = await api.runSpectralDepth(projectId, { value: "anomaly", cell_size_m: depthEstimationCellSize, method: gridMethod });
       setSpectralDepthResult(resp);
     } catch (e) {
       setSpectralDepthError(e.message || String(e));

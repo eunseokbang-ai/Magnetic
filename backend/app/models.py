@@ -307,6 +307,29 @@ TransformName = Literal[
 ]
 GridMethod = Literal["nearest", "linear", "cubic", "spline", "minimum_curvature", "boxing"]
 
+# Default for map and derivative products. "nearest" (raw cell) assigns
+# every cell its closest measurement, so between flight lines the grid is
+# piecewise constant with step edges at exactly the line spacing. Those
+# steps are the interpolator, not the field, and differentiation scales
+# amplitude with wavenumber, so they arrive in the derivative grids far
+# stronger than the geology - which is the fine hatching that made dyz/AS
+# unreadable on the 74-file HaeNam block (measured there at 10 m cells,
+# 49.6 m line spacing: dyz artifact power in the 20-60 m band was 17.9%
+# on "nearest" against 1.8% on "linear", with 96% of the compact-anomaly
+# amplitude kept - 83.0 nT vs 86.6 nT at the 99.5th percentile).
+#
+# "spline" scores better still on the artifact number but must not be the
+# default: processing/gridding.py caps its fit at 3000 control points, so
+# on a survey this size it fits a much-decimated set and smooths compact
+# anomalies almost away (2.4 nT of the same 86.6 nT). "cubic" overshoots
+# at the steps instead (250 nT). "linear" is the one that removes the
+# artifact without trading away real short-wavelength signal.
+#
+# Requests that want native sample resolution rather than a map - compact
+# target detection, and the coverage diagnostic - deliberately keep
+# "nearest" below.
+DEFAULT_GRID_METHOD: GridMethod = "linear"
+
 
 class HillshadeParams(BaseModel):
     # Geosoft Oasis Montaj-style "color-shaded relief" - the grid values
@@ -334,7 +357,7 @@ class ContourParams(BaseModel):
 class GridRequest(HillshadeParams, ContourParams):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
     vmin: Optional[float] = None
@@ -371,7 +394,7 @@ class TransformRequest(HillshadeParams, ContourParams):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     cmap: Optional[str] = None
     vmin: Optional[float] = None
@@ -683,7 +706,7 @@ class InversionSlice3DRequest(BaseModel):
 class EulerDeconvolutionRequest(BaseModel):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     # 0 = contact/fault edge, 1 = thin dyke/sill/sheet edge, 2 = pipe/vertical
     # cylinder, 3 = sphere/point dipole - the four textbook structural indices.
@@ -732,7 +755,7 @@ class StructureScanRequest(BaseModel):
     (buildings are messier, less point-like sources than a compact
     target)."""
     cell_size_m: float = Field(2.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     # How far a building's/road's magnetic influence (rebar, buried
     # utilities, guardrails) is assumed to reach beyond its mapped
@@ -757,7 +780,7 @@ class MultiscaleEdgeRequest(BaseModel):
     # Euler deconvolution recommended by the UAV magnetics guidelines.
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     heights_m: list[float] = Field(default_factory=lambda: [0.0, 25.0, 50.0, 100.0, 200.0])
     percentile: float = Field(80.0, gt=0, lt=100)
@@ -807,7 +830,7 @@ class LineamentRequest(BaseModel):
     no sharp ridge over a contact the way its derivatives do)."""
     value: str = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     source: Literal["thd", "as", "tilt", "1vd"] = "thd"
     percentile_threshold: float = Field(90.0, gt=0, le=100)
@@ -822,7 +845,7 @@ class TiltDepthRequest(BaseModel):
     al. 2007)."""
     value: str = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     min_depth_m: float = Field(1.0, gt=0)
     max_depth_m: float = Field(500.0, gt=0)
@@ -833,7 +856,7 @@ class AnalyticSignalDepthRequest(BaseModel):
     (Nabighian 1972 / Roest et al. 1992 half-width method)."""
     value: str = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     percentile_threshold: float = Field(90.0, gt=0, le=100)
     search_radius_cells: int = Field(15, gt=0)
@@ -844,7 +867,7 @@ class SpectralDepthRequest(BaseModel):
     (Spector & Grant 1970)."""
     value: str = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
 
 
@@ -856,7 +879,7 @@ class ContactDetectionRequest(BaseModel):
     structural-trend extraction)."""
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     heights_m: list[float] = Field(default_factory=lambda: [0.0, 20.0, 40.0, 60.0, 80.0])
     percentile_threshold: float = Field(80.0, gt=0, lt=100)
@@ -875,7 +898,7 @@ class ProspectivityRequest(BaseModel):
     purpose="custom" with weights to set your own."""
     value: str = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
-    method: GridMethod = "nearest"
+    method: GridMethod = DEFAULT_GRID_METHOD
     max_distance_m: Optional[float] = None
     purpose: Literal["magnetite_fe", "skarn", "ni_cu_pge", "custom"] = "magnetite_fe"
     weights: Optional[dict[str, float]] = None
