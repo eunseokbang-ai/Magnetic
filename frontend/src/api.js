@@ -79,6 +79,38 @@ export function uploadBase(projectId, files, onProgress) {
   return uploadWithProgress(`/projects/${projectId}/upload/base`, form, onProgress);
 }
 
+export function uploadIaga2002(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/base/iaga2002/upload`, { method: "POST", body: form });
+}
+
+export function fetchIntermagnet(projectId, req) {
+  return request(`/projects/${projectId}/base/intermagnet/fetch`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function applyIntermagnet(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/apply`, { method: "POST" });
+}
+
+export function fetchNearestIntermagnet(projectId, req) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/fetch`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function applyNearestIntermagnet(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/apply`, { method: "POST" });
+}
+
+export function getNearestIntermagnetComparison(projectId) {
+  return request(`/projects/${projectId}/base/intermagnet/nearest/comparison`);
+}
+
+export function uploadHeadingCalibration(projectId, files, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  return uploadWithProgress(`/projects/${projectId}/upload/heading_calibration`, form, onProgress);
+}
+
 export function processProject(projectId, params) {
   return request(`/projects/${projectId}/process`, { method: "POST", body: JSON.stringify(params) });
 }
@@ -111,8 +143,116 @@ export function runTargetDetection(projectId, req) {
   return request(`/projects/${projectId}/target-detection`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function getGridConfidence(projectId, req) {
+  return request(`/projects/${projectId}/grid/confidence`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runQcCertificate(projectId, req) {
+  return request(`/projects/${projectId}/qc-certificate`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runMultiscaleEdges(projectId, req) {
+  return request(`/projects/${projectId}/multiscale-edges`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runLineamentExtraction(projectId, req) {
+  return request(`/projects/${projectId}/lineaments`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runTiltDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/tilt`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runAnalyticSignalDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/analytic-signal`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runSpectralDepth(projectId, req) {
+  return request(`/projects/${projectId}/depth-estimation/spectral`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runContactDetection(projectId, req) {
+  return request(`/projects/${projectId}/contacts`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function runProspectivity(projectId, req) {
+  return request(`/projects/${projectId}/prospectivity`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getProspectivityOverlay(projectId, colormap) {
+  const query = colormap ? `?colormap=${encodeURIComponent(colormap)}` : "";
+  return request(`/projects/${projectId}/prospectivity/overlay${query}`);
+}
+
+export function getPowerSpectrum(projectId, req) {
+  return request(`/projects/${projectId}/spectrum`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function uploadRepeatability(projectId, files, onProgress) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  return uploadWithProgress(`/projects/${projectId}/upload/repeatability`, form, onProgress);
+}
+
+export function analyzeRepeatability(projectId) {
+  return request(`/projects/${projectId}/repeatability/analyze`, { method: "POST" });
+}
+
 export function getLineProfile(projectId, lineId, value) {
   return request(`/projects/${projectId}/line-profile?line_id=${lineId}&value=${value}`);
+}
+
+export function getBaseTimeseries(projectId) {
+  return request(`/projects/${projectId}/base/timeseries`);
+}
+
+export function applySmoothing(projectId, req) {
+  return request(`/projects/${projectId}/smooth`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function scanStructureDistortion(projectId, req) {
+  return request(`/projects/${projectId}/structure-scan`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function setDisplayBoundary(projectId, polygon) {
+  return request(`/projects/${projectId}/display-boundary`, { method: "POST", body: JSON.stringify({ polygon }) });
+}
+
+export function autoDisplayBoundary(projectId, bufferM) {
+  return request(`/projects/${projectId}/display-boundary/auto`, {
+    method: "POST",
+    body: JSON.stringify({ buffer_m: bufferM }),
+  });
+}
+
+export async function exportDisplayBoundary(projectId, format, name) {
+  const query = new URLSearchParams({ format, name }).toString();
+  const blob = await requestBlob(`/projects/${projectId}/display-boundary/export?${query}`);
+  downloadBlob(blob, format === "shp" ? `${name}_shapefile.zip` : `${name}.kml`);
+}
+
+export function estimateOfflineTiles(req) {
+  return request(`/tiles/estimate`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function downloadOfflineTiles(req) {
+  return request(`/tiles/download`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function getOfflineTileStatus() {
+  return request(`/tiles/status`);
+}
+
+export function registerLocalTileFolder(req) {
+  return request(`/local-tiles/register`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function unregisterLocalTileFolder(layerId) {
+  return request(`/local-tiles/${layerId}`, { method: "DELETE" });
+}
+
+export function pickLocalTileFolder() {
+  return request(`/local-tiles/pick-folder`, { method: "POST" });
 }
 
 export function uploadOverlayImage(file) {
@@ -137,6 +277,26 @@ export function deleteReferenceLayer(projectId, name) {
 
 export function sendChatMessage(projectId, message, history) {
   return request(`/projects/${projectId}/chat`, { method: "POST", body: JSON.stringify({ message, history }) });
+}
+
+export function sampleOverlayValue(projectId, lat, lon) {
+  return request(`/projects/${projectId}/overlay/sample`, { method: "POST", body: JSON.stringify({ lat, lon }) });
+}
+
+export function listGeologyUnits(projectId) {
+  return request(`/projects/${projectId}/geology/units`);
+}
+
+export function addGeologyUnit(projectId, unit) {
+  return request(`/projects/${projectId}/geology/units`, { method: "POST", body: JSON.stringify(unit) });
+}
+
+export function updateGeologyUnit(projectId, unitId, patch) {
+  return request(`/projects/${projectId}/geology/units/${unitId}`, { method: "PATCH", body: JSON.stringify(patch) });
+}
+
+export function deleteGeologyUnit(projectId, unitId) {
+  return request(`/projects/${projectId}/geology/units/${unitId}`, { method: "DELETE" });
 }
 
 export function uploadDem(projectId, file) {
@@ -169,6 +329,17 @@ export function getInversionVolume(projectId, threshold, thresholdMax) {
   return request(`/projects/${projectId}/inversion/volume${q}`);
 }
 
+export function getInversionBoxFaces(projectId, topLayerIndex) {
+  const params = new URLSearchParams();
+  if (topLayerIndex != null) params.set("top_layer_index", topLayerIndex);
+  const q = params.toString() ? `?${params.toString()}` : "";
+  return request(`/projects/${projectId}/inversion/box_faces${q}`);
+}
+
+export function getInversionSlice3D(projectId, req) {
+  return request(`/projects/${projectId}/inversion/slice_3d`, { method: "POST", body: JSON.stringify(req) });
+}
+
 async function requestBlob(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
@@ -198,6 +369,13 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
+// Purely client-side (no backend round-trip needed - the data is already
+// in frontend state) - used for the display-boundary polygon so it can be
+// saved to a file and re-loaded later or reused across projects.
+export function downloadJson(data, filename) {
+  downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), filename);
+}
+
 export async function exportGridGeotiff(projectId, req, filename) {
   const blob = await requestBlob(`/projects/${projectId}/grid/geotiff`, { method: "POST", body: JSON.stringify(req) });
   downloadBlob(blob, filename);
@@ -220,6 +398,16 @@ export async function exportTransformXyz(projectId, req, filename) {
 
 export async function exportPointsCsv(projectId, filename) {
   const blob = await requestBlob(`/projects/${projectId}/points/csv`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportTargetsCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/target-detection/csv`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportTargetsShapefile(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/target-detection/shapefile`);
   downloadBlob(blob, filename);
 }
 
@@ -248,6 +436,11 @@ export async function exportInversionResult(projectId, filename) {
   downloadBlob(blob, filename);
 }
 
+export async function exportNearestIntermagnetCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/base/intermagnet/nearest/csv`);
+  downloadBlob(blob, filename);
+}
+
 export async function exportInversionCsv(projectId, filename) {
   const blob = await requestBlob(`/projects/${projectId}/inversion/export/csv`);
   downloadBlob(blob, filename);
@@ -273,4 +466,12 @@ export function loadProject(projectId, file) {
   const form = new FormData();
   form.append("file", file);
   return request(`/projects/${projectId}/load`, { method: "POST", body: form });
+}
+
+// Which commit the connected backend is actually running - lets the UI
+// show this directly, since "이미 고친 버그가 재현된다" reports have
+// repeatedly turned out to be a stale run.bat build rather than a real
+// regression (see main.py::_detect_running_version).
+export function getVersion() {
+  return request("/version");
 }

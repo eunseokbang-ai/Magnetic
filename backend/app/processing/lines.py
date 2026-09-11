@@ -100,6 +100,21 @@ class LineDetectionParams:
     # heading. "pca": principal axis of the point cloud's spatial spread
     # (DroneMagAdv's "자동 방향 검출").
     direction_method: Literal["heading_histogram", "pca"] = "heading_histogram"
+    # Bridge brief mid-line interruptions (wind gusts, a momentary GPS/IMU
+    # blip) back into the same line instead of leaving a data gap or
+    # splitting one physical line into two: a short excluded run between
+    # two kept runs is folded back in (regardless of *why* it was
+    # excluded) when it is both short (bridge_max_gap_m) and lines up with
+    # the same cross-track position (bridge_max_offset_m) as the runs on
+    # either side - i.e. clearly a wobble on the same line, not a turn
+    # onto an adjacent one.
+    bridge_gaps: bool = True
+    bridge_max_gap_m: float = 100.0
+    bridge_max_offset_m: float = 15.0
+    # gap path length must not exceed this multiple of the straight-line
+    # distance actually covered - rejects loop/U-turn maneuvers (e.g. a
+    # heading-calibration turn) that circle back near their own start.
+    bridge_straightness_factor: float = 2.0
 
 
 def detect_lines(
@@ -171,6 +186,13 @@ def detect_lines(
     # everything else keeps its original takeoff/off-azimuth tag.
     out.loc[on_azimuth, "exclusion_reason"] = reasons[on_azimuth]
 
+    if params.bridge_gaps:
+        bridged_line_id, bridged_reason = _bridge_line_gaps(out, x, y, line_id, out["exclusion_reason"].to_numpy(), dominant_azimuth, params)
+        out["line_id"] = bridged_line_id
+        out["exclusion_reason"] = bridged_reason
+
+    out["exclusion_reason"] = _tag_takeoff_landing_ramps(out, out["line_id"].to_numpy(), out["exclusion_reason"].to_numpy())
+
     out.attrs["utm_epsg"] = epsg
     out.attrs["dominant_azimuth_deg"] = dominant_azimuth
     return out
@@ -223,6 +245,109 @@ def _group_into_lines(
     return line_id_out, reason_out
 
 
+def _bridge_line_gaps(
+    out: pd.DataFrame,
+    x: np.ndarray,
+    y: np.ndarray,
+    line_id_out: np.ndarray,
+    reason_out: np.ndarray,
+    dominant_azimuth_deg: float,
+    params: LineDetectionParams,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fold short excluded runs between two kept runs of the *same*
+    physical line back into that line, instead of leaving a data gap or
+    splitting it into two separate "lines". A run in between is bridged
+    only when all three hold:
+      1. short along-track (gap path length <= bridge_max_gap_m)
+      2. the flanking runs sit at essentially the same cross-track
+         position (bridge_max_offset_m) - not a move onto an adjacent line
+      3. the gap was flown reasonably directly, not a loop/U-turn that
+         circles back near its own starting point: the path length can't
+         exceed bridge_straightness_factor times the straight-line
+         distance actually covered. A real forward wobble travels close
+         to a straight line end-to-end; a turn/calibration loop covers
+         many meters of track while its net displacement stays small, so
+         this ratio cleanly tells the two apart even when a loop happens
+         to end up back on the same cross-track position (guard 2 alone
+         can't distinguish a loop from a wobble).
+    Processed independently per source file (or the whole dataset if
+    there's only one), in time order, with a single forward pass: each
+    bridged run is folded into the line id accumulated so far, so a chain
+    of several short wobbles down one line all merge into one id."""
+    line_id_out = line_id_out.copy()
+    reason_out = reason_out.copy()
+    cross_track = cross_track_coordinate(x, y, dominant_azimuth_deg)
+
+    source_col = out["source_file_index"] if "source_file_index" in out.columns else pd.Series(0, index=out.index)
+    for _src, idx in out.groupby(source_col).groups.items():
+        idx = np.asarray(idx)
+        sub_ids = line_id_out[idx]
+        m = len(idx)
+        current_id = None
+        prev_end_pos = None  # local position (within idx) of the end of the currently-accumulated run
+        i = 0
+        while i < m:
+            if sub_ids[i] < 0:
+                i += 1
+                continue
+            j = i
+            while j + 1 < m and sub_ids[j + 1] == sub_ids[i]:
+                j += 1
+            run_id = sub_ids[i]
+
+            if current_id is not None:
+                gap_local = idx[prev_end_pos + 1:i]
+                span_idx = idx[prev_end_pos:i + 1]
+                tail_pt, head_pt = idx[prev_end_pos], idx[i]
+                gap_len_m = float(np.hypot(np.diff(x[span_idx]), np.diff(y[span_idx])).sum())
+                straight_dist_m = float(np.hypot(x[head_pt] - x[tail_pt], y[head_pt] - y[tail_pt]))
+                offset_diff = abs(float(cross_track[tail_pt]) - float(cross_track[head_pt]))
+                direct_enough = gap_len_m <= max(straight_dist_m, 1e-6) * params.bridge_straightness_factor
+                if gap_len_m <= params.bridge_max_gap_m and offset_diff <= params.bridge_max_offset_m and direct_enough:
+                    line_id_out[idx[i:j + 1]] = current_id
+                    line_id_out[gap_local] = current_id
+                    reason_out[gap_local] = None
+                    sub_ids[i:j + 1] = current_id
+                else:
+                    current_id = run_id
+            else:
+                current_id = run_id
+
+            prev_end_pos = j
+            i = j + 1
+
+    return line_id_out, reason_out
+
+
+def _tag_takeoff_landing_ramps(
+    out: pd.DataFrame,
+    line_id_out: np.ndarray,
+    reason_out: np.ndarray,
+) -> np.ndarray:
+    """Relabel excluded points before the first kept survey-line point
+    (per source file) as "takeoff_ramp" and points after the last kept
+    point as "landing_ramp" - the transit from actual liftoff to the
+    start of production-line flying, and from the end of the last line
+    back to landing. These are near-certainly unusable regardless of why
+    the point-level classifier excluded them, and are handled separately
+    from ordinary in-survey turns/short-line trims (whose reason is left
+    untouched) so the line editor can hide/protect them independently."""
+    reason_out = reason_out.copy()
+    source_col = out["source_file_index"] if "source_file_index" in out.columns else pd.Series(0, index=out.index)
+    for _src, idx in out.groupby(source_col).groups.items():
+        idx = np.asarray(idx)
+        kept_mask = line_id_out[idx] >= 0
+        if not kept_mask.any():
+            continue
+        first_kept_pos = int(np.argmax(kept_mask))
+        last_kept_pos = len(kept_mask) - 1 - int(np.argmax(kept_mask[::-1]))
+        pre_idx = idx[:first_kept_pos]
+        post_idx = idx[last_kept_pos + 1:]
+        reason_out[pre_idx[line_id_out[pre_idx] < 0]] = "takeoff_ramp"
+        reason_out[post_idx[line_id_out[post_idx] < 0]] = "landing_ramp"
+    return reason_out
+
+
 def detect_tie_lines(
     out: pd.DataFrame,
     dominant_azimuth_deg: float,
@@ -263,6 +388,27 @@ def cross_track_coordinate(x: np.ndarray, y: np.ndarray, dominant_azimuth_deg: f
     order lines by adjacency."""
     perp = _perp_vector(dominant_azimuth_deg)
     return np.asarray(x) * perp[0] + np.asarray(y) * perp[1]
+
+
+def group_turn_segments(df: pd.DataFrame, max_gap_seconds: float = 1.0) -> np.ndarray:
+    """Groups contiguous runs of turn/off-azimuth points (already tagged
+    via detect_lines' exclusion_reason column) into individual turn
+    events. Each turn typically covers a small spatial footprint while
+    sweeping a wide range of headings - closely matching a dedicated
+    heading-effect calibration flight's clover-leaf pattern (see
+    processing/heading_calibration.py's docstring; the manufacturer's own
+    calibration guide notes "the best calibration data is usually located
+    where the drone makes a turn"). Returns a group id array the same
+    length as df (-1 for non-turn points), split on both a state change
+    (turn vs. not) and a time gap exceeding max_gap_seconds so two turns
+    separated by a flight-log gap aren't merged into one."""
+    is_turn = df["exclusion_reason"].isin(["off_azimuth_turn", "turn_buffer"]).to_numpy()
+    t = df["timestamp"]
+    big_gap = t.diff().dt.total_seconds().fillna(0) > max_gap_seconds
+    turn_series = pd.Series(is_turn, index=df.index)
+    state_change = turn_series.ne(turn_series.shift()).fillna(True)
+    group_id = (state_change | big_gap).cumsum().to_numpy()
+    return np.where(is_turn, group_id, -1)
 
 
 def estimate_line_spacing_m(df: pd.DataFrame, dominant_azimuth_deg: float) -> float | None:

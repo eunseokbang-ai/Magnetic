@@ -1,6 +1,6 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
@@ -12,25 +12,25 @@ const buttonStyle = {
   cursor: "pointer",
 };
 const tableStyle = { width: "100%", borderCollapse: "collapse", fontSize: 11 };
-const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e5e7eb", color: "#6b7280" };
-const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3f4f6" };
+const thStyle = { textAlign: "left", padding: "3px 4px", borderBottom: "1px solid #e6dac0", color: "#8a7a5c" };
+const tdStyle = { padding: "3px 4px", borderBottom: "1px solid #f3ecd9" };
 
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
 }
 
-export default function TargetDetectionPanel({ ready, params, setParams, onRun, running, result, error, showTargets, setShowTargets }) {
+export default function TargetDetectionPanel({ ready, params, setParams, onRun, running, result, error, showTargets, setShowTargets, projectId, exportTargetsCsv, exportTargetsShapefile }) {
   const update = (key, val) => setParams((p) => ({ ...p, [key]: val }));
 
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           지뢰·불발탄·은닉 차량 등 작고 국지적인 강자성 표적을 자동으로 골라내 위치·심도·상대적 철질량 크기를 추정합니다(단일 자기
           쌍극자 모델 피팅). 넓은 지역의 완만한 지질체를 가정하는 3차원 역산/오일러 디컨볼루션과 달리, 작고 뾰족한 국지 이상만 표적
           후보로 다룹니다.
@@ -78,14 +78,30 @@ export default function TargetDetectionPanel({ ready, params, setParams, onRun, 
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         {result && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             표적 후보 {result.n_targets}개 (임계값 {result.amplitude_threshold_nt?.toFixed(1)} nT, 격자 {result.cell_size_m} m)
             <label style={{ display: "flex", alignItems: "center", gap: 6, margin: "6px 0" }}>
               <input type="checkbox" checked={showTargets} onChange={(e) => setShowTargets(e.target.checked)} />
               <span>지도에 결과 표시</span>
             </label>
             {result.targets.length > 0 && (
-              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f3f4f6", borderRadius: 4 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button
+                  style={{ ...buttonStyle, background: "white", color: "#4a3d28", border: "1px solid #ddd0b2", flex: 1 }}
+                  onClick={() => exportTargetsCsv(projectId, "targets.csv")}
+                >
+                  CSV로 내보내기
+                </button>
+                <button
+                  style={{ ...buttonStyle, background: "white", color: "#4a3d28", border: "1px solid #ddd0b2", flex: 1 }}
+                  onClick={() => exportTargetsShapefile(projectId, "targets_shapefile.zip")}
+                >
+                  Shapefile로 내보내기
+                </button>
+              </div>
+            )}
+            {result.targets.length > 0 && (
+              <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid #f3ecd9", borderRadius: 4 }}>
                 <table style={tableStyle}>
                   <thead>
                     <tr>

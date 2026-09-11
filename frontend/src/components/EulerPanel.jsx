@@ -1,13 +1,13 @@
-const sectionStyle = { border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 10, background: "white" };
+const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
 const buttonStyle = {
   padding: "7px 10px",
   fontSize: 12,
   fontWeight: 600,
   borderRadius: 6,
-  border: "1px solid #2563eb",
-  background: "#2563eb",
+  border: "1px solid #a9631f",
+  background: "#a9631f",
   color: "white",
   cursor: "pointer",
 };
@@ -15,11 +15,17 @@ const buttonStyle = {
 function Field({ label, children }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ color: "#4b5563" }}>{label}</span>
+      <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
   );
 }
+
+const DEPTH_REFERENCE_LABELS = {
+  flat_datum: "비행고도 평면 기준 (지형 미고려)",
+  flight_altitude: "각 탐색창의 평균 비행고도 기준",
+  ground_surface: "지표면 기준 (등고비행 AGL 반영)",
+};
 
 export default function EulerPanel({
   ready,
@@ -29,6 +35,8 @@ export default function EulerPanel({
   setWindowSize,
   maxUncertaintyPct,
   setMaxUncertaintyPct,
+  flightAglM,
+  setFlightAglM,
   onRun,
   running,
   result,
@@ -39,7 +47,7 @@ export default function EulerPanel({
   return (
     <div style={sectionStyle}>
       <div style={bodyStyle}>
-        <div style={{ color: "#6b7280" }}>
+        <div style={{ color: "#8a7a5c" }}>
           그리드된 이상값의 수평/수직 미분을 이용해 이상체의 위치와 깊이를 자동으로 추정합니다 (Euler's homogeneity equation). 3차원
           역산보다 훨씬 빠르지만 개략적인 결과입니다.
         </div>
@@ -62,13 +70,34 @@ export default function EulerPanel({
             onChange={(e) => setMaxUncertaintyPct(parseFloat(e.target.value))}
           />
         </Field>
+        <Field label="등고비행 고도(AGL, m) — 비워두면 미반영(비행고도 평면 기준)">
+          <input
+            type="number"
+            style={inputStyle}
+            placeholder="예: 50"
+            value={flightAglM ?? ""}
+            onChange={(e) => setFlightAglM(e.target.value === "" ? null : parseFloat(e.target.value))}
+          />
+        </Field>
+        <div style={{ color: "#ab9a78", fontSize: 11 }}>
+          지형고려(등고) 비행이었고 지표면 기준 일정 고도(AGL)를 유지했다면 그 값을 입력하세요 — 드론이 실제 기록한 GPS 고도를 각
+          탐색창의 관측 높이로 반영해(지형이 평평하다고 가정하지 않음) 심도를 지표면 기준으로 다시 계산합니다. 지형 기복이 있는데도
+          비워두면 실제로는 비행고도 아래 얼마인지가 아니라 하나의 평평한 가상 평면 아래 얼마인지로 계산되어, 등고비행 고도만큼
+          심도가 과대평가될 수 있습니다.
+        </div>
         <button style={buttonStyle} disabled={!ready || running} onClick={onRun}>
           {running ? "계산 중..." : "오일러 디컨볼루션 실행"}
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
         {result && (
-          <div style={{ color: "#374151" }}>
+          <div style={{ color: "#4a3d28" }}>
             해 {result.n_solutions}개
+            {result.depth_reference && (
+              <>
+                <br />
+                심도 기준: {DEPTH_REFERENCE_LABELS[result.depth_reference] || result.depth_reference}
+              </>
+            )}
             {result.depth_stats && (
               <>
                 <br />

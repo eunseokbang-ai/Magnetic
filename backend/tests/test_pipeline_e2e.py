@@ -78,6 +78,11 @@ def main():
     print("lines:", summary["lines"])
     assert summary["n_lines"] >= 1
     assert summary["diurnal"]["has_overlap"] is False  # known clock mismatch in sample data
+    # has_overlap False means zero coverage, so every point's correction
+    # was boundary-clamped (see DiurnalResult.extrapolated_mask) - the
+    # n_extrapolated/pct_extrapolated diagnostic should reflect that.
+    assert summary["diurnal"]["n_extrapolated"] == summary["n_points"]
+    assert abs(summary["diurnal"]["pct_extrapolated"] - 100.0) < 1e-6
     assert summary["line_spacing_m"] is not None and summary["line_spacing_m"] > 0
     assert summary["heading_correction"]["applied"] is True, summary["heading_correction"]
     assert summary["heading_correction"]["offset_nt"] is not None
@@ -449,6 +454,17 @@ def _check_inversion(client, project_id, pts):
     assert r.status_code == 400, r.text
     r = client.post(f"/api/projects/{project_id}/inversion/section", json={"profile": "custom"})
     assert r.status_code == 400, r.text
+
+    # box-face "fence diagram" view: top slice + 4 continuous-SI side walls
+    r = client.get(f"/api/projects/{project_id}/inversion/box_faces", params={"top_layer_index": 1})
+    assert r.status_code == 200, r.text
+    faces = r.json()
+    assert faces["top_layer_index"] == 1
+    assert faces["vmax"] > 0
+    for key in ("top", "south", "north", "west", "east"):
+        face = faces[key]
+        assert len(face["x"]) == len(face["y"]) == len(face["z"]) == len(face["value"])
+    print("box_faces top_elevation_m:", faces["top_elevation_m"], "vmax:", faces["vmax"])
 
     # auto-parameter mode: omitting the mesh params should pick sensible
     # values from line spacing / spectral depth and run successfully.

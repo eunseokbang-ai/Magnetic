@@ -1,12 +1,12 @@
 const STEPS = [
-  { key: "drone", label: "드론 자료 업로드" },
-  { key: "base", label: "베이스 자료 업로드" },
-  { key: "process", label: "자료 처리 실행" },
-  { key: "grid", label: "그리드/시각화 생성" },
-  { key: "advanced", label: "(선택) 3차원 역산 · 오일러 디컨볼루션" },
+  { key: "drone", label: "드론 자료 업로드", sectionId: "wf-section-drone" },
+  { key: "base", label: "베이스 자료 업로드", sectionId: "wf-section-base" },
+  { key: "process", label: "자료 처리 실행", sectionId: "wf-section-process" },
+  { key: "grid", label: "그리드/시각화 생성", sectionId: "wf-section-grid" },
+  { key: "advanced", label: "(선택) 3차원 역산 · 오일러 디컨볼루션", sectionId: "wf-section-advanced" },
 ];
 
-export default function WorkflowProgress({ droneSummary, baseSummary, processSummary, overlay, inversionSummary, eulerResult }) {
+export default function WorkflowProgress({ droneSummary, baseSummary, processSummary, overlay, inversionSummary, eulerResult, onStepClick }) {
   const done = {
     drone: !!droneSummary,
     base: !!baseSummary,
@@ -24,7 +24,22 @@ export default function WorkflowProgress({ droneSummary, baseSummary, processSum
         const isDone = done[s.key];
         const isCurrent = s.key === currentKey;
         return (
-          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div
+            key={s.key}
+            onClick={() => onStepClick && onStepClick(s.sectionId)}
+            title="클릭하면 해당 단계로 이동합니다"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              cursor: onStepClick ? "pointer" : "default",
+              borderRadius: 4,
+              padding: "2px 4px",
+              marginLeft: -4,
+            }}
+            onMouseEnter={(e) => onStepClick && (e.currentTarget.style.background = "#eef2ff")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
             <div
               style={{
                 width: 16,
@@ -36,13 +51,13 @@ export default function WorkflowProgress({ droneSummary, baseSummary, processSum
                 justifyContent: "center",
                 fontSize: 10,
                 fontWeight: 700,
-                background: isDone ? "#22c55e" : isCurrent ? "#2563eb" : "#e5e7eb",
-                color: isDone || isCurrent ? "white" : "#9ca3af",
+                background: isDone ? "#22c55e" : isCurrent ? "#a9631f" : "#e6dac0",
+                color: isDone || isCurrent ? "white" : "#ab9a78",
               }}
             >
               {isDone ? "✓" : i + 1}
             </div>
-            <span style={{ color: isDone ? "#16a34a" : isCurrent ? "#2563eb" : "#9ca3af", fontWeight: isCurrent ? 600 : 400 }}>
+            <span style={{ color: isDone ? "#16a34a" : isCurrent ? "#a9631f" : "#ab9a78", fontWeight: isCurrent ? 600 : 400 }}>
               {s.label}
             </span>
           </div>

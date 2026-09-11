@@ -1,6 +1,16 @@
 import { getColorFn, COLORMAP_OPTIONS } from "../colormap";
 
-const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #d1d5db" };
+const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
+const jumpButtonStyle = {
+  marginLeft: 6,
+  padding: "1px 6px",
+  fontSize: 10,
+  borderRadius: 4,
+  border: "1px solid #dcb37a",
+  background: "#faf0e2",
+  color: "#8a4f18",
+  cursor: "pointer",
+};
 
 function Gradient({ cmapName }) {
   const fn = getColorFn(cmapName);
@@ -11,25 +21,42 @@ function Gradient({ cmapName }) {
         height: 14,
         borderRadius: 4,
         background: `linear-gradient(to right, ${stops.join(",")})`,
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
       }}
     />
   );
 }
+
+const STRETCH_NOTES = {
+  equalize: "히스토그램 균등화 스트레치 — 색 간격이 값에 비례하지 않습니다 (눈금 참조)",
+  normal: "정규분포 스트레치 — 색 간격이 값에 비례하지 않습니다 (눈금 참조)",
+};
 
 export default function Legend({
   label,
   unit,
   vmin,
   vmax,
+  ticks,
+  stretch,
   cmapName,
   onCmapChange,
   manualRange,
   onManualRangeChange,
   stats,
   hoverPoint,
+  extrema,
+  onJumpToExtremum,
 }) {
   const updateManual = (key, value) => onManualRangeChange({ ...manualRange, [key]: value });
+  // Backend legend_ticks: the data value whose color sits at each of 5
+  // equally spaced positions along the bar (0/25/50/75/100%). For the
+  // equalize/normal stretches these are NOT linearly spaced values (the
+  // midpoint is the data's median/mean, not (vmin+vmax)/2) - showing them
+  // is what keeps the legend honest for a non-linear stretch, instead of
+  // implying a linear mapping by labeling only the two ends.
+  const tickValues = Array.isArray(ticks) && ticks.length >= 2 ? ticks : [vmin, vmax];
+  const stretchNote = STRETCH_NOTES[stretch];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -38,15 +65,27 @@ export default function Legend({
           {label} {unit ? `(${unit})` : ""}
         </div>
         <Gradient cmapName={cmapName} />
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-          <span>{vmin != null ? vmin.toFixed(1) : "-"}</span>
-          <span>{vmax != null ? vmax.toFixed(1) : "-"}</span>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8a7a5c", marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+          {tickValues.map((t, i) => (
+            <span
+              key={i}
+              style={{
+                flex: 1,
+                textAlign: i === 0 ? "left" : i === tickValues.length - 1 ? "right" : "center",
+              }}
+            >
+              {t != null ? t.toFixed(1) : "-"}
+            </span>
+          ))}
         </div>
+        {stretchNote && (
+          <div style={{ fontSize: 10.5, color: "#a9631f", marginTop: 4, lineHeight: 1.5 }}>{stretchNote}</div>
+        )}
       </div>
 
       <div style={{ fontSize: 12 }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 8 }}>
-          <span style={{ color: "#4b5563" }}>컬러맵</span>
+          <span style={{ color: "#6b5c42" }}>컬러맵</span>
           <select style={inputStyle} value={cmapName} onChange={(e) => onCmapChange(e.target.value)}>
             {COLORMAP_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
@@ -58,7 +97,7 @@ export default function Legend({
 
         <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
           <input type="checkbox" checked={manualRange.enabled} onChange={(e) => updateManual("enabled", e.target.checked)} />
-          <span style={{ color: "#4b5563" }}>표시 범위 수동 지정</span>
+          <span style={{ color: "#6b5c42" }}>표시 범위 수동 지정</span>
         </label>
         {manualRange.enabled && (
           <div style={{ display: "flex", gap: 6 }}>
@@ -81,17 +120,39 @@ export default function Legend({
       </div>
 
       {stats && (
-        <div style={{ fontSize: 12, color: "#374151" }}>
+        <div style={{ fontSize: 12, color: "#4a3d28" }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>통계</div>
           <table style={{ width: "100%" }}>
             <tbody>
               <tr>
                 <td>Min</td>
-                <td style={{ textAlign: "right" }}>{fmt(stats.min)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {fmt(stats.min)}
+                  {extrema?.min && onJumpToExtremum && (
+                    <button
+                      onClick={() => onJumpToExtremum("min")}
+                      title="지도에서 최솟값 위치로 이동"
+                      style={jumpButtonStyle}
+                    >
+                      📍이동
+                    </button>
+                  )}
+                </td>
               </tr>
               <tr>
                 <td>Max</td>
-                <td style={{ textAlign: "right" }}>{fmt(stats.max)}</td>
+                <td style={{ textAlign: "right" }}>
+                  {fmt(stats.max)}
+                  {extrema?.max && onJumpToExtremum && (
+                    <button
+                      onClick={() => onJumpToExtremum("max")}
+                      title="지도에서 최댓값 위치로 이동"
+                      style={jumpButtonStyle}
+                    >
+                      📍이동
+                    </button>
+                  )}
+                </td>
               </tr>
               <tr>
                 <td>Mean</td>
@@ -107,7 +168,7 @@ export default function Legend({
       )}
 
       {hoverPoint && (
-        <div style={{ fontSize: 12, color: "#374151", borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+        <div style={{ fontSize: 12, color: "#4a3d28", borderTop: "1px solid #e6dac0", paddingTop: 10 }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>선택 포인트 (TMI)</div>
           <div>위도: {hoverPoint.lat.toFixed(6)}</div>
           <div>경도: {hoverPoint.lon.toFixed(6)}</div>

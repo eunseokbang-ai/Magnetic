@@ -1,6 +1,18 @@
+/* "지질" (Geology) palette - warm terrain neutrals + an ironstone/ochre
+   accent, chosen to read as "surveying the ground" rather than a generic
+   SaaS blue. Tokens are defined here for any new/refactored styling;
+   most existing component styles still carry their own literal hex
+   values (this app predates a shared token system), so this is additive,
+   not yet the single source of truth for every color in the app. */
 :root {
   color-scheme: light;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  --geo-bg: #efe8d8;
+  --geo-surface: #f8f3e7;
+  --geo-border: #ddd0b2;
+  --geo-text: #2c2418;
+  --geo-muted: #8a7a5c;
+  --geo-accent: #a9631f;
+  font-family: "Pretendard", system-ui, "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI", Roboto, sans-serif;
 }
 
 * {
@@ -16,6 +28,8 @@ body,
 
 body {
   overflow: hidden;
+  background: var(--geo-bg);
+  color: var(--geo-text);
 }
 
 /* Responsive layout: below 900px the left/right panels become

@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 const bubbleStyle = (role) => ({
   alignSelf: role === "user" ? "flex-end" : "flex-start",
-  background: role === "user" ? "#2563eb" : "#e5e7eb",
-  color: role === "user" ? "white" : "#111827",
+  background: role === "user" ? "#a9631f" : "#e6dac0",
+  color: role === "user" ? "white" : "#2c2418",
   borderRadius: 10,
   padding: "6px 10px",
   fontSize: 12,
@@ -29,7 +29,7 @@ export default function ChatPanel({ ready, messages, onSend, sending, error }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 11, color: "#6b7280" }}>
+      <div style={{ fontSize: 11, color: "#8a7a5c" }}>
         측선 통계, 3차원 역산 자화율, 오일러 디컨볼루션 결과, 업로드한 참조 레이어(지질도 등)의 실제 값을 조회해 답합니다. 자력탐사만으로 암종·광종을
         단정할 수 없으니 참고용으로만 활용하고 현장 검증을 거치세요.
       </div>
@@ -41,14 +41,14 @@ export default function ChatPanel({ ready, messages, onSend, sending, error }) {
           gap: 6,
           height: 260,
           overflowY: "auto",
-          border: "1px solid #e5e7eb",
+          border: "1px solid #e6dac0",
           borderRadius: 8,
           padding: 8,
           background: "white",
         }}
       >
         {messages.length === 0 && (
-          <div style={{ fontSize: 12, color: "#9ca3af" }}>
+          <div style={{ fontSize: 12, color: "#ab9a78" }}>
             {ready
               ? '예: "측선 통계 요약해줘", "위도 46.501, 경도 106.275 지점은 어때?"'
               : "먼저 자료를 처리하면 실제 수치를 조회해 더 정확히 답할 수 있습니다."}
@@ -77,7 +77,7 @@ export default function ChatPanel({ ready, messages, onSend, sending, error }) {
           }}
           placeholder="질문을 입력하세요..."
           rows={2}
-          style={{ flex: 1, fontSize: 12, padding: 6, borderRadius: 6, border: "1px solid #d1d5db", resize: "none" }}
+          style={{ flex: 1, fontSize: 12, padding: 6, borderRadius: 6, border: "1px solid #ddd0b2", resize: "none" }}
         />
         <button
           onClick={submit}
@@ -85,8 +85,8 @@ export default function ChatPanel({ ready, messages, onSend, sending, error }) {
           style={{
             padding: "0 12px",
             borderRadius: 6,
-            border: "1px solid #2563eb",
-            background: sending || !input.trim() ? "#93c5fd" : "#2563eb",
+            border: "1px solid #a9631f",
+            background: sending || !input.trim() ? "#dcb37a" : "#a9631f",
             color: "white",
             cursor: sending || !input.trim() ? "default" : "pointer",
             fontSize: 12,

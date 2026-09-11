@@ -16,7 +16,7 @@ export default function InversionSectionView({ data, onClose }) {
         bottom: 16,
         left: 16,
         background: "white",
-        border: "1px solid #d1d5db",
+        border: "1px solid #ddd0b2",
         borderRadius: 8,
         boxShadow: "0 4px 20px rgba(0,0,0,0.25)",
         zIndex: 1000,
@@ -24,7 +24,7 @@ export default function InversionSectionView({ data, onClose }) {
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid #e6dac0" }}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>수직 단면 뷰 ({profileLabel})</div>
         <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14 }}>
           ✕ 닫기
@@ -38,9 +38,9 @@ export default function InversionSectionView({ data, onClose }) {
         <img
           src={data.image_data_url}
           alt="수직 단면"
-          style={{ width: "100%", height: "100%", objectFit: "fill", border: "1px solid #d1d5db", imageRendering: "pixelated" }}
+          style={{ width: "100%", height: "100%", objectFit: "fill", border: "1px solid #ddd0b2", imageRendering: "pixelated" }}
         />
-        <div style={{ fontSize: 12, color: "#6b7280", marginTop: 8, display: "flex", gap: 24 }}>
+        <div style={{ fontSize: 12, color: "#8a7a5c", marginTop: 8, display: "flex", gap: 24 }}>
           <span>거리: 0 ~ {data.distance_m?.at(-1)?.toFixed(0)} m</span>
           <span>
             고도: {data.elevation_m?.at(-1)?.toFixed(0)} ~ {data.elevation_m?.[0]?.toFixed(0)} m

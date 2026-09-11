@@ -27,6 +27,24 @@ import pandas as pd
 REQUIRED_COLUMNS = ["Date", "Time", "Latitude", "Longitude", "Mag"]
 SPARSE_NUMERIC_COLUMNS = ["Altitude", "HeightOverEllipsoid", "Hdop", "SpeedOverGround"]
 
+# Optional IMU columns (only present in the generic/Geometrics MagArrow
+# schema) used by processing.sway to flag samples taken while the
+# suspended sensor was swinging/rotating rather than hanging steady -
+# every other format parser leaves these as NaN, which detect_sway
+# treats as "no IMU data available" and skips.
+_GYRO_COLUMNS = ["GyroscopeX", "GyroscopeY", "GyroscopeZ"]
+_ACCEL_HORIZ_COLUMNS = ["AccelerometerX", "AccelerometerY"]
+
+# Optional 3-axis compass (vector magnetometer) columns, also only present
+# in the generic/Geometrics MagArrow schema - used by
+# processing.heading_calibration to derive the sensor's orientation
+# relative to the earth's field (polar/azimuth heading) for the Zhang et
+# al. (2022, The Leading Edge) heading-effect calibration-and-compensation
+# method. Distinct from the gyroscope: the compass gives absolute
+# orientation, which the calibration needs, while the gyroscope only gives
+# rotation *rate*, which processing.sway uses to flag abnormal swinging.
+_COMPASS_COLUMNS = ["CompassX", "CompassY", "CompassZ"]
+
 # MicroInfinity Mag's MagField_Jn columns are in microtesla; internally
 # every other loader/downstream step works in nT.
 _UT_TO_NT = 1000.0
@@ -96,17 +114,57 @@ def _parse_generic(text: str) -> pd.DataFrame:
         df["MagValid"] = pd.to_numeric(df["MagValid"], errors="coerce")
         df = df[(df["MagValid"].isna()) | (df["MagValid"] != 0)]
 
-    return pd.DataFrame(
+    gyro_mag = np.nan
+    if all(c in df.columns for c in _GYRO_COLUMNS):
+        gx, gy, gz = (pd.to_numeric(df[c], errors="coerce") for c in _GYRO_COLUMNS)
+        gyro_mag = np.sqrt(gx**2 + gy**2 + gz**2)
+
+    # Horizontal-only (X/Y) accelerometer magnitude: Z is dominated by the
+    # ~1g gravity component regardless of swing, so including it would
+    # mostly just add a large, unrelated offset to the sway signal.
+    accel_horiz = np.nan
+    if all(c in df.columns for c in _ACCEL_HORIZ_COLUMNS):
+        ax, ay = (pd.to_numeric(df[c], errors="coerce") for c in _ACCEL_HORIZ_COLUMNS)
+        accel_horiz = np.sqrt(ax**2 + ay**2)
+
+    compass_x = compass_y = compass_z = np.nan
+    if all(c in df.columns for c in _COMPASS_COLUMNS):
+        compass_x, compass_y, compass_z = (pd.to_numeric(df[c], errors="coerce") for c in _COMPASS_COLUMNS)
+
+    # Prefer an already heading/system-error-compensated column when the
+    # upload is a "-comp.csv" produced with "Keep Raw Data" on (both the
+    # vendor LabVIEW tool and the companion MagArrow-heading-error-
+    # calibration tool write the corrected values to "MagComp" and leave
+    # "Mag" as the untouched original in that mode) - otherwise the app
+    # would silently grid the raw, uncorrected field even though a
+    # corrected one was uploaded right alongside it. Measured on the
+    # 2026-09 HaeNam M350 block: MagComp already has ~84% of the raw
+    # forward/reverse heading-effect bias removed (5.4 nT -> 0.9 nT), so
+    # using it here means the app's own heading_correction/statistical_
+    # leveling only have a small residual left to clean up rather than
+    # redoing that work from scratch on values that were never used.
+    mag_col = "MagComp" if "MagComp" in df.columns else "Mag"
+    if mag_col == "MagComp":
+        df["MagComp"] = pd.to_numeric(df["MagComp"], errors="coerce")
+
+    result = pd.DataFrame(
         {
             "timestamp": df["timestamp"],
             "lat": df["Latitude"],
             "lon": df["Longitude"],
-            "mag_raw": df["Mag"],
+            "mag_raw": df[mag_col],
             "altitude_msl_m": df["Altitude"] if "Altitude" in df.columns else np.nan,
             "geoid_separation_m": df["HeightOverEllipsoid"] if "HeightOverEllipsoid" in df.columns else np.nan,
             "speed_over_ground": df["SpeedOverGround"] if "SpeedOverGround" in df.columns else np.nan,
+            "gyro_mag": gyro_mag,
+            "accel_horiz_g": accel_horiz,
+            "compass_x": compass_x,
+            "compass_y": compass_y,
+            "compass_z": compass_z,
         }
     )
+    result.attrs["mag_source_column"] = mag_col
+    return result
 
 
 def _parse_sensys_r1(text: str) -> pd.DataFrame:
@@ -324,7 +382,10 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
     reconstruction. See load_drone_csv for the ellipsoidal-height note.
     """
     df = raw.copy()
-    for col in ["lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground"]:
+    for col in [
+        "lat", "lon", "mag_raw", "altitude_msl_m", "geoid_separation_m", "speed_over_ground",
+        "gyro_mag", "accel_horiz_g", "compass_x", "compass_y", "compass_z",
+    ]:
         if col not in df.columns:
             df[col] = np.nan
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -375,10 +436,16 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
             "geoid_separation_m": geoid_sep,
             "altitude_ellipsoidal_m": altitude_ellipsoidal,
             "speed_over_ground": df["speed_over_ground"].astype(float).values,
+            "gyro_mag": df["gyro_mag"].astype(float).values,
+            "accel_horiz_g": df["accel_horiz_g"].astype(float).values,
+            "compass_x": df["compass_x"].astype(float).values,
+            "compass_y": df["compass_y"].astype(float).values,
+            "compass_z": df["compass_z"].astype(float).values,
         }
     )
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     out.attrs["source_format"] = raw.attrs.get("source_format", "generic")
+    out.attrs["mag_source_column"] = raw.attrs.get("mag_source_column", "Mag")
     return out
 
 
@@ -390,9 +457,12 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
     is auto-detected from the file header - see _detect_format.
 
     Returns columns: point_id, timestamp, lat, lon, mag_raw, altitude_msl_m,
-    geoid_separation_m, altitude_ellipsoidal_m, speed_over_ground (may be
-    NaN if not present in source). Result carries the detected format name
-    in `.attrs["source_format"]`.
+    geoid_separation_m, altitude_ellipsoidal_m, speed_over_ground, gyro_mag,
+    accel_horiz_g, compass_x, compass_y, compass_z (may be NaN if not
+    present in source - gyro_mag/accel_horiz_g/compass_* are only
+    populated for the generic/Geometrics MagArrow schema, see
+    processing.sway and processing.heading_calibration). Result carries
+    the detected format name in `.attrs["source_format"]`.
 
     Note: despite its name, the generic source's `HeightOverEllipsoid`
     column matches the GGA "geoid separation" field position/magnitude
@@ -427,6 +497,18 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     n_invalid_coords_removed = sum(p.attrs.get("n_invalid_coords_removed", 0) for p in parts)
     source_formats = sorted({p.attrs.get("source_format", "generic") for p in parts})
 
+    # Tags each row with which uploaded file it came from (0-based upload
+    # order) - lets downstream processing flag a DC level offset specific
+    # to one file (e.g. base station moved between flights, see
+    # store.py's file-level-offset check) rather than only ever seeing the
+    # combined, already-mixed dataset.
+    for i, p in enumerate(parts):
+        p["source_file_index"] = i
+        # Per-row (not just per-batch) so a mixed upload - some files
+        # already have a "MagComp" column, some don't - stays traceable
+        # after everything is concatenated together.
+        p["used_precompensated_mag"] = p.attrs.get("mag_source_column") == "MagComp"
+
     combined = pd.concat(parts, ignore_index=True)
     combined = combined.sort_values("timestamp").reset_index(drop=True)
     n_before_dedup = len(combined)
@@ -437,4 +519,12 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
     combined.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     combined.attrs["n_duplicate_timestamps_removed"] = n_duplicate_timestamps_removed
     combined.attrs["source_formats"] = source_formats
+    # How many of the uploaded files already had a "MagComp" column (see
+    # _parse_generic) - surfaced so the user can tell, from the processing
+    # summary, whether an upload's own heading-effect compensation was
+    # actually used rather than silently falling back to the raw field.
+    combined.attrs["n_files_using_precompensated_mag"] = sum(
+        1 for p in parts if p.attrs.get("mag_source_column") == "MagComp"
+    )
+    combined.attrs["n_files_total"] = len(parts)
     return combined
