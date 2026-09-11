@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from . import paths
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
 from .chat import ChatError
@@ -842,6 +843,6 @@ def get_local_tile(layer_id: str, z: int, x: int, y: int):
 # dev (no dist/ built yet, frontend served by its own `vite` dev server
 # instead) this mount is simply skipped - the API-only behavior is
 # unchanged.
-_frontend_dist = pathlib.Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+_frontend_dist = paths.frontend_dist()
 if _frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

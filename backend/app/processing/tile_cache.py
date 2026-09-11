@@ -29,7 +29,9 @@ from pathlib import Path
 
 import requests
 
-CACHE_ROOT = Path(__file__).resolve().parent.parent.parent / ".data" / "tile_cache"
+from .. import paths
+
+CACHE_ROOT = paths.data_dir() / "tile_cache"
 
 TILE_SOURCES = {
     "osm": {
