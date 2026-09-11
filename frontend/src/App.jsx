@@ -3011,6 +3011,24 @@ export default function App() {
             )}
           </div>
         )}
+        {processSummary?.line_resolution?.available && (
+          // Whether the striping above is something processing can act on
+          // at all. Measured on the points, before gridding: once gridded,
+          // the gap between the lines has already been filled with a guess
+          // and the question cannot be asked any more.
+          <div
+            style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                     color: processSummary.line_resolution.unresolved_pct >= 50 ? "#b45309" : "#4a3d28",
+                     background: processSummary.line_resolution.unresolved_pct >= 50 ? "#fffbeb" : "#f7f2e6",
+                     border: `1px solid ${processSummary.line_resolution.unresolved_pct >= 50 ? "#fde68a" : "#e6dac0"}` }}
+            title="각 측선의 값을 양옆 두 측선의 평균과 비교합니다. 측선 간격이 자기장 변화를 따라잡고 있다면 가운데 측선은 양옆의 평균으로 거의 예측되고, 예측되지 않는 부분이 곧 '측선 사이에서는 측정된 적이 없는' 성분입니다. 격자는 그 부분을 보간으로 지어낼 수밖에 없고, 미분 계열 파생그리드에서 측선방향 줄무늬로 드러납니다. 측선방향 평활을 아무리 키워도 이 비율은 거의 줄지 않습니다 - 측선 사이의 정보는 애초에 없기 때문입니다."
+          >
+            <b>측선 간격 분해능</b> — 이웃 측선이 못 보는 성분{" "}
+            {processSummary.line_resolution.unresolved_pct}% (측선 간격{" "}
+            {processSummary.line_resolution.line_spacing_m}m, 비교 {processSummary.line_resolution.n_triples}쌍) ⓘ
+            <div style={{ marginTop: 3 }}>{processSummary.line_resolution.verdict}</div>
+          </div>
+        )}
       </div>
     </div>
   );

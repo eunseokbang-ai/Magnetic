@@ -148,6 +148,7 @@ from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_z
 from .processing.contacts import detect_magnetic_contacts
 from .processing.continuation import continuation_report, source_continuation_fill
 from .processing.edge_margin import apply_margin, margin_mask, margin_outline
+from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
 from .processing.grid_diagnostics import diagnose_striping
 from .processing.microlevel import apply_microleveling
@@ -352,6 +353,7 @@ class Project:
     heading_correction_applied: bool = False
     statistical_leveling: StatisticalLevelingResult | None = None
     striping_info: dict | None = None
+    line_resolution_info: dict | None = None
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
@@ -1031,6 +1033,24 @@ class Project:
         # correction below declines.
         self.striping_info = measure_striping(df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m)
 
+        # Whether the line spacing resolves this field at all. Measured on
+        # the points rather than the grid, because once gridded the
+        # question is unanswerable: the gridder has already filled the gaps
+        # between the lines with its own guess. See
+        # processing/line_resolution.py for why this is the number that
+        # explains line-parallel striping on the Haenam block, after six
+        # processing-side explanations were measured and ruled out.
+        try:
+            self.line_resolution_info = assess_line_resolution(
+                df.loc[active, "x"].to_numpy(),
+                df.loc[active, "y"].to_numpy(),
+                df.loc[active, "anomaly"].to_numpy(),
+                df.loc[active, "line_id"].to_numpy(),
+                self.dominant_azimuth_deg,
+            )
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail a run
+            self.line_resolution_info = {"available": False, "reason": f"측선 분해능 진단 실패: {exc}"}
+
         # Last of the three leveling steps, so it only has to explain what
         # the direction-based and tie-line corrections above could not.
         slp = params.statistical_leveling
@@ -1298,6 +1318,7 @@ class Project:
             "crossover_leveling": self.crossover_info,
             "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
             "striping": self.striping_info,
+            "line_resolution": self.line_resolution_info,
             "noise_qc": self.noise_qc_info,
             "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,
