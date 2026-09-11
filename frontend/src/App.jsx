@@ -137,6 +137,10 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_pre_apply: false,
   derivative_presmooth: true,
   derivative_presmooth_factor: 0.4,
+  // Off: a target sitting on the survey edge is real data, and hiding it
+  // without being asked would be worse than the streak it removes.
+  boundary_margin_mode: "off",
+  boundary_margin_m: null, // null = the gridding's own extrapolation radius
 };
 
 const DEFAULT_PARAMS = {
@@ -2943,6 +2947,28 @@ export default function App() {
               </>
             ) : (
               <>⚠ 측선직각 평활이 적용되지 않았습니다: {overlay.derivative_presmooth.reason}</>
+            )}
+          </div>
+        )}
+        {overlay?.boundary_margin && overlay.boundary_margin.mode !== "off" && (
+          // How much of the map the margin covers, and - just as important
+          // - that the streak it marks fades slowly, so being outside the
+          // margin is not a clean bill of health.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.boundary_margin.applied ? "#4a3d28" : "#b45309",
+                        background: overlay.boundary_margin.applied ? "#f7f2e6" : "#fffbeb",
+                        border: `1px solid ${overlay.boundary_margin.applied ? "#e6dac0" : "#fde68a"}` }}>
+            {overlay.boundary_margin.applied ? (
+              <>
+                <b>경계 여백 {overlay.boundary_margin.mode === "mask" ? "가림" : "표시"}</b> — 폭{" "}
+                {overlay.boundary_margin.margin_m}m ({overlay.boundary_margin.margin_cells}셀
+                {overlay.boundary_margin.from_extrapolation_radius ? ", 격자 외삽 거리 기준" : ""}), 그리드의{" "}
+                {overlay.boundary_margin.pct_of_grid}%
+                {overlay.boundary_margin.reason && <div style={{ marginTop: 3 }}>⚠ {overlay.boundary_margin.reason}</div>}
+                <div style={{ marginTop: 3, color: "#8a7a5c" }}>{overlay.boundary_margin.note}</div>
+              </>
+            ) : (
+              <>⚠ 경계 여백이 적용되지 않았습니다: {overlay.boundary_margin.reason}</>
             )}
           </div>
         )}

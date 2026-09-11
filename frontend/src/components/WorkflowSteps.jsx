@@ -1490,6 +1490,41 @@ export default function WorkflowSteps({
               />
             </Field>
           )}
+          <Field
+            label={
+              <span title="격자는 측선 위에서 잰 값을 측선 사이로 보간하지만, 탐사 경계 바깥쪽 가장자리는 보간이 아니라 '바깥으로 외삽'한 구간입니다. 파생그리드(AS/dXY 등)는 FFT 계산을 위해 자료가 없는 바깥을 반드시 무언가로 채워야 하는데, 경계에 걸친 강한 이상대가 있으면 그 채움값이 틀리는 만큼 격자 가로/세로 방향으로 줄무늬가 뻗어 나갑니다(합성자료: 탐사 한가운데 이상대는 0.000%, 경계에서 2셀 떨어진 같은 이상대는 0.757%). 채움 방식을 바꿔도(미러/조화연속 등) 줄지 않고, 경계를 테이퍼로 죽이면 실제 경계부 신호의 1/4을 잃습니다. 그래서 '보정'이 아니라 '어디까지가 못 믿을 구간인지 표시'하는 옵션입니다.">
+                경계 여백 (파생그리드 가장자리 줄무늬 구간) ⓘ
+              </span>
+            }
+          >
+            <select
+              style={inputStyle}
+              value={transformExtraParams.boundary_margin_mode}
+              onChange={(e) => setTransformExtraParams((p) => ({ ...p, boundary_margin_mode: e.target.value }))}
+            >
+              <option value="off">사용 안 함</option>
+              <option value="outline">경계선만 표시 (자료는 그대로)</option>
+              <option value="mask">여백 구간 가리기 (NaN 처리)</option>
+            </select>
+          </Field>
+          {transformExtraParams.boundary_margin_mode !== "off" && (
+            <Field label="여백 폭 (m) — 비워두면 격자 외삽 거리(측선 간격의 1.2배)를 씁니다">
+              <input
+                type="number"
+                step="1"
+                min="1"
+                style={inputStyle}
+                placeholder="자동"
+                value={transformExtraParams.boundary_margin_m ?? ""}
+                onChange={(e) =>
+                  setTransformExtraParams((p) => ({
+                    ...p,
+                    boundary_margin_m: e.target.value === "" ? null : parseFloat(e.target.value),
+                  }))
+                }
+              />
+            </Field>
+          )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input
               type="checkbox"

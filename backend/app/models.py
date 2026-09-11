@@ -420,6 +420,20 @@ class TransformRequest(HillshadeParams, ContourParams):
     # get cleaned up before a derivative-based transform amplifies it,
     # rather than only after. No-op when transform="microlevel" itself.
     microlevel_pre_apply: bool = False
+    # What to do about the band along the edge of the data, where every
+    # derived grid is partly measuring its own boundary rather than the
+    # ground: "off" (nothing), "outline" (draw the line where the margin
+    # ends, hide nothing) or "mask" (blank the band out). Off by default -
+    # a target sitting on the survey edge is real data and hiding it
+    # without being asked would be worse than the streak. See
+    # processing/edge_margin.py for why marking is the remedy and no
+    # filter is.
+    boundary_margin_mode: Literal["off", "outline", "mask"] = "off"
+    # Width of that band. None = the gridding's own extrapolation radius
+    # (max(2 cells, 1.2x line spacing)), i.e. exactly the strip whose
+    # values were extrapolated outward from the flight lines rather than
+    # interpolated between them.
+    boundary_margin_m: Optional[float] = Field(None, gt=0)
 
 
 class PolygonExportRequest(BaseModel):
