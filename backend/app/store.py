@@ -146,7 +146,12 @@ from .processing.depth_estimation import (
 from .processing.boundary import auto_survey_boundary
 from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from .processing.contacts import detect_magnetic_contacts
-from .processing.continuation import continuation_report, source_continuation_fill
+from .processing.continuation import (
+    continuation_report,
+    equivalent_source_field,
+    field_depth_cells,
+    source_continuation_fill,
+)
 from .processing.edge_margin import apply_margin, margin_mask, margin_outline
 from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
@@ -1972,6 +1977,7 @@ class Project:
             req.microlevel_pre_apply,
             req.derivative_presmooth,
             req.derivative_presmooth_factor,
+            getattr(req, "equivalent_source_factor", None),
         )
         cache_key = cache_key + (getattr(req, "boundary_continuation", True),)
         cached = _lru_get(self.transform_cache, cache_key)
@@ -2026,6 +2032,13 @@ class Project:
         # anomalies keeping 100.0% of their amplitude.
         if transform in _CONTINUATION_TRANSFORMS and getattr(req, "boundary_continuation", True):
             grid = replace(grid, values=source_continuation_fill(grid.values))
+        # Then, optionally, replace the field itself with what a source
+        # layer at depth predicts. This is the striping remedy that
+        # measured best on the real grid - see processing/continuation.py
+        # ::equivalent_source_field for the table it is chosen from.
+        depth = self._equivalent_source_depth(req, grid.cell_size_m)
+        if transform in _CONTINUATION_TRANSFORMS and depth is not None:
+            grid = replace(grid, values=equivalent_source_field(grid.values, depth)[0])
         # Derivative-based transforms amplify whatever the interpolator
         # invented between the flight lines; smoothing to the grid's real
         # across-line resolution first is what keeps them measuring the
@@ -2128,6 +2141,40 @@ class Project:
             filtered = np.where(np.isnan(filtered), filtered, np.maximum(filtered, 0.0))
         return filtered
 
+    def _equivalent_source_depth(self, req, cell_size_m: float) -> float | None:
+        """Depth in cells for the equivalent-source field, or None when the
+        option is off or the line spacing is unknown."""
+        factor = getattr(req, "equivalent_source_factor", None)
+        if not factor:
+            return None
+        return field_depth_cells(self.line_spacing_m, cell_size_m, factor)
+
+    def _equivalent_source_report(self, req, grid: GridResult) -> dict:
+        """Whether the grid was replaced by a fitted source layer's field,
+        how deep the layer sat, and how well it reproduces the readings.
+        The misfit is the number that makes this defensible to a client:
+        it says in nanotesla what the smoothing cost."""
+        factor = getattr(req, "equivalent_source_factor", None)
+        if req.transform not in _CONTINUATION_TRANSFORMS or not factor:
+            return {"applies": False}
+        depth = self._equivalent_source_depth(req, grid.cell_size_m)
+        if depth is None:
+            return {
+                "applies": True, "applied": False,
+                "reason": "측선 간격을 추정할 수 없어 등가층 깊이를 정할 수 없습니다 (측선이 2개 이상 필요).",
+            }
+        _field, misfit = equivalent_source_field(grid.values, depth)
+        measured = grid.values[np.isfinite(grid.values)]
+        return {
+            "applies": True, "applied": True,
+            "factor": factor,
+            "depth_m": round(depth * grid.cell_size_m, 1),
+            "depth_cells": round(depth, 1),
+            "misfit_nt": round(misfit, 2),
+            "field_std_nt": round(float(measured.std()), 1) if measured.size else None,
+            "misfit_pct": round(100.0 * misfit / float(measured.std()), 1) if measured.size and measured.std() else None,
+        }
+
     def _continuation_report(self, req, grid: GridResult) -> dict:
         """Whether the field outside the survey was continued with a fitted
         source layer, and how much ground that was. Reported because it can
@@ -2228,6 +2275,7 @@ class Project:
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
         overlay["boundary_continuation"] = self._continuation_report(req, grid)
+        overlay["equivalent_source"] = self._equivalent_source_report(req, grid)
         overlay["boundary_margin"] = margin_report
         overlay["transform"] = req.transform
         if req.show_contours:

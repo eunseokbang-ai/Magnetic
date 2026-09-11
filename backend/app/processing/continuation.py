@@ -105,14 +105,8 @@ def continuation_report(grid: np.ndarray) -> dict:
     }
 
 
-def source_continuation_fill(
-    grid: np.ndarray,
-    depth_cells: float = _DEPTH_CELLS,
-    damping: float = _DAMPING,
-    max_iter: int = _MAX_ITER,
-) -> np.ndarray:
-    """`grid` with its NaN cells filled by the field of a fitted source
-    layer. Measured cells come back bit-for-bit unchanged.
+def _fit_source_layer(grid: np.ndarray, depth_cells: float, damping: float, max_iter: int):
+    """Solve for the source layer that reproduces the measured cells.
 
     The normal equations are (K M K + damping) s = K M d, with K the
     continuation kernel exp(-|k| h) - diagonal in the wavenumber domain,
@@ -121,18 +115,12 @@ def source_continuation_fill(
     and gives a preconditioner that costs one multiply and halves the
     iteration count.
 
-    Note h is in cells, so the kernel is |k| * h * cell_size with |k| in
-    rad/m: the cell size cancels and this needs no cell size argument.
+    h is in cells, so the kernel is |k| * h * cell_size with |k| in rad/m:
+    the cell size cancels and none of this needs one.
+
+    Returns the field the fitted layer predicts over the padded domain,
+    together with the slice that cuts the original grid back out of it.
     """
-    if not continuation_report(grid)["applicable"]:
-        return grid
-
-    key = _key(grid, depth_cells, damping, max_iter)
-    hit = _CACHE.get(key)
-    if hit is not None:
-        _CACHE.move_to_end(key)
-        return hit.copy()
-
     mask = np.isfinite(grid)
     pad_n = max(1, int(grid.shape[0] * _PAD_FRACTION))
     pad_e = max(1, int(grid.shape[1] * _PAD_FRACTION))
@@ -187,9 +175,125 @@ def source_continuation_fill(
         rz = rz_next
 
     predicted = inv(fwd(sources) * kernel)[inner].astype(float) + offset
+    return predicted, mask
+
+
+def source_continuation_fill(
+    grid: np.ndarray,
+    depth_cells: float = _DEPTH_CELLS,
+    damping: float = _DAMPING,
+    max_iter: int = _MAX_ITER,
+) -> np.ndarray:
+    """`grid` with its NaN cells filled by the field of a fitted source
+    layer. Measured cells come back bit-for-bit unchanged.
+
+    The normal equations are (K M K + damping) s = K M d, with K the
+    continuation kernel exp(-|k| h) - diagonal in the wavenumber domain,
+    so every matrix-vector product is two real FFTs - and M the footprint.
+    Replacing M by its coverage fraction makes the whole operator diagonal
+    and gives a preconditioner that costs one multiply and halves the
+    iteration count.
+
+    Note h is in cells, so the kernel is |k| * h * cell_size with |k| in
+    rad/m: the cell size cancels and this needs no cell size argument.
+    """
+    if not continuation_report(grid)["applicable"]:
+        return grid
+
+    key = _key(grid, depth_cells, damping, max_iter)
+    hit = _CACHE.get(key)
+    if hit is not None:
+        _CACHE.move_to_end(key)
+        return hit.copy()
+
+    predicted, mask = _fit_source_layer(grid, depth_cells, damping, max_iter)
     filled = np.where(mask, grid, predicted)
 
     _CACHE[key] = filled.copy()
     while len(_CACHE) > _CACHE_MAX:
         _CACHE.popitem(last=False)
     return filled
+
+
+# Depth of the layer used to REPLACE the field, rather than only to fill
+# the gaps, expressed in line spacings. Measured on the Haenam west grid
+# against the striping the derived grids show, with "target" the
+# derivative amplitude kept at the strongest real anomalies:
+#
+#   preparation                    dXX stripe   target      dXY stripe  target
+#   none                              24.7%      100%          2.95%     100%
+#   across-line filter x1.5           12.4%       83%          1.37%      86%
+#   across-line filter x2.0            6.9%       72%          0.96%      75%
+#   across-line filter x2.5            4.7%       63%          0.80%      64%
+#   equivalent source 1.6x             3.7%       75%          0.93%      85%
+#   equivalent source 2.0x             0.5%       64%          0.46%      68%
+#
+# At equal amplitude retention the source layer leaves between two and
+# nine times less striping than the filter, because it removes what the
+# survey cannot resolve the way the ground would - no source distribution
+# can produce structure finer than its own depth - instead of cutting a
+# band out of the spectrum.
+#
+# That advantage is specific to broadband across-line aliasing, which is
+# what the real data carries. On a synthetic where the aliasing lands in a
+# narrow band around the line spacing - a sine at the spacing, or linear
+# interpolation between sampled lines - the band filter is aimed straight
+# at it and wins instead. So the table above is a measurement on the real
+# grid and is not reproduced by the unit tests, which pin the physical
+# properties (misfit, amplitude retention, depth ordering) rather than a
+# head-to-head that a synthetic cannot fairly stand in for. Decorrugation (the classic Minty micro-
+# levelling high-pass) was measured on the same grid and does nothing
+# here at all: dXX striping 24.7% -> 25.1%, because this is broadband
+# across-line aliasing rather than corrugation at one wavelength.
+_FIELD_DEPTH_SPACINGS = 1.6
+_FIELD_CACHE: OrderedDict[str, tuple[np.ndarray, float]] = OrderedDict()
+
+
+def equivalent_source_field(
+    grid: np.ndarray,
+    depth_cells: float,
+    damping: float = _DAMPING,
+    max_iter: int = _MAX_ITER,
+) -> tuple[np.ndarray, float]:
+    """The field a source layer at `depth_cells` predicts, everywhere.
+
+    Unlike source_continuation_fill, which keeps the measurements and only
+    writes the gaps, this replaces the grid with the layer's own field.
+    That is the point: a source distribution at depth h cannot produce
+    structure finer than about h, so the result is band-limited the way a
+    real field is - smoothly, isotropically, and without the ringing a
+    filter leaves - and what disappears is what the survey could not
+    resolve anyway.
+
+    Returns (field, rms misfit in nT at the measured cells). The misfit is
+    the honest check on the whole idea: on the Haenam grid the layer
+    reproduces the readings to 1.9 nT against a field standard deviation
+    of 43 nT, so 4% of the signal is the price of removing the striping.
+    """
+    report = continuation_report(grid)
+    if not report["applicable"] and int(np.isfinite(grid).sum()) < _MIN_VALID_CELLS:
+        return grid, float("nan")
+
+    key = _key(grid, -depth_cells, damping, max_iter)  # negative: a different question
+    hit = _FIELD_CACHE.get(key)
+    if hit is not None:
+        _FIELD_CACHE.move_to_end(key)
+        return hit[0].copy(), hit[1]
+
+    predicted, mask = _fit_source_layer(grid, depth_cells, damping, max_iter)
+    misfit = float(np.sqrt(np.mean((predicted[mask] - grid[mask]) ** 2))) if mask.any() else float("nan")
+
+    _FIELD_CACHE[key] = (predicted.copy(), misfit)
+    while len(_FIELD_CACHE) > _CACHE_MAX:
+        _FIELD_CACHE.popitem(last=False)
+    return predicted, misfit
+
+
+def field_depth_cells(line_spacing_m: float | None, cell_size_m: float, factor: float) -> float | None:
+    """Depth for equivalent_source_field, in cells, from a factor given in
+    line spacings. None when the line spacing is unknown - guessing a
+    depth from the cell size alone would smooth by an amount unrelated to
+    what the survey actually resolved."""
+    if not line_spacing_m or line_spacing_m <= 0 or cell_size_m <= 0 or factor <= 0:
+        return None
+    return factor * line_spacing_m / cell_size_m

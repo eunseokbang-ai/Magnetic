@@ -438,6 +438,18 @@ class TransformRequest(HillshadeParams, ContourParams):
     # 480k-cell grid), cached on the grid contents, so only the first
     # transform of a grid waits. See processing/continuation.py.
     boundary_continuation: bool = True
+    # Replace the grid with the field of an equivalent source layer at
+    # this depth, in line spacings, before computing the transform. None
+    # or 0 leaves the grid alone. This is the strongest tool here against
+    # line-parallel striping in the second derivatives, because a source
+    # distribution at depth h cannot produce structure finer than h, so
+    # what it removes is what the survey could not resolve - measured on
+    # the Haenam grid, dXX striping 24.7% -> 3.7% at 1.6 line spacings
+    # while the strongest anomalies keep 75% of their derivative
+    # amplitude, against 6.9% / 72% for the across-line filter tuned to
+    # match. 1.6 is the conservative setting, 2.0 the clean one. Needs a
+    # line-spacing estimate; declines visibly without one.
+    equivalent_source_factor: Optional[float] = Field(None, gt=0, le=4.0)
     boundary_margin_mode: Literal["off", "outline", "mask"] = "off"
     # Width of that band. None = the gridding's own extrapolation radius
     # (max(2 cells, 1.2x line spacing)), i.e. exactly the strip whose

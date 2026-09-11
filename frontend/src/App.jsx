@@ -138,6 +138,9 @@ const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   derivative_presmooth: true,
   derivative_presmooth_factor: 0.4,
   boundary_continuation: true,
+  // Off by default: it trades real amplitude for a cleaner picture, which
+  // is the user's call. 1.6 (line spacings) is the conservative setting.
+  equivalent_source_factor: null,
   // Off: a target sitting on the survey edge is real data, and hiding it
   // without being asked would be worse than the streak it removes.
   boundary_margin_mode: "off",
@@ -2966,6 +2969,30 @@ export default function App() {
               </>
             ) : (
               <>탐사 바깥 등가 소스층 연속: 적용 안 함 — {overlay.boundary_continuation.reason}</>
+            )}
+          </div>
+        )}
+        {overlay?.equivalent_source?.applies && (
+          // The misfit is the number that makes a smoothed deliverable
+          // defensible: it says in nanotesla what was given up.
+          <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, borderRadius: 6,
+                        color: overlay.equivalent_source.applied ? "#4a3d28" : "#b45309",
+                        background: overlay.equivalent_source.applied ? "#f7f2e6" : "#fffbeb",
+                        border: `1px solid ${overlay.equivalent_source.applied ? "#e6dac0" : "#fde68a"}` }}>
+            {overlay.equivalent_source.applied ? (
+              <>
+                <b>등가 소스층 적용</b> — 깊이 {overlay.equivalent_source.depth_m}m (측선 간격의{" "}
+                {overlay.equivalent_source.factor}배), 실측 재현 오차{" "}
+                <b>{overlay.equivalent_source.misfit_nt} nT</b>
+                {overlay.equivalent_source.field_std_nt != null && (
+                  <> (자기장 표준편차 {overlay.equivalent_source.field_std_nt} nT의 {overlay.equivalent_source.misfit_pct}%)</>
+                )}
+                <div style={{ marginTop: 3, color: "#8a7a5c" }}>
+                  이 수치가 "무엇을 얼마나 매끈하게 했는지"의 근거입니다 - 보고서에 그대로 쓰실 수 있습니다.
+                </div>
+              </>
+            ) : (
+              <>⚠ 등가 소스층이 적용되지 않았습니다: {overlay.equivalent_source.reason}</>
             )}
           </div>
         )}
