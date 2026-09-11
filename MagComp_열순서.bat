@@ -28,11 +28,23 @@ REM 표준 라이브러리만 쓰므로 venv 없이도 동작하지만, 있으�
 set "PYEXE=backend\venv\Scripts\python.exe"
 if not exist "!PYEXE!" set "PYEXE=python"
 
+REM 스크립트 위치: 저장소라면 tools\ 안에, 이 bat 만 따로 복사해 쓰는
+REM 경우라면 bat 과 같은 폴더에 둡니다. 둘 다 지원합니다.
+set "SCRIPT=tools\reorder_magcomp_column.py"
+if not exist "!SCRIPT!" set "SCRIPT=reorder_magcomp_column.py"
+if not exist "!SCRIPT!" (
+    echo [오류] reorder_magcomp_column.py 를 찾을 수 없습니다.
+    echo        이 bat 과 같은 폴더, 또는 tools\ 폴더 안에 두세요.
+    echo.
+    pause
+    exit /b 1
+)
+
 echo 대상 폴더: !TARGET!
 echo.
 echo 먼저 무엇이 바뀔지만 확인합니다 (파일을 쓰지 않습니다).
 echo ----------------------------------------------------------------
-"!PYEXE!" tools\reorder_magcomp_column.py "!TARGET!" --dry-run
+"!PYEXE!" "!SCRIPT!" "!TARGET!" --dry-run
 if errorlevel 1 (
     echo.
     echo [오류] 확인 단계에서 실패했습니다. 위 메시지를 보세요.
@@ -57,7 +69,7 @@ if /i not "!GO!"=="Y" (
 )
 
 echo.
-"!PYEXE!" tools\reorder_magcomp_column.py "!TARGET!"
+"!PYEXE!" "!SCRIPT!" "!TARGET!"
 if errorlevel 1 (
     echo.
     echo [오류] 저장에 실패했습니다. 위 메시지를 확인하세요.
@@ -65,6 +77,6 @@ if errorlevel 1 (
 
 echo.
 echo [참고] 다른 열 이름이라면 아래처럼 지정해 실행하세요:
-echo          !PYEXE! tools\reorder_magcomp_column.py "!TARGET!" --move MagComp --after MagLPF
+echo          !PYEXE! "!SCRIPT!" "!TARGET!" --move MagComp --after MagLPF
 echo.
 pause

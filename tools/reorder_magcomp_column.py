@@ -22,7 +22,8 @@ MagComp 열을 통째로 빼서 MagLPF 다음에 끼워 넣습니다. 그 사이
 
     python tools\\reorder_magcomp_column.py "D:\\HaeNam_Mag\\Magnetometer_old2_comp_mod"
 
-또는 저장소 폴더의 MagComp_열순서.bat 을 더블클릭하세요.
+또는 같은 위치의 MagComp_열순서.bat 을 더블클릭하세요.
+이 파일 하나만 있으면 동작합니다 (다른 파일을 가져다 쓰지 않습니다).
 바뀔 내용만 먼저 보려면 --dry-run 을 붙이세요.
 
 표준 라이브러리만 사용하므로 venv/pandas 없이도 실행됩니다.
@@ -35,15 +36,34 @@ import pathlib
 import sys
 from dataclasses import dataclass
 
-_HERE = pathlib.Path(__file__).resolve().parent
-sys.path.insert(0, str(_HERE))
-
-from fix_magcomp_column import split_raw_fields  # noqa: E402  (같은 따옴표 규칙을 공유)
-
 _DATA_SUFFIXES = {".csv", ".txt", ".dat"}
 _OUTPUT_TAG = "-r"
 _DELIM = ","
+# MagArrow 계열이 GGA/RMC 문장을 감쌀 때 쓰는 따옴표.
+_QUOTE = "'"
 _ENCODINGS = ("utf-8", "cp949")
+
+
+def split_raw_fields(line: str, delim: str = _DELIM, quote: str = _QUOTE) -> list[str]:
+    """따옴표 안의 구분자를 무시하고 한 줄을 칸으로 자릅니다. 잘라낸 조각은
+    따옴표까지 포함한 원본 문자열 그대로라, delim으로 다시 이어 붙이면
+    원래 줄이 글자 하나까지 똑같이 복원됩니다.
+
+    tools/fix_magcomp_column.py 에 같은 함수가 있지만 일부러 가져다 쓰지
+    않고 여기 다시 둡니다 - 이 파일 하나만 복사해 가도 그대로 돌아가야
+    하기 때문입니다. 두 곳을 고칠 일이 생기면 규칙(쉼표 구분, 작은따옴표)
+    이 바뀐 것이므로 어차피 양쪽을 같이 봐야 합니다."""
+    fields: list[str] = []
+    start = 0
+    in_quote = False
+    for i, ch in enumerate(line):
+        if ch == quote:
+            in_quote = not in_quote
+        elif ch == delim and not in_quote:
+            fields.append(line[start:i])
+            start = i + 1
+    fields.append(line[start:])
+    return fields
 
 
 def _split_line_ending(line: str) -> tuple[str, str]:
