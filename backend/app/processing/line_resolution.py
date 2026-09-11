@@ -23,14 +23,30 @@ eliminated on the raw 10 Hz files of five flights (about twelve lines):
     data carries 0.03-0.19 nT, next to 5-17 nT at 100-300 m
 
 What is left is the survey's own sampling. Comparing each line with the
-average of its two neighbours, 56% of a line's 40-600 m content is
-invisible to lines 51-77 m away - and smoothing along the line does not
+average of its two neighbours, 55% of a line's 40-600 m content is
+invisible to its neighbours - and smoothing along the line does not
 reduce that share (56% keeping wavelengths over 60 m, 48% keeping only
 those over 300 m). The field simply differs between the lines, at every
-wavelength, because the sources are shallow relative to the spacing: a
-survey at 60 m height sees ground sources with a horizontal scale of
-about 60 m, and the lines here are 51-77 m apart. That is roughly one
-sample per wavelength across-line, where faithful sampling needs two.
+wavelength, because the sources are shallow relative to the spacing:
+Spector-Grant on the along-line spectra puts them about 42 m from the
+sensor, so the field spreads over roughly that scale, and the lines are
+50 m apart. That is about one sample per wavelength across-line, where
+faithful sampling needs two.
+
+The flying itself is not at fault, and it is worth saying so because the
+opposite is easy to "measure" by accident: these lines hold their track
+to 2.6 m and sit 50.6 m apart with a p90/p10 spread of 1.1. An earlier
+pass at this analysis read the spacing as 51-77 m and the line keeping as
+72 m of wander, both of which were artifacts of measuring easting instead
+of the across-line coordinate - the lines fly at azimuth 1.5 degrees, so
+3.6 km of perfectly straight line moves 93 m east on its own. Anything
+that assesses line geometry has to rotate into line coordinates first,
+which is what this module does.
+
+The east block, five more flights over the far side of the same survey,
+came out at 46% unresolved against the west's 55%, with the same 50 m
+spacing and a source distance of 38 m - measurably better, and the
+difference matches which block looks cleaner on the map.
 
 So the striping is not an artifact to be removed - it is the part of the
 field that was never measured, appearing where the gridder had to invent
