@@ -1,82 +1,95 @@
 @echo off
-chcp 65001 >nul
-setlocal EnableDelayedExpansion
+setlocal
 cd /d "%~dp0"
 
+REM ÀÌ ÆÄÀÏÀº CP949(ÇÑ±¹¾î Windows ÄÜ¼Ö ±âº» ÀÎÄÚµù)·Î ÀúÀåµÇ¾î ÀÖ½À´Ï´Ù.
+REM UTF-8 ·Î ÀúÀåÇÏ°í chcp 65001 À» ¾²¸é, cmd °¡ ÄÚµåÆäÀÌÁö¸¦ ¹Ù²Û µÚ
+REM ÆÄÀÏÀ» Àß¸øµÈ ¹ÙÀÌÆ® À§Ä¡¿¡¼­ ÀÌ¾î ÀÐ¾î ¸í·ÉÀ» ÇÑ ÁÙ Áß°£¿¡¼­ Àß¶ó
+REM ¹ö¸³´Ï´Ù. ¸í·ÉÀÌ ¹ÝÅä¸· ³­ Ã¤ ½ÇÇàµÇ¾î, Àß¸° Á¶°¢¸¶´Ù ³»ºÎ ¶Ç´Â
+REM ¿ÜºÎ ¸í·ÉÀÌ ¾Æ´Ï¶ó´Â ¿À·ù°¡ ÁÙÁÙÀÌ ¶å´Ï´Ù.
+REM ÆíÁýÇÒ ¶§´Â ¹Ýµå½Ã ANSI/CP949 ·Î ÀúÀåÇÏ¼¼¿ä. UTF-8 ·Î ÀúÀåÇÏ¸é ±úÁý´Ï´Ù.
+
 echo ================================================
-echo   MagComp ì—´ìˆœì„œ - MagLPF ë°”ë¡œ ë’¤ë¡œ ì˜®ê¸°ê¸°
-echo   (Mag, MagLPF, MagComp ìˆœì„œê°€ ë˜ë„ë¡)
+echo   MagComp ¿­¼ø¼­ - MagLPF ¹Ù·Î µÚ·Î ¿Å±â±â
+echo   Mag, MagLPF, MagComp ¼ø¼­°¡ µÇµµ·Ï ¹Ù²ß´Ï´Ù
 echo ================================================
 echo.
 
-REM ëŒ€ìƒ í´ë”: ì´ ì°½ì— ë“œëž˜ê·¸í•´ ë„£ê±°ë‚˜ ì¸ìžë¡œ ì£¼ë©´ ê·¸ê²ƒì„, ì—†ìœ¼ë©´ ì•„ëž˜ ê¸°ë³¸ê°’.
+REM ´ë»ó Æú´õ: ÀÌ ¹èÄ¡ÆÄÀÏ¿¡ Æú´õ¸¦ µå·¡±×ÇØ ³õ°Å³ª ÀÎÀÚ·Î ÁÖ¸é ±×°ÍÀ»,
+REM ¾øÀ¸¸é ¾Æ·¡ ±âº»°ªÀ» ¾¹´Ï´Ù.
 set "TARGET=%~1"
-if "!TARGET!"=="" set "TARGET=D:\HaeNam_Mag\Magnetometer_old2_comp_mod"
+if "%TARGET%"=="" set "TARGET=D:\HaeNam_Mag\Magnetometer_old2_comp_mod"
+if not exist "%TARGET%" goto nofolder
 
-if not exist "!TARGET!" (
-    echo [ì˜¤ë¥˜] í´ë”ë¥¼ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤: !TARGET!
-    echo.
-    echo        ì´ ë°°ì¹˜íŒŒì¼ì— ìžë£Œ í´ë”ë¥¼ ë“œëž˜ê·¸í•´ì„œ ë†“ê±°ë‚˜,
-    echo        ëª…ë ¹ì°½ì—ì„œ ê²½ë¡œë¥¼ ì¸ìžë¡œ ì§€ì •í•´ ì‹¤í–‰í•˜ì„¸ìš”:
-    echo          MagComp_ì—´ìˆœì„œ.bat "D:\ë‹¤ë¥¸ê²½ë¡œ\Magnetometer"
-    echo.
-    pause
-    exit /b 1
-)
-
-REM í‘œì¤€ ë¼ì´ë¸ŒëŸ¬ë¦¬ë§Œ ì“°ë¯€ë¡œ venv ì—†ì´ë„ ë™ìž‘í•˜ì§€ë§Œ, ìžˆìœ¼ë©´ ê·¸ê±¸ ì”ë‹ˆë‹¤.
+REM Ç¥ÁØ ¶óÀÌºê·¯¸®¸¸ ¾²¹Ç·Î venv ¾øÀÌµµ µ¹¾Æ°¡Áö¸¸, ÀÖÀ¸¸é ±×°É ¾¹´Ï´Ù.
 set "PYEXE=backend\venv\Scripts\python.exe"
-if not exist "!PYEXE!" set "PYEXE=python"
+if not exist "%PYEXE%" set "PYEXE=python"
 
-REM ìŠ¤í¬ë¦½íŠ¸ ìœ„ì¹˜: ì €ìž¥ì†Œë¼ë©´ tools\ ì•ˆì—, ì´ bat ë§Œ ë”°ë¡œ ë³µì‚¬í•´ ì“°ëŠ”
-REM ê²½ìš°ë¼ë©´ bat ê³¼ ê°™ì€ í´ë”ì— ë‘¡ë‹ˆë‹¤. ë‘˜ ë‹¤ ì§€ì›í•©ë‹ˆë‹¤.
+REM ÀúÀå¼Ò ¾ÈÀÌ¶ó¸é tools\ ¿¡, ÀÌ bat ¸¸ µû·Î º¹»çÇØ ¾´´Ù¸é °°Àº Æú´õ¿¡.
 set "SCRIPT=tools\reorder_magcomp_column.py"
-if not exist "!SCRIPT!" set "SCRIPT=reorder_magcomp_column.py"
-if not exist "!SCRIPT!" (
-    echo [ì˜¤ë¥˜] reorder_magcomp_column.py ë¥¼ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.
-    echo        ì´ bat ê³¼ ê°™ì€ í´ë”, ë˜ëŠ” tools\ í´ë” ì•ˆì— ë‘ì„¸ìš”.
-    echo.
-    pause
-    exit /b 1
-)
+if not exist "%SCRIPT%" set "SCRIPT=reorder_magcomp_column.py"
+if not exist "%SCRIPT%" goto noscript
 
-echo ëŒ€ìƒ í´ë”: !TARGET!
+echo ´ë»ó Æú´õ: %TARGET%
 echo.
-echo ë¨¼ì € ë¬´ì—‡ì´ ë°”ë€”ì§€ë§Œ í™•ì¸í•©ë‹ˆë‹¤ (íŒŒì¼ì„ ì“°ì§€ ì•ŠìŠµë‹ˆë‹¤).
+echo ¸ÕÀú ¹«¾ùÀÌ ¹Ù²ðÁö¸¸ È®ÀÎÇÕ´Ï´Ù. ÆÄÀÏÀ» ¾²Áö ¾Ê½À´Ï´Ù.
 echo ----------------------------------------------------------------
-"!PYEXE!" "!SCRIPT!" "!TARGET!" --dry-run
-if errorlevel 1 (
-    echo.
-    echo [ì˜¤ë¥˜] í™•ì¸ ë‹¨ê³„ì—ì„œ ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤. ìœ„ ë©”ì‹œì§€ë¥¼ ë³´ì„¸ìš”.
-    echo.
-    pause
-    exit /b 1
-)
-
+"%PYEXE%" "%SCRIPT%" "%TARGET%" --dry-run
+if errorlevel 1 goto failpreview
 echo ----------------------------------------------------------------
 echo.
-echo ìœ„ ë‚´ìš©ëŒ€ë¡œ ì—´ ìˆœì„œë¥¼ ë°”ê¿” ì €ìž¥í• ê¹Œìš”?
-echo   ì›ë³¸ íŒŒì¼ì€ ê·¸ëŒ€ë¡œ ë‘ê³  "ì›ëž˜ì´ë¦„-r.csv" ë¡œ ìƒˆë¡œ ë§Œë“­ë‹ˆë‹¤.
+echo À§ ³»¿ë´ë·Î ¿­ ¼ø¼­¸¦ ¹Ù²ã ÀúÀåÇÒ±î¿ä?
+echo ¿øº» ÆÄÀÏÀº ±×´ë·Î µÎ°í "¿ø·¡ÀÌ¸§-r.csv" ·Î »õ·Î ¸¸µì´Ï´Ù.
 echo.
 set "GO="
-set /p "GO=ì§„í–‰í•˜ë ¤ë©´ Y ë¥¼ ëˆ„ë¥´ê³  Enter (ì·¨ì†ŒëŠ” ê·¸ëƒ¥ Enter): "
-if /i not "!GO!"=="Y" (
-    echo.
-    echo ì·¨ì†Œí–ˆìŠµë‹ˆë‹¤. íŒŒì¼ì„ í•˜ë‚˜ë„ ë°”ê¾¸ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤.
-    echo.
-    pause
-    exit /b 0
-)
+set /p "GO=ÁøÇàÇÏ·Á¸é Y ¸¦ ´©¸£°í Enter, Ãë¼Ò´Â ±×³É Enter: "
+if /i not "%GO%"=="Y" goto cancelled
 
 echo.
-"!PYEXE!" "!SCRIPT!" "!TARGET!"
-if errorlevel 1 (
-    echo.
-    echo [ì˜¤ë¥˜] ì €ìž¥ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤. ìœ„ ë©”ì‹œì§€ë¥¼ í™•ì¸í•˜ì„¸ìš”.
-)
+"%PYEXE%" "%SCRIPT%" "%TARGET%"
+if errorlevel 1 goto failwrite
 
 echo.
-echo [ì°¸ê³ ] ë‹¤ë¥¸ ì—´ ì´ë¦„ì´ë¼ë©´ ì•„ëž˜ì²˜ëŸ¼ ì§€ì •í•´ ì‹¤í–‰í•˜ì„¸ìš”:
-echo          !PYEXE! "!SCRIPT!" "!TARGET!" --move MagComp --after MagLPF
+echo [Âü°í] ´Ù¸¥ ¿­ ÀÌ¸§ÀÌ¶ó¸é ¾Æ·¡Ã³·³ ÁöÁ¤ÇØ ½ÇÇàÇÏ¼¼¿ä.
+echo        %PYEXE% "%SCRIPT%" "%TARGET%" --move MagComp --after MagLPF
 echo.
 pause
+exit /b 0
+
+:nofolder
+echo [¿À·ù] Æú´õ¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù: %TARGET%
+echo.
+echo        ÀÌ ¹èÄ¡ÆÄÀÏ¿¡ ÀÚ·á Æú´õ¸¦ µå·¡±×ÇØ¼­ ³õ°Å³ª,
+echo        ¸í·ÉÃ¢¿¡¼­ °æ·Î¸¦ ÀÎÀÚ·Î ÁöÁ¤ÇØ ½ÇÇàÇÏ¼¼¿ä:
+echo          MagComp_¿­¼ø¼­.bat "D:\´Ù¸¥°æ·Î\Magnetometer"
+echo.
+pause
+exit /b 1
+
+:noscript
+echo [¿À·ù] reorder_magcomp_column.py ¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù.
+echo        ÀÌ bat °ú °°Àº Æú´õ, ¶Ç´Â tools\ Æú´õ ¾È¿¡ µÎ¼¼¿ä.
+echo.
+pause
+exit /b 1
+
+:failpreview
+echo.
+echo [¿À·ù] È®ÀÎ ´Ü°è¿¡¼­ ½ÇÆÐÇß½À´Ï´Ù. À§ ¸Þ½ÃÁö¸¦ º¸¼¼¿ä.
+echo.
+pause
+exit /b 1
+
+:cancelled
+echo.
+echo Ãë¼ÒÇß½À´Ï´Ù. ÆÄÀÏÀ» ÇÏ³ªµµ ¹Ù²ÙÁö ¾Ê¾Ò½À´Ï´Ù.
+echo.
+pause
+exit /b 0
+
+:failwrite
+echo.
+echo [¿À·ù] ÀúÀå¿¡ ½ÇÆÐÇß½À´Ï´Ù. À§ ¸Þ½ÃÁö¸¦ È®ÀÎÇÏ¼¼¿ä.
+echo.
+pause
+exit /b 1

@@ -1,0 +1,10 @@
+# Windows batch files: keep the bytes exactly as committed.
+#
+# cmd.exe reads a .bat with the console codepage, which on Korean Windows
+# is CP949 - not UTF-8. Saving Korean text as UTF-8 and switching with
+# "chcp 65001" inside the file does not fix it: cmd changes codepage
+# mid-parse and then resumes reading at a byte offset that no longer lines
+# up, chopping commands in half. So the Korean-language .bat files here
+# are stored in CP949 with CRLF endings, and git must not "helpfully"
+# normalize either one.
+*.bat -text
