@@ -27,8 +27,18 @@ class LineParams(BaseModel):
     # most often a flight interrupted and resumed as a separate file -
     # see processing/lines.py::merge_continued_lines.
     merge_continued_lines: bool = True
+    merge_max_offset_m: float = Field(25.0, ge=0)
     merge_max_along_gap_m: float = Field(400.0, ge=0)
     merge_max_overlap_fraction: float = Field(0.35, ge=0, le=1)
+    # What to do with the stretch a resumed flight recorded twice - see
+    # processing/line_overlap.py. "auto" keeps whichever recording is
+    # quieter by the normalised 4th-difference metric; "keep_first" /
+    # "keep_second" decide it the same way for every line; "off" leaves
+    # both in, which lets gridding interleave them cell by cell.
+    overlap_resolution: Literal["auto", "keep_first", "keep_second", "off"] = "auto"
+    # Per-line override of the above, {line_id: "first"|"second"} - the
+    # operator's call after looking at the profile.
+    overlap_overrides: dict[str, str] = {}
 
 
 class DiurnalParams(BaseModel):

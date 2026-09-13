@@ -84,6 +84,7 @@ from .processing.inversion import path_slice_3d as _inversion_path_slice_3d
 from .processing.inversion import vertical_section as _inversion_vertical_section
 from .processing.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
 from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
+from .processing.line_overlap import resolve_line_overlaps
 from .processing.lines import (
     LineDetectionParams,
     detect_lines,
@@ -313,6 +314,7 @@ class Project:
     base_qc_info: dict | None = None
     base_leveling = None            # BaseLevelingResult when a base log was levelled
     base_leveling_info: dict | None = None
+    overlap_info: dict | None = None
     base_source: dict | None = None  # set when base_raw came from an INTERMAGNET observatory rather than a local upload
     # A parsed-but-not-yet-applied INTERMAGNET observatory fetch/upload -
     # see preview_intermagnet_text/fetch_intermagnet_preview and
@@ -657,7 +659,7 @@ class Project:
             raise ProjectError("베이스(일변화) 자료를 먼저 업로드하세요.")
         diurnal_params = self.last_params.diurnal_params if self.last_params else None
         line_params = (
-            LineDetectionParams(**self.last_params.line_params.model_dump()) if self.last_params else None
+            _detection_params(self.last_params.line_params) if self.last_params else None
         )
         result = analyze_repeatability(
             self.repeatability_raw,
@@ -819,10 +821,33 @@ class Project:
         if utm_epsg_override is None and params.korea_projection:
             utm_epsg_override = resolve_korea_projection_epsg(params.korea_projection, float(df["lon"].mean()))
 
-        line_params = LineDetectionParams(**params.line_params.model_dump())
+        overlap_resolution = params.line_params.overlap_resolution
+        overlap_overrides = params.line_params.overlap_overrides or {}
+        line_params = _detection_params(params.line_params)
         df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
+
+        # A line the flight was interrupted on carries a stretch recorded
+        # twice, because the drone backs up before resuming. Left in, the
+        # two recordings are interleaved cell by cell at gridding time -
+        # see processing/line_overlap.py.
+        if overlap_resolution != "off":
+            forced = {}
+            if overlap_resolution == "keep_first":
+                forced = {"__all__": "first"}
+            elif overlap_resolution == "keep_second":
+                forced = {"__all__": "second"}
+            resolved = resolve_line_overlaps(
+                df, "mag_filtered", self.dominant_azimuth_deg,
+                df["line_id"].to_numpy(), df["exclusion_reason"].to_numpy(),
+                overrides=_overlap_overrides_for(df, overlap_overrides, forced),
+            )
+            df["line_id"] = resolved.line_id
+            df["exclusion_reason"] = resolved.exclusion_reason
+            self.overlap_info = {"mode": overlap_resolution, "decisions": resolved.summary()}
+        else:
+            self.overlap_info = {"mode": "off", "decisions": []}
 
         if params.noise_qc.enabled:
             self.noise_qc_info = compute_difference_qc(df, "mag_filtered")
@@ -1326,6 +1351,7 @@ class Project:
             "anomaly_stats": _stats(df.loc[active, "anomaly"]),
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling, self.heading_correction_applied),
+            "line_overlaps": self.overlap_info,
             "display_boundary_polygon": self.display_boundary_polygon,
             "auto_boundary": self.auto_boundary_info,
         }
@@ -3881,6 +3907,32 @@ def _stats(series: pd.Series) -> dict:
         "mean": float(s.mean()),
         "std": float(s.std()),
     }
+
+
+def _detection_params(line_params) -> LineDetectionParams:
+    """LineDetectionParams from the request model, minus the settings that
+    belong to the step *after* detection (overlap resolution) - they travel
+    together in LineParams for the user's sake, not because detection wants
+    them."""
+    dump = dict(line_params.model_dump())
+    for key in ("overlap_resolution", "overlap_overrides"):
+        dump.pop(key, None)
+    return LineDetectionParams(**dump)
+
+
+def _overlap_overrides_for(df, per_line: dict, forced: dict) -> dict:
+    """Merge the global keep_first/keep_second choice with any per-line
+    overrides, the per-line ones winning."""
+    if "__all__" in forced:
+        out = {int(l): forced["__all__"] for l in df["line_id"].unique() if l >= 0}
+    else:
+        out = {}
+    for k, v in (per_line or {}).items():
+        try:
+            out[int(k)] = v
+        except (TypeError, ValueError):
+            continue
+    return out
 
 
 def _line_summaries(

@@ -195,8 +195,11 @@ const DEFAULT_PARAMS = {
     max_gap_seconds: 1.0,
     direction_method: "heading_histogram",
     merge_continued_lines: true,
+    merge_max_offset_m: 25.0,
     merge_max_along_gap_m: 400.0,
     merge_max_overlap_fraction: 0.35,
+    overlap_resolution: "auto",
+    overlap_overrides: {},
   },
   diurnal_params: {
     time_offset_seconds: 0.0,
@@ -2525,6 +2528,21 @@ export default function App() {
           onResetManual={handleResetManual}
           nManualIncluded={processSummary?.n_manual_included}
           nManualExcluded={processSummary?.n_manual_excluded}
+          overlapFor={(lineId) =>
+            (processSummary?.line_overlaps?.decisions || []).find((d) => d.line_id === lineId)
+          }
+          onToggleOverlap={(lineId, keep) => {
+            // Re-processing with this line's choice flipped; the rest keep
+            // whatever the automatic comparison decided.
+            setProcessParams((p) => ({
+              ...p,
+              line_params: {
+                ...p.line_params,
+                overlap_overrides: { ...(p.line_params.overlap_overrides || {}), [lineId]: keep },
+              },
+            }));
+            setError(null);
+          }}
           showPointsOverGrid={showPointsOverGrid}
           onToggleShowPointsOverGrid={setShowPointsOverGrid}
           showLineLabels={showLineLabels}

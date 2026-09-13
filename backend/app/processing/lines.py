@@ -127,6 +127,13 @@ class LineDetectionParams:
     # most often a flight interrupted and resumed as a separate file. See
     # merge_continued_lines.
     merge_continued_lines: bool = True
+    # Its own cross-track tolerance rather than sharing bridging's. Merging
+    # has further guards bridging does not - same travel direction, end to
+    # end along the line, little overlap - so it can afford to be less
+    # tight here, and needs to be: the real interrupted line on the 2026-08
+    # HaeNam block resumed 14.99 m off its own cross-track position, which
+    # against bridging's 15 m limit merged only by a hundredth of a metre.
+    merge_max_offset_m: float = 25.0
     merge_max_along_gap_m: float = 400.0
     merge_max_overlap_fraction: float = 0.35
 
@@ -208,7 +215,7 @@ def detect_lines(
     if params.merge_continued_lines:
         out["line_id"] = merge_continued_lines(
             out, out["line_id"].to_numpy(), dominant_azimuth,
-            max_offset_m=params.bridge_max_offset_m,
+            max_offset_m=params.merge_max_offset_m,
             max_along_gap_m=params.merge_max_along_gap_m,
             max_overlap_fraction=params.merge_max_overlap_fraction,
         )

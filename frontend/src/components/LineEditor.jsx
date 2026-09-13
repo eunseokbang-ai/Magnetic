@@ -3,6 +3,8 @@ import { useState } from "react";
 export default function LineEditor({
   lines,
   onToggleLines,
+  overlapFor,
+  onToggleOverlap,
   drawMode,
   drawAction,
   onSetDrawAction,
@@ -106,6 +108,32 @@ export default function LineEditor({
               {l.n_points}pt / {l.length_m.toFixed(0)}m
               {l.heading_shift_nt != null && ` / ${l.heading_shift_nt >= 0 ? "+" : ""}${l.heading_shift_nt.toFixed(1)}nT`}
             </span>
+            {overlapFor && overlapFor(l.line_id) && (
+              <span
+                title={(() => {
+                  const o = overlapFor(l.line_id);
+                  const nf = o.noise_first_nt, ns = o.noise_second_nt;
+                  return (
+                    `이 측선은 ${o.overlap_m.toFixed(0)}m가 두 번 기록됐습니다 (멈췄다 후진 후 재개). ` +
+                    `현재 ${o.kept === "first" ? "멈추기 전" : "재개 후"} 자료를 사용 중입니다` +
+                    (o.reason === "noise" ? " (자동: 잡음이 더 적은 쪽)" : o.reason === "override" ? " (수동 지정)" : "") +
+                    `. 잡음 비교 — 멈추기 전 ${nf != null ? nf.toFixed(3) : "?"}nT / 재개 후 ${ns != null ? ns.toFixed(3) : "?"}nT. ` +
+                    `클릭하면 반대쪽 자료로 바꿉니다.`
+                  );
+                })()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (onToggleOverlap) onToggleOverlap(l.line_id, overlapFor(l.line_id).kept === "first" ? "second" : "first");
+                }}
+                style={{
+                  padding: "0 5px", borderRadius: 3, fontSize: 10, cursor: onToggleOverlap ? "pointer" : "default",
+                  background: "#e0f2fe", color: "#075985", border: "1px solid #bae6fd",
+                }}
+              >
+                겹침 {overlapFor(l.line_id).kept === "first" ? "앞" : "뒤"} {overlapFor(l.line_id).overlap_m.toFixed(0)}m
+              </span>
+            )}
             {l.n_segments > 1 && (
               <span
                 title={
