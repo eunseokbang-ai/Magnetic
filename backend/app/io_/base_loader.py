@@ -163,6 +163,35 @@ def _load_hms_xyzf_format(text: str, filename: str | None) -> pd.DataFrame:
     return df
 
 
+# A total-field magnetometer anywhere on Earth reads roughly 22,000 to
+# 68,000 nT. Readings outside this are not measurements: observatory feeds
+# in particular pad missing minutes with a sentinel (99999 in the IAGA-style
+# 1 s files this app is given), and those pass every parser here as
+# perfectly ordinary numbers. Left in, the diurnal correction subtracts the
+# difference between the sentinel and the real field from every drone
+# sample - about 49,000 nT on the files that prompted this check, silently.
+_PLAUSIBLE_FIELD_MIN_NT = 15000.0
+_PLAUSIBLE_FIELD_MAX_NT = 75000.0
+
+
+def _drop_implausible(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove sentinel/garbage readings, and refuse a file that is all of
+    them rather than handing back something that looks usable."""
+    n_before = len(df)
+    ok = df["mag"].between(_PLAUSIBLE_FIELD_MIN_NT, _PLAUSIBLE_FIELD_MAX_NT)
+    out = df[ok].reset_index(drop=True)
+    n_dropped = n_before - len(out)
+    if out.empty:
+        raise BaseLoadError(
+            f"베이스 파일의 자력값이 전부 정상 범위를 벗어났습니다 "
+            f"({_PLAUSIBLE_FIELD_MIN_NT:,.0f}~{_PLAUSIBLE_FIELD_MAX_NT:,.0f}nT). "
+            f"관측소 자료의 결측 채움값(예: 99999)만 들어 있는 파일일 수 있습니다 - "
+            f"해당 날짜 자료를 다시 받아 확인하세요."
+        )
+    out.attrs["n_implausible_dropped"] = int(n_dropped)
+    return out
+
+
 def load_base_csv(path_or_buffer, filename: str | None = None) -> pd.DataFrame:
     """Parse a base station file (either supported format - see module
     docstring) into a normalized DataFrame with columns: timestamp, mag."""
@@ -179,12 +208,18 @@ def load_base_csv(path_or_buffer, filename: str | None = None) -> pd.DataFrame:
 
     header_lower = first_line.lower()
     if "timestamp" in header_lower and "mag" in header_lower:
-        return _load_timestamp_mag_csv_format(text)
-    if "," in first_line:
-        return _load_korean_ampm_format(text)
-    if _HMS_LINE_RE.match(first_line):
-        return _load_hms_xyzf_format(text, filename)
-    raise BaseLoadError("베이스 파일 형식을 인식할 수 없습니다.")
+        parsed = _load_timestamp_mag_csv_format(text)
+    elif "," in first_line:
+        parsed = _load_korean_ampm_format(text)
+    elif _HMS_LINE_RE.match(first_line):
+        parsed = _load_hms_xyzf_format(text, filename)
+    else:
+        raise BaseLoadError("베이스 파일 형식을 인식할 수 없습니다.")
+
+    attrs = dict(parsed.attrs)
+    parsed = _drop_implausible(parsed)
+    parsed.attrs.update({k: v for k, v in attrs.items() if k not in parsed.attrs})
+    return parsed
 
 
 def load_base_csvs(buffers: list, filenames: list | None = None) -> pd.DataFrame:

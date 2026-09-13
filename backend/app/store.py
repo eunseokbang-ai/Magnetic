@@ -898,19 +898,18 @@ class Project:
             # takes - it lands in the anomaly as a constant, whole-flight
             # offset, before any levelling step runs. See
             # processing/base_segments.py.
-            if bqc.level_segments:
-                self.base_leveling = level_base_segments(
-                    base_processed,
-                    gap_minutes=bqc.segment_gap_minutes,
-                    step_threshold_nt=bqc.segment_step_threshold_nt,
-                )
-                base_processed = self.base_leveling.base
-                self.base_leveling_info = self.base_leveling.summary()
-            else:
-                self.base_leveling = None
-                self.base_leveling_info = {"n_segments": 0, "segments": [],
-                                           "max_offset_nt": 0.0, "warnings": [],
-                                           "common_level_nt": None, "disabled": True}
+            # Always measured and reported; what actually gets levelled is
+            # bqc.segment_mode's call. See processing/base_segments.py for
+            # why a gap is not treated the same as a step.
+            self.base_leveling = level_base_segments(
+                base_processed,
+                mode=bqc.segment_mode,
+                gap_minutes=bqc.segment_gap_minutes,
+                step_threshold_nt=bqc.segment_step_threshold_nt,
+                gap_suspicious_nt=bqc.segment_gap_suspicious_nt,
+            )
+            base_processed = self.base_leveling.base
+            self.base_leveling_info = self.base_leveling.summary()
             self.base_processed = base_processed
             self.base_qc_info = {
                 "n_points_raw": len(self.base_raw),

@@ -172,6 +172,10 @@ const DEFAULT_PARAMS = {
     despike_enabled: true,
     despike_window_size: 11,
     despike_threshold_k: 5.0,
+    segment_mode: "steps",
+    segment_gap_minutes: 10.0,
+    segment_step_threshold_nt: 20.0,
+    segment_gap_suspicious_nt: 30.0,
   },
   sway_detection: {
     enabled: false,

@@ -51,17 +51,31 @@ class BaseQCParams(BaseModel):
     despike_enabled: bool = True
     despike_window_size: int = Field(11, ge=3, le=101)
     despike_threshold_k: float = Field(5.0, gt=0)
-    # Levels the base log's separate deployments onto one common level
-    # before it is used as a diurnal reference - see
-    # processing/base_segments.py. On by default: with a base that never
-    # moved it finds one segment and changes nothing, while a base that was
-    # moved otherwise puts its whole level difference into the anomaly as a
-    # constant per-flight offset (measured on a two-day synthetic with the
-    # base moved 200 nT: a -200.00 nT step between the days, in data with
-    # no anomaly in it at all).
-    level_segments: bool = True
+    # What to do about a base log whose deployments sit at different
+    # levels - see processing/base_segments.py, which has the measurements.
+    #
+    # "steps" (default) levels only discontinuities inside continuous
+    # logging. Diurnal variation moves at 0.1-2 nT per minute, so tens of
+    # nT between consecutive samples is the instrument's surroundings
+    # changing, never the field.
+    #
+    # "off" measures and reports but changes nothing.
+    #
+    # "all" additionally levels across gaps in logging - for a base the
+    # operator knows was moved between days. Not the default, because the
+    # level difference across an overnight gap is normally the real
+    # day-to-day field change, which the base exists to capture and pass
+    # on to the drone data: ten days of Cheongyang observatory 1 s data, a
+    # station that never moves, differ between consecutive days by a
+    # median of 5.1 nT and at most 22.0 nT. Levelling that away would
+    # remove real signal; leaving a 200 nT relocation in place would put a
+    # constant per-flight offset into the anomaly. Only the operator knows
+    # which happened, so a gap difference beyond a fixed station's own
+    # range is flagged for them rather than decided here.
+    segment_mode: Literal["off", "steps", "all"] = "steps"
     segment_gap_minutes: float = Field(10.0, gt=0)
     segment_step_threshold_nt: float = Field(20.0, gt=0)
+    segment_gap_suspicious_nt: float = Field(30.0, gt=0)
 
 
 class HeadingCorrectionParams(BaseModel):

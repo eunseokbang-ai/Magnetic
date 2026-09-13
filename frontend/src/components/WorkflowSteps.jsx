@@ -437,6 +437,27 @@ export default function WorkflowSteps({
                 />
                 <span>중간 구간 스파이크 제거 사용</span>
               </label>
+
+              <Field label="기준국 구간 레벨 보정 — 기준국을 옮겼는지 여부에 따라 다르게 처리합니다">
+                <select
+                  style={inputStyle}
+                  value={processParams.base_qc_params.segment_mode}
+                  onChange={(e) =>
+                    setProcessParams((p) => ({
+                      ...p,
+                      base_qc_params: { ...p.base_qc_params, segment_mode: e.target.value },
+                    }))
+                  }
+                >
+                  <option value="steps">기록 중간 불연속만 보정 (기본, 기준국 고정)</option>
+                  <option value="all">기준국을 옮김 — 기록이 끊긴 구간도 레벨 맞춤</option>
+                  <option value="off">보정 안 함 (측정·표시만)</option>
+                </select>
+              </Field>
+              <div style={{ fontSize: 11, color: "#7b6f5a", marginTop: -4, marginBottom: 6 }}>
+                위치가 고정된 기준국의 날짜 간 레벨 차이(보통 20nT 이내)는 실제 지자기 변화라
+                드론 자료에 전달되어야 합니다. 기준국을 옮겨 생긴 단차(수십~수백 nT)만 제거 대상입니다.
+              </div>
               {processParams.base_qc_params.despike_enabled && (
                 <Field label="스파이크 민감도 (임계값 배수 - 낮을수록 더 많이 제거)">
                   <input

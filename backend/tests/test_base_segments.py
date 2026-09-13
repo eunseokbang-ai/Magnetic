@@ -35,12 +35,40 @@ def test_a_stationary_base_is_left_alone():
     np.testing.assert_allclose(result.base["mag"].to_numpy(), base["mag"].to_numpy())
 
 
-def test_a_move_marked_by_a_logging_gap_is_found_and_levelled():
+def test_a_gap_is_reported_but_not_levelled_by_default():
+    """The level difference across an overnight gap is normally the real
+    day-to-day field change - the thing the base was deployed to capture -
+    so it is flagged for the operator, not quietly removed."""
+    b1, _, _ = _base_day("2026-09-02", 50500.0, 30.0)
+    b2, _, _ = _base_day("2026-09-03", 50700.0, 25.0)
+    base = pd.concat([b1, b2], ignore_index=True)
+
+    result = level_base_segments(base)   # mode="steps"
+
+    assert result.n_segments == 2
+    assert result.segments[1].split_reason == "gap"
+    assert result.max_offset_nt == 0.0
+    np.testing.assert_allclose(result.base["mag"].to_numpy(), base["mag"].to_numpy())
+    assert any("옮겼을 가능성" in w for w in result.warnings)
+
+
+def test_a_small_day_to_day_difference_is_not_even_flagged():
+    """A fixed station moves 5-20 nT between days; that must not look like
+    a relocation."""
+    b1, _, _ = _base_day("2026-09-02", 50500.0, 30.0)
+    b2, _, _ = _base_day("2026-09-03", 50508.0, 25.0)
+    result = level_base_segments(pd.concat([b1, b2], ignore_index=True))
+
+    assert result.max_offset_nt == 0.0
+    assert not any("옮겼을 가능성" in w for w in result.warnings)
+
+
+def test_a_move_across_a_gap_is_levelled_when_the_operator_says_so():
     b1, _, _ = _base_day("2026-09-02", 50500.0, 30.0)
     b2, _, _ = _base_day("2026-09-03", 50700.0, 25.0)  # 200 nT away
     base = pd.concat([b1, b2], ignore_index=True)
 
-    result = level_base_segments(base)
+    result = level_base_segments(base, mode="all")
 
     assert result.n_segments == 2
     assert result.segments[1].split_reason == "gap"
@@ -51,7 +79,6 @@ def test_a_move_marked_by_a_logging_gap_is_found_and_levelled():
     gap = abs(levelled.loc[day == "2026-09-02", "mag"].median()
               - levelled.loc[day == "2026-09-03", "mag"].median())
     assert gap < 10.0
-    assert any("옮긴 것으로 보입니다" in w for w in result.warnings)
 
 
 def test_a_move_with_no_gap_in_logging_is_caught_as_a_step():
@@ -108,10 +135,38 @@ def test_levelling_removes_the_whole_day_offset_the_move_would_have_caused():
                    - out.corrected[day == "2026-09-02"].mean())
 
     before = day_step(base)
-    after = day_step(level_base_segments(base).base)
+    after = day_step(level_base_segments(base, mode="all").base)
 
     assert before > 150.0        # the move lands in the data nearly in full
     assert after < 1.0           # and is gone once the base is levelled
+
+
+def test_a_step_inside_continuous_logging_is_levelled_by_default():
+    """Nothing in the field jumps between consecutive samples, so this one
+    needs no permission."""
+    t = pd.date_range("2026-09-02 09:00", "2026-09-02 13:00", freq="1s")
+    mag = 50500.0 + 20.0 * np.sin(np.linspace(0, np.pi, len(t)))
+    mag[len(t) // 2:] += 150.0
+    base = pd.DataFrame({"timestamp": t, "mag": mag})
+
+    result = level_base_segments(base)   # default mode
+
+    assert result.n_segments == 2
+    assert result.segments[1].levelled
+    levelled = result.base["mag"].to_numpy()
+    assert abs(np.median(levelled[len(t) // 2:]) - np.median(levelled[:len(t) // 2])) < 25.0
+
+
+def test_mode_off_measures_without_changing_anything():
+    t = pd.date_range("2026-09-02 09:00", "2026-09-02 13:00", freq="1s")
+    mag = 50500.0 + np.zeros(len(t)); mag[len(t) // 2:] += 150.0
+    base = pd.DataFrame({"timestamp": t, "mag": mag})
+
+    result = level_base_segments(base, mode="off")
+
+    assert result.n_segments == 2
+    assert result.max_offset_nt == 0.0
+    np.testing.assert_allclose(result.base["mag"].to_numpy(), mag)
 
 
 def test_segments_are_reported_even_when_there_is_only_one():
