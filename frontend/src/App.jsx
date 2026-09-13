@@ -177,11 +177,6 @@ const DEFAULT_PARAMS = {
     enabled: false,
     threshold_k: 4.0,
   },
-  duplicate_line_params: {
-    enabled: false,
-    perp_tolerance_m: 8.0,
-    angle_tolerance_deg: 15.0,
-  },
   heading_effect_calibration: {
     enabled: false,
     auto_calibrate_from_turns: true,
@@ -203,7 +198,7 @@ const DEFAULT_PARAMS = {
   heading_correction: {
     // On by default - see the matching comment in backend/app/models.py
     // HeadingCorrectionParams for the measured evidence (M350 HaeNam block).
-    enabled: true,
+    enabled: false,
     quiet_percentile: 40.0,
     max_match_distance_m: null,
     method: "local_plane",

@@ -63,7 +63,7 @@ def normalized_4th_difference_rms(values: np.ndarray) -> float:
     """Public entry point to _nth_difference_rms's noise-level estimate
     (see module docstring) for callers that just need a single line's own
     quality number rather than the full per-line/overall QC report below -
-    e.g. processing/duplicate_lines.py, comparing two repeat-flown passes
+    e.g. processing/repeatability.py, comparing repeat-flown passes
     over the same track to decide which is the better-quality one to keep."""
     rms, _max_abs = _nth_difference_rms(values, 4)
     return rms

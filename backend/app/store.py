@@ -45,6 +45,7 @@ from .models import (
     TransformRequest,
 )
 from .processing.base_qc import process_base_station
+from .processing.base_segments import level_base_segments
 from .processing.manual_smooth import apply_manual_smoothing
 from .processing.intermagnet import (
     DEFAULT_MAX_STATION_DISTANCE_KM,
@@ -108,7 +109,6 @@ from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
 from .processing.qc_certificate import evaluate_qc_certificate
 from .processing.report import generate_report_markdown
 from .processing.sway import detect_sway
-from .processing.duplicate_lines import resolve_duplicate_lines
 from .processing.render import (
     grid_to_geotiff_bytes,
     grid_to_geotiff_bytes_colored,
@@ -311,6 +311,8 @@ class Project:
     base_raw: pd.DataFrame | None = None
     base_processed: pd.DataFrame | None = None  # base_raw after trim+despike QC (base_qc.py) - see run_pipeline
     base_qc_info: dict | None = None
+    base_leveling = None            # BaseLevelingResult when a base log was levelled
+    base_leveling_info: dict | None = None
     base_source: dict | None = None  # set when base_raw came from an INTERMAGNET observatory rather than a local upload
     # A parsed-but-not-yet-applied INTERMAGNET observatory fetch/upload -
     # see preview_intermagnet_text/fetch_intermagnet_preview and
@@ -364,7 +366,6 @@ class Project:
     diurnal_info: dict | None = None
     despike_info: dict | None = None
     sway_info: dict | None = None
-    duplicate_line_info: dict | None = None
     calibration_raw: pd.DataFrame | None = None
     heading_calibration_info: dict | None = None
     crossover_info: dict | None = None
@@ -848,32 +849,6 @@ class Project:
         else:
             self.sway_info = {"enabled": False, "available": False, "n_points_excluded": 0}
 
-        dlp = params.duplicate_line_params
-        if dlp.enabled:
-            # Run on "mag_filtered" (matches noise_qc.py's own QC channel -
-            # right after flight-path cleaning, before diurnal/IGRF/leveling,
-            # so which base-station diurnal reference is used can't bias the
-            # quality comparison) and after sway detection (an already-
-            # excluded swinging sample shouldn't count toward either pass's
-            # overlap or quality). Before line_spacing_m below, so a
-            # duplicate pass about to be excluded doesn't skew that
-            # project-wide spacing estimate.
-            self.duplicate_line_info = resolve_duplicate_lines(
-                df, "mag_filtered", perp_tolerance_m=dlp.perp_tolerance_m, angle_tolerance_deg=dlp.angle_tolerance_deg
-            )
-            self.duplicate_line_info["enabled"] = True
-            # Point ids are only needed to apply the exclusion below - kept
-            # out of the stored summary (process_summary/report) so it isn't
-            # carrying a potentially large raw id list around.
-            excluded_ids = set(self.duplicate_line_info.pop("excluded_point_ids"))
-            if excluded_ids:
-                flagged_active = df["point_id"].isin(excluded_ids).to_numpy() & (df["line_id"].to_numpy() >= 0)
-                df.loc[flagged_active, "exclusion_reason"] = "duplicate_repeat_flight"
-                df.loc[flagged_active, "line_id"] = -1
-                self.duplicate_line_info["n_points_excluded"] = int(flagged_active.sum())
-        else:
-            self.duplicate_line_info = {"enabled": False, "available": False, "n_groups": 0, "n_points_excluded": 0, "groups": []}
-
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
         if params.diurnal_params.mode == "assume_constant":
@@ -890,6 +865,8 @@ class Project:
             # value (the correction term collapses to zero everywhere).
             self.base_processed = None
             self.base_qc_info = None
+            self.base_leveling = None
+            self.base_leveling_info = None
             df["mag_diurnal_corrected"] = df["mag_filtered"]
             self.diurnal_info = {
                 "mode": "assume_constant",
@@ -913,7 +890,28 @@ class Project:
                 despike_window_size=bqc.despike_window_size,
                 despike_threshold_k=bqc.despike_threshold_k,
             )
-            self.base_processed = base_qc_result.corrected
+            base_processed = base_qc_result.corrected
+            # Level the base's own deployments onto one common level before
+            # it is used as a diurnal reference. A base that was moved reads
+            # a different absolute field at each spot, and that step does not
+            # cancel against the single survey-wide reference the correction
+            # takes - it lands in the anomaly as a constant, whole-flight
+            # offset, before any levelling step runs. See
+            # processing/base_segments.py.
+            if bqc.level_segments:
+                self.base_leveling = level_base_segments(
+                    base_processed,
+                    gap_minutes=bqc.segment_gap_minutes,
+                    step_threshold_nt=bqc.segment_step_threshold_nt,
+                )
+                base_processed = self.base_leveling.base
+                self.base_leveling_info = self.base_leveling.summary()
+            else:
+                self.base_leveling = None
+                self.base_leveling_info = {"n_segments": 0, "segments": [],
+                                           "max_offset_nt": 0.0, "warnings": [],
+                                           "common_level_nt": None, "disabled": True}
+            self.base_processed = base_processed
             self.base_qc_info = {
                 "n_points_raw": len(self.base_raw),
                 "n_points_corrected": len(base_qc_result.corrected),
@@ -1316,7 +1314,6 @@ class Project:
             "base_qc": self.base_qc_info,
             "despike": self.despike_info,
             "sway_detection": self.sway_info,
-            "duplicate_line_resolution": self.duplicate_line_info,
             "heading_effect_calibration": self.heading_calibration_info,
             "gps_mag_lag": self.gps_lag_info,
             "heading_correction": _heading_correction_summary(self.heading_leveling, self.heading_correction_applied),

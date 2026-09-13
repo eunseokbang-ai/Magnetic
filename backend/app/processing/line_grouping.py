@@ -1,9 +1,9 @@
 """Groups flight lines that follow the same physical ground track,
 regardless of which direction they were flown - the shared primitive
 behind both processing/repeatability.py (a dedicated repeatability-test
-flight, analysed for system noise) and processing/duplicate_lines.py (the
-main survey, checked for accidentally/deliberately re-flown lines so the
-better-quality pass can be kept and the other excluded).
+flight, analysed for system noise). It was also the primitive behind an
+automatic duplicate-line resolver, removed in favour of editing repeat
+passes out during line editing, where the choice is visible.
 
 Each line's principal spatial axis is found via PCA and canonicalized to a
 consistent sign convention, so two passes over the same track land on the

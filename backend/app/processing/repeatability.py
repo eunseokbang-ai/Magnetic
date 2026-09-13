@@ -35,9 +35,8 @@ from .lines import LineDetectionParams, detect_lines
 # centroids, projected onto the perpendicular of their shared direction,
 # are closer than this - deliberately generous since a repeatability test
 # box is flown by hand/autopilot with some line-to-line drift, not a
-# precision survey. (Contrast processing/duplicate_lines.py's much tighter
-# default, for the main survey's own accidental/deliberate re-flown lines
-# rather than a dedicated test box.)
+# precision survey, so passes over one test box drift further apart than
+# two survey lines ever should.)
 _SAME_TRACK_PERP_TOLERANCE_M = 10.0
 _SAME_TRACK_ANGLE_TOLERANCE_DEG = 15.0
 

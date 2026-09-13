@@ -51,33 +51,61 @@ class BaseQCParams(BaseModel):
     despike_enabled: bool = True
     despike_window_size: int = Field(11, ge=3, le=101)
     despike_threshold_k: float = Field(5.0, gt=0)
+    # Levels the base log's separate deployments onto one common level
+    # before it is used as a diurnal reference - see
+    # processing/base_segments.py. On by default: with a base that never
+    # moved it finds one segment and changes nothing, while a base that was
+    # moved otherwise puts its whole level difference into the anomaly as a
+    # constant per-flight offset (measured on a two-day synthetic with the
+    # base moved 200 nT: a -200.00 nT step between the days, in data with
+    # no anomaly in it at all).
+    level_segments: bool = True
+    segment_gap_minutes: float = Field(10.0, gt=0)
+    segment_step_threshold_nt: float = Field(20.0, gt=0)
 
 
 class HeadingCorrectionParams(BaseModel):
-    # On by default (as of the 2026-09 HaeNam M350 survey): this platform's
-    # opposite-heading lines fly at markedly different pitch (theta ~63 deg
-    # vs ~19 deg near the survey's dominant azimuth, vs. ~47/31 deg on the
-    # older M400 rig - see MagArrow-heading-error-calibration's Phase M/N
-    # investigation), which the sensor's heading effect turns into a real,
-    # well-constrained forward/reverse offset. Measured on the 42-file M350
-    # HaeNam block (89 lines): with statistical_leveling already applied,
-    # turning this on as well nearly halves the residual stripe ratio
-    # (1.75% -> 0.90%; jitter 2.27 -> 1.16 nT), and the fitted offset
-    # (5.58 nT) is well above its own spread (2.22 nT), so it does not
-    # trigger the "unreliable" warning below.
+    """One forward/reverse offset shared by the whole survey, estimated
+    from its own opposite-heading lines. Always measured; applied only on
+    request - see `enabled`."""
+
+    # Off by default. The measurement is worth having on every survey; the
+    # correction has turned out not to be, for data that reached this app
+    # already heading-compensated - which is the normal route in, since
+    # both the vendor tool and the companion MagArrow calibration tool
+    # write their compensated field to a MagComp column that io_/
+    # drone_loader.py prefers automatically.
     #
-    # On the 32-file M400 block from the same site the estimate *does*
-    # trigger that warning (offset 1.26 nT < spread 3.03 nT) - store.py's
-    # pipeline now actually skips applying the correction in that case
-    # (see `_heading_correction_should_apply`), rather than only showing a
-    # warning while still writing the shift. Before that gate existed,
-    # applying an unreliable estimate anyway barely moved the *aggregate*
-    # stripe_ratio metric (0.95% either way) but visibly added wrinkles to
-    # the M400 grid - a user caught this by eye, which the metric alone
-    # did not. So: leaving this enabled is intended to be safe by design
-    # (self-declining, like statistical_leveling), but the self-declining
-    # part has to actually withhold the correction, not just warn about it.
-    enabled: bool = True
+    # Measured on the 42-file HaeNam M350 block, gridded and levelled the
+    # way the app now does it by default (final stripe ratio of the
+    # processed anomaly, not the pre-levelling diagnostic):
+    #
+    #     neither correction            3.32%   jitter 4.047 nT
+    #     this one alone                3.32%   jitter 4.047 nT
+    #     statistical levelling alone   1.00%   jitter 1.208 nT
+    #     both                          1.00%   jitter 1.208 nT
+    #
+    # It contributes nothing there because it correctly declines: the
+    # residual offset is 0.85 nT against a 1.70 nT spread between
+    # neighbourhoods, i.e. below its own noise floor. The heading effect
+    # had already been removed upstream - on that block the per-sample
+    # dB(theta, phi) compensation took about 84% of the raw forward/reverse
+    # bias out (5.4 -> 0.9 nT), and what is left is not a survey-wide
+    # constant any more.
+    #
+    # On genuinely uncompensated data it does still earn its place (raw
+    # Mag on the same block: 1.75% -> 0.90% with statistical levelling
+    # already applied), so it stays available rather than being removed.
+    # But it is opt-in: a user on this app's normal path was shown visible
+    # wrinkles by it before the reliability gate existed, and a correction
+    # that usually has nothing to do should not be the default.
+    #
+    # The right place to improve the heading effect is upstream anyway. A
+    # single global forward/reverse step is a weak model of something that
+    # actually varies with the platform's attitude sample by sample, which
+    # is what a calibration-flight-based dB(theta, phi) compensation fits
+    # directly.
+    enabled: bool = False
     quiet_percentile: float = Field(40.0, ge=1, le=100)
     max_match_distance_m: Optional[float] = None
     # "local_plane" (default) fits a local plane plus a forward/reverse
@@ -186,27 +214,6 @@ class NoiseQcParams(BaseModel):
     enabled: bool = True
 
 
-class DuplicateLineParams(BaseModel):
-    # Detects lines re-flown over (almost exactly) the same physical track
-    # within the main survey itself - e.g. a reflight after a bad first
-    # pass, or an accidental repeat - and keeps only the better-quality
-    # pass (by the same normalised 4th-difference noise metric as
-    # noise_qc.py) over the overlapping stretch, excluding the worse one's
-    # points there instead of letting gridding blend or arbitrarily pick
-    # between a good pass and a noisy one. See processing/duplicate_lines.py.
-    # Off by default - most surveys have no repeat-flown lines, and the
-    # detection is deliberately tight (must be near-exactly the same track,
-    # not just the next line over) but still a judgment call worth opting
-    # into rather than applying silently.
-    enabled: bool = False
-    # How close (perpendicular to the shared track direction) two lines'
-    # centroids must be to count as the same physical track, not just
-    # adjacent survey lines - see processing/duplicate_lines.py's module
-    # docstring for why this is much tighter than repeatability.py's.
-    perp_tolerance_m: float = Field(8.0, gt=0)
-    angle_tolerance_deg: float = Field(15.0, gt=0, le=45)
-
-
 class CrossoverLevelingParams(BaseModel):
     # Off by default - tie lines aren't always flown, and this only does
     # anything useful when perpendicular calibration lines are present in
@@ -269,7 +276,6 @@ class ProcessParams(BaseModel):
     base_qc_params: BaseQCParams = BaseQCParams()
     sway_detection: SwayDetectionParams = SwayDetectionParams()
     heading_effect_calibration: HeadingEffectCalibrationParams = HeadingEffectCalibrationParams()
-    duplicate_line_params: DuplicateLineParams = DuplicateLineParams()
     line_params: LineParams = LineParams()
     diurnal_params: DiurnalParams = DiurnalParams()
     heading_correction: HeadingCorrectionParams = HeadingCorrectionParams()
