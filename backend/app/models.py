@@ -8,9 +8,11 @@ from pydantic import BaseModel, Field
 class LineParams(BaseModel):
     heading_lag_seconds: float = 1.0
     heading_tolerance_deg: float = Field(20.0, ge=1, le=90)
-    min_speed_mps: float = Field(1.5, ge=0)
-    min_line_length_m: float = Field(150.0, ge=0)
-    turn_buffer_m: float = Field(15.0, ge=0)
+    # See processing/lines.py:LineDetectionParams for why each of these
+    # sits where it does.
+    min_speed_mps: float = Field(0.1, ge=0)
+    min_line_length_m: float = Field(20.0, ge=0)
+    turn_buffer_m: float = Field(5.0, ge=0)
     max_gap_seconds: float = Field(1.0, ge=0.1)
     # "heading_histogram" (default) or "pca" - see processing/lines.py.
     direction_method: Literal["heading_histogram", "pca"] = "heading_histogram"
@@ -21,6 +23,12 @@ class LineParams(BaseModel):
     bridge_max_gap_m: float = Field(100.0, ge=0)
     bridge_max_offset_m: float = Field(15.0, ge=0)
     bridge_straightness_factor: float = Field(2.0, ge=1.0)
+    # Rejoin segments of one physical line that bridging cannot reach,
+    # most often a flight interrupted and resumed as a separate file -
+    # see processing/lines.py::merge_continued_lines.
+    merge_continued_lines: bool = True
+    merge_max_along_gap_m: float = Field(400.0, ge=0)
+    merge_max_overlap_fraction: float = Field(0.35, ge=0, le=1)
 
 
 class DiurnalParams(BaseModel):

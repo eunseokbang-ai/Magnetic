@@ -106,6 +106,23 @@ export default function LineEditor({
               {l.n_points}pt / {l.length_m.toFixed(0)}m
               {l.heading_shift_nt != null && ` / ${l.heading_shift_nt >= 0 ? "+" : ""}${l.heading_shift_nt.toFixed(1)}nT`}
             </span>
+            {l.n_segments > 1 && (
+              <span
+                title={
+                  `이 측선은 ${l.n_segments}개 구간이 이어진 것입니다 (비행 중단 후 재개 등). ` +
+                  (l.joins || [])
+                    .map((j, i) => `이음 ${i + 1}: ${j.gap_seconds.toFixed(0)}초 끊김, 거리 ${j.gap_m.toFixed(0)}m`)
+                    .join(" / ") +
+                  ". 프로파일에서 이음 부분을 확인하고 필요하면 수동으로 편집하세요."
+                }
+                style={{
+                  padding: "0 5px", borderRadius: 3, fontSize: 10,
+                  background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a",
+                }}
+              >
+                이음 {l.n_segments - 1}
+              </span>
+            )}
             {onShowLineProfile && (
               <button
                 type="button"

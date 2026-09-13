@@ -48,7 +48,7 @@ def test_tool_execution_functions_grounded_in_real_project():
 
     out = json.loads(_execute_tool(project, "get_survey_summary", {}))
     assert "lines" not in out  # stripped to keep tool output compact
-    assert out["n_lines"] == 4
+    assert out["n_lines"] == 6
     assert out["anomaly_stats"]["min"] is not None
 
     # not yet run
@@ -189,7 +189,7 @@ def test_run_chat_turn_tool_loop_with_mocked_client():
         assert last_msg["content"][0]["type"] == "tool_result"
         assert last_msg["content"][0]["tool_use_id"] == "toolu_1"
         payload = json.loads(last_msg["content"][0]["content"])
-        assert payload["n_lines"] == 4
+        assert payload["n_lines"] == 6
         return SimpleNamespace(stop_reason="end_turn", content=[_FakeTextBlock("측선은 4개입니다.")])
 
     fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))

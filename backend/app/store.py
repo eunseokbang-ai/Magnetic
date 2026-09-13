@@ -3894,8 +3894,32 @@ def _line_summaries(
     # shift the data never received would misreport what is on screen.
     groups = heading_leveling.line_groups if heading_leveling else {}
     shifts = heading_leveling.line_shifts if (heading_leveling and heading_applied) else {}
+    # A line the drone flew in one go is one continuous run of samples. One
+    # that was interrupted - a pause, or a flight stopped and resumed,
+    # possibly as a separate file - is now still a single line (see
+    # processing/lines.py::merge_continued_lines) but arrives as several
+    # runs with a break between them. Those breaks are exactly where a line
+    # needs looking at by hand, so they are reported rather than left for
+    # the user to find by scrolling the profile.
+    _JOIN_GAP_SECONDS = 5.0
+
     lines = []
     for line_id, g in df[df["line_id"] >= 0].groupby("line_id"):
+        g = g.sort_values("timestamp")
+        dt = g["timestamp"].diff().dt.total_seconds().to_numpy()
+        break_at = np.flatnonzero(dt > _JOIN_GAP_SECONDS)
+        joins = []
+        for pos in break_at:
+            before = g.iloc[pos - 1]
+            after = g.iloc[pos]
+            joins.append({
+                "gap_seconds": float(dt[pos]),
+                "gap_m": float(np.hypot(after["x"] - before["x"], after["y"] - before["y"])),
+                "before_time": before["timestamp"].isoformat(),
+                "after_time": after["timestamp"].isoformat(),
+                "lat": float((before["lat"] + after["lat"]) / 2.0),
+                "lon": float((before["lon"] + after["lon"]) / 2.0),
+            })
         lines.append(
             {
                 "line_id": int(line_id),
@@ -3907,6 +3931,9 @@ def _line_summaries(
                 "centroid_lon": float(g["lon"].mean()),
                 "heading_group": groups.get(line_id),
                 "heading_shift_nt": shifts.get(line_id),
+                # 1 for a line flown in one go; more when it was resumed.
+                "n_segments": int(len(joins) + 1),
+                "joins": joins,
             }
         )
     return lines

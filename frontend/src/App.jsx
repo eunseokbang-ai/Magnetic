@@ -189,11 +189,14 @@ const DEFAULT_PARAMS = {
   line_params: {
     heading_lag_seconds: 1.0,
     heading_tolerance_deg: 20.0,
-    min_speed_mps: 1.5,
-    min_line_length_m: 150.0,
-    turn_buffer_m: 15.0,
+    min_speed_mps: 0.1,
+    min_line_length_m: 20.0,
+    turn_buffer_m: 5.0,
     max_gap_seconds: 1.0,
     direction_method: "heading_histogram",
+    merge_continued_lines: true,
+    merge_max_along_gap_m: 400.0,
+    merge_max_overlap_fraction: 0.35,
   },
   diurnal_params: {
     time_offset_seconds: 0.0,

@@ -92,9 +92,17 @@ def _pca_dominant_azimuth(x: np.ndarray, y: np.ndarray) -> float:
 class LineDetectionParams:
     heading_lag_seconds: float = 1.0
     heading_tolerance_deg: float = 20.0
-    min_speed_mps: float = 1.5
-    min_line_length_m: float = 150.0
-    turn_buffer_m: float = 15.0
+    # Low enough that only a genuinely stationary drone is dropped. A
+    # survey line down a cliff face can crawl horizontally while it
+    # descends, and that is still line data worth keeping.
+    min_speed_mps: float = 0.1
+    # Short, because a line broken by an interruption should be recovered
+    # by bridging/merging below rather than discarded piece by piece.
+    min_line_length_m: float = 20.0
+    # Small: the turn itself is where the heading effect lives, and with
+    # the data already heading-compensated upstream there is little reason
+    # to throw the ends of every line away.
+    turn_buffer_m: float = 5.0
     max_gap_seconds: float = 1.0
     # "heading_histogram" (default): most common instantaneous flight
     # heading. "pca": principal axis of the point cloud's spatial spread
@@ -115,6 +123,12 @@ class LineDetectionParams:
     # distance actually covered - rejects loop/U-turn maneuvers (e.g. a
     # heading-calibration turn) that circle back near their own start.
     bridge_straightness_factor: float = 2.0
+    # Rejoin segments of one physical line that bridging cannot reach -
+    # most often a flight interrupted and resumed as a separate file. See
+    # merge_continued_lines.
+    merge_continued_lines: bool = True
+    merge_max_along_gap_m: float = 400.0
+    merge_max_overlap_fraction: float = 0.35
 
 
 def detect_lines(
@@ -190,6 +204,14 @@ def detect_lines(
         bridged_line_id, bridged_reason = _bridge_line_gaps(out, x, y, line_id, out["exclusion_reason"].to_numpy(), dominant_azimuth, params)
         out["line_id"] = bridged_line_id
         out["exclusion_reason"] = bridged_reason
+
+    if params.merge_continued_lines:
+        out["line_id"] = merge_continued_lines(
+            out, out["line_id"].to_numpy(), dominant_azimuth,
+            max_offset_m=params.bridge_max_offset_m,
+            max_along_gap_m=params.merge_max_along_gap_m,
+            max_overlap_fraction=params.merge_max_overlap_fraction,
+        )
 
     out["exclusion_reason"] = _tag_takeoff_landing_ramps(out, out["line_id"].to_numpy(), out["exclusion_reason"].to_numpy())
 
@@ -277,6 +299,16 @@ def _bridge_line_gaps(
     line_id_out = line_id_out.copy()
     reason_out = reason_out.copy()
     cross_track = cross_track_coordinate(x, y, dominant_azimuth_deg)
+    az = np.radians(dominant_azimuth_deg)
+    along_track = x * np.cos(az) + y * np.sin(az)
+
+    def travel_direction(span: np.ndarray) -> float:
+        """Which way a run went along the line, as a sign. One physical
+        line is flown one way; a run that comes back the other way is the
+        next pass over the same ground, not a continuation of this one."""
+        if len(span) < 2:
+            return 0.0
+        return float(np.sign(along_track[span[-1]] - along_track[span[0]]))
 
     source_col = out["source_file_index"] if "source_file_index" in out.columns else pd.Series(0, index=out.index)
     for _src, idx in out.groupby(source_col).groups.items():
@@ -302,8 +334,28 @@ def _bridge_line_gaps(
                 gap_len_m = float(np.hypot(np.diff(x[span_idx]), np.diff(y[span_idx])).sum())
                 straight_dist_m = float(np.hypot(x[head_pt] - x[tail_pt], y[head_pt] - y[tail_pt]))
                 offset_diff = abs(float(cross_track[tail_pt]) - float(cross_track[head_pt]))
-                direct_enough = gap_len_m <= max(straight_dist_m, 1e-6) * params.bridge_straightness_factor
-                if gap_len_m <= params.bridge_max_gap_m and offset_diff <= params.bridge_max_offset_m and direct_enough:
+                # A pause counts as direct. Hovering in place, or being
+                # blown about and recovering, covers track while going
+                # nowhere - the straightness ratio blows up on exactly the
+                # interruption this is meant to bridge. What separates a
+                # pause from a turn onto the next line is that a pause
+                # ends where it started, which guard 2 (cross-track) plus
+                # a small net displacement already establish.
+                went_nowhere = straight_dist_m <= params.bridge_max_offset_m
+                direct_enough = (
+                    went_nowhere
+                    or gap_len_m <= max(straight_dist_m, 1e-6) * params.bridge_straightness_factor
+                )
+                # Both flanking runs must still be travelling the same way
+                # down the line. Without this, a pass that turns round at
+                # the end and comes back over the same ground reads as
+                # "went nowhere" - same place, same cross-track - and gets
+                # welded onto the pass it just reversed out of.
+                prev_dir = travel_direction(idx[:prev_end_pos + 1][-200:])
+                next_dir = travel_direction(idx[i:j + 1][:200])
+                same_way = prev_dir == 0.0 or next_dir == 0.0 or prev_dir == next_dir
+                if (gap_len_m <= params.bridge_max_gap_m and offset_diff <= params.bridge_max_offset_m
+                        and direct_enough and same_way):
                     line_id_out[idx[i:j + 1]] = current_id
                     line_id_out[gap_local] = current_id
                     reason_out[gap_local] = None
@@ -317,6 +369,105 @@ def _bridge_line_gaps(
             i = j + 1
 
     return line_id_out, reason_out
+
+
+def merge_continued_lines(
+    out: pd.DataFrame,
+    line_id: np.ndarray,
+    dominant_azimuth_deg: float,
+    max_offset_m: float,
+    max_along_gap_m: float = 400.0,
+    max_overlap_fraction: float = 0.35,
+) -> np.ndarray:
+    """Give one line id to segments that are the same physical line.
+
+    `_bridge_line_gaps` already rejoins a line broken up *within* one
+    flight file, but a flight interrupted and resumed comes back as a
+    separate file, and a line split across that boundary stays two lines
+    however obviously it continues. The same happens whenever the break
+    is longer than the bridging allows. Downstream, each fragment then
+    gets its own level correction, its own entry in the line list, and has
+    to be edited separately - all for one pass the drone flew.
+
+    Two segments are the same line when they lie on top of each other
+    across-track and end-to-end along it:
+
+    * the same cross-track position, within `max_offset_m`. This is what
+      separates a continuation from the next line over, so it does the
+      real work and is kept tight.
+    * a small along-track gap (or none) between where one ends and the
+      other starts. An interrupted flight resumes near where it stopped;
+      it does not resume half a line away.
+    * little along-track overlap. A resumed flight may double back a
+      little, but a line deliberately re-flown covers the same ground
+      again - and those are two passes the operator will want to see and
+      choose between, not one line silently welded together.
+
+    Segments are merged transitively, so a line broken into three pieces
+    comes back as one, and ids are renumbered afterwards so what the user
+    sees counts actual lines.
+    """
+    line_id = line_id.copy()
+    ids = sorted({int(v) for v in np.unique(line_id) if v >= 0})
+    if len(ids) < 2:
+        return line_id
+
+    x, y = out["x"].to_numpy(), out["y"].to_numpy()
+    cross = cross_track_coordinate(x, y, dominant_azimuth_deg)
+    az = np.radians(dominant_azimuth_deg)
+    along = x * np.cos(az) + y * np.sin(az)
+
+    stats = {}
+    for lid in ids:
+        m = line_id == lid
+        stats[lid] = {
+            "cross": float(np.median(cross[m])),
+            "lo": float(np.min(along[m])),
+            "hi": float(np.max(along[m])),
+            "t0": out.loc[m, "timestamp"].min(),
+        }
+
+    parent = {lid: lid for lid in ids}
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    # Compare in cross-track order: a continuation is always a near
+    # neighbour there, so this stays linear rather than all-pairs.
+    ordered = sorted(ids, key=lambda l: stats[l]["cross"])
+    for i, a in enumerate(ordered):
+        for b in ordered[i + 1:]:
+            sa, sb = stats[a], stats[b]
+            if abs(sa["cross"] - sb["cross"]) > max_offset_m:
+                break  # sorted, so everything further is further off-line
+            span_a, span_b = sa["hi"] - sa["lo"], sb["hi"] - sb["lo"]
+            overlap = min(sa["hi"], sb["hi"]) - max(sa["lo"], sb["lo"])
+            shorter = max(min(span_a, span_b), 1e-6)
+            if overlap > max_overlap_fraction * shorter:
+                continue  # two passes over the same ground, not one line
+            gap = -overlap if overlap < 0 else 0.0
+            if gap <= max_along_gap_m:
+                union(a, b)
+
+    groups: dict[int, list[int]] = {}
+    for lid in ids:
+        groups.setdefault(find(lid), []).append(lid)
+    # Renumber by first-seen time so the ids follow the order flown.
+    roots = sorted(groups, key=lambda r: min(stats[l]["t0"] for l in groups[r]))
+    remap = {lid: new for new, root in enumerate(roots) for lid in groups[root]}
+
+    merged = line_id.copy()
+    for old, new in remap.items():
+        merged[line_id == old] = new
+    return merged
 
 
 def _tag_takeoff_landing_ramps(

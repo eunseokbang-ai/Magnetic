@@ -165,7 +165,11 @@ def test_detect_lines_bridge_disabled_leaves_a_gap():
     y = np.concatenate([y_a, y_wobble, y_b])
     df = _make_df(x, y)
 
-    params = LineDetectionParams(min_line_length_m=50.0, turn_buffer_m=10.0, bridge_gaps=False)
+    # merge_continued_lines would rejoin the two halves on its own (that is
+    # its job - see test_line_continuation.py), so it is off here to leave
+    # bridging as the only thing that could put the line back together.
+    params = LineDetectionParams(min_line_length_m=50.0, turn_buffer_m=10.0,
+                                 bridge_gaps=False, merge_continued_lines=False)
     detected = detect_lines(df, params)
     kept = detected[detected["line_id"] >= 0]
     assert kept["line_id"].nunique() == 2, "expected the wobble to split the line when bridging is disabled"
