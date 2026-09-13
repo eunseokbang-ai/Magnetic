@@ -9,9 +9,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // (excluding/restoring a burst of points) without the extra interaction
 // surface.
 
-const COLOR_SURVEY = "#2563eb";
+const COLOR_SURVEY = "#a9631f";
 const COLOR_TIE = "#f59e0b";
-const COLOR_EXCLUDED = "#9ca3af";
+const COLOR_EXCLUDED = "#ab9a78";
 const PADDING_FRACTION = 0.92;
 
 function pointColor(p) {
@@ -49,13 +49,13 @@ const modeButtonStyle = (active) => ({
   padding: "6px 10px",
   fontSize: 12,
   borderRadius: 6,
-  border: active ? "1px solid #2563eb" : "1px solid #d1d5db",
-  background: active ? "#eff6ff" : "white",
-  color: active ? "#2563eb" : "#374151",
+  border: active ? "1px solid #a9631f" : "1px solid #ddd0b2",
+  background: active ? "#faf0e2" : "white",
+  color: active ? "#a9631f" : "#4a3d28",
   cursor: "pointer",
 });
 
-export default function FlightPathEditor({ points, onApply, onClose }) {
+export default function FlightPathEditor({ points, loading, onApply, onClose }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
   const [size, setSize] = useState({ width: 800, height: 560 });
@@ -108,7 +108,7 @@ export default function FlightPathEditor({ points, onApply, onClose }) {
     canvas.width = size.width;
     canvas.height = size.height;
     const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#111827";
+    ctx.fillStyle = "#2c2418";
     ctx.fillRect(0, 0, size.width, size.height);
 
     for (const p of validPoints) {
@@ -246,7 +246,7 @@ export default function FlightPathEditor({ points, onApply, onClose }) {
           </button>
         </div>
 
-        <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#4b5563" }}>
+        <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#6b5c42" }}>
           <span>
             <span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_SURVEY, marginRight: 4, verticalAlign: "middle" }} />
             Survey ({nSurvey})
@@ -259,7 +259,7 @@ export default function FlightPathEditor({ points, onApply, onClose }) {
             <span style={{ display: "inline-block", width: 10, height: 10, background: COLOR_EXCLUDED, marginRight: 4, verticalAlign: "middle" }} />
             제외됨 ({nExcluded})
           </span>
-          <span style={{ marginLeft: "auto", color: "#9ca3af" }}>
+          <span style={{ marginLeft: "auto", color: "#ab9a78" }}>
             마우스 휠: 확대/축소 · {mode === "pan" ? "드래그: 화면 이동" : "드래그: 영역 선택 후 자동 적용"}
           </span>
         </div>
@@ -277,6 +277,24 @@ export default function FlightPathEditor({ points, onApply, onClose }) {
               setSelectionRectPx(null);
             }}
           />
+          {validPoints.length === 0 && (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#ab9a78",
+                fontSize: 13,
+                background: "#2c2418",
+                borderRadius: 6,
+                pointerEvents: "none",
+              }}
+            >
+              {loading ? "포인트를 불러오는 중입니다..." : "표시할 포인트가 없습니다 (자료 처리를 먼저 실행하세요)."}
+            </div>
+          )}
         </div>
       </div>
     </div>

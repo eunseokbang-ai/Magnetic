@@ -25,6 +25,9 @@ def generate_report_markdown(
     inversion_summary: dict | None,
     euler_summary: dict | None,
     target_summary: dict | None = None,
+    repeatability_summary: dict | None = None,
+    multiscale_edges_summary: dict | None = None,
+    qc_certificate: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# 드론 자력탐사 자료 처리 보고서")
@@ -79,6 +82,50 @@ def generate_report_markdown(
     else:
         lines.append("- 스파이크 제거: 미적용")
 
+    hec = process_summary.get("heading_effect_calibration")
+    if hec and hec.get("enabled") and hec.get("applied"):
+        source_label = "업로드된 캘리브레이션 비행" if hec.get("calibration_source") == "uploaded_file" else "측선 턴 구간 자동 추출"
+        q = hec.get("quality_check") or {}
+        quality_label = "PASS" if hec.get("quality_pass") else "FAIL (신뢰도 낮음)"
+        lines.append(
+            f"- **헤딩효과 캘리브레이션 보정** (Zhang et al. 2022, 자료 출처: {source_label}): "
+            f"캘리브레이션 {hec.get('n_calibration_points')}개 포인트로 측선 {hec.get('n_survey_points_corrected')}개 포인트 보정 "
+            f"({_fmt(hec.get('pct_survey_points_corrected'))}%, 평균 보정량 {_fmt(hec.get('mean_abs_correction_nt'))} nT, "
+            f"외삽 {hec.get('n_survey_points_extrapolated')}개)"
+        )
+        if q.get("available"):
+            lines.append(
+                f"  - 캘리브레이션 품질 검증(교차검증): {quality_label} — 잔차 표준편차 {_fmt(q.get('residual_std_nt'))} nT "
+                f"(기준값 {_fmt(hec.get('quality_threshold_nt'))} nT, peak-to-peak {_fmt(q.get('residual_p2p_nt'))} nT)"
+            )
+        if hec.get("coverage_warning"):
+            lines.append(f"  - ⚠ {hec['coverage_warning']}")
+    elif hec and hec.get("enabled") and hec.get("reason"):
+        lines.append(f"- 헤딩효과 캘리브레이션 보정: 미적용 ({hec['reason']})")
+    elif hec and hec.get("enabled"):
+        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용 (캘리브레이션 자료 없음)")
+    else:
+        lines.append("- 헤딩효과 캘리브레이션 보정: 미적용")
+
+    sw = process_summary.get("sway_detection")
+    if sw and sw.get("enabled") and sw.get("available"):
+        lines.append(
+            f"- **IMU 흔들림(스웨이) 검출**: {sw.get('n_points_excluded')}개 포인트 제외 "
+            f"({_fmt(sw.get('pct_points_flagged'))}%, 신호: {sw.get('signal_used')})"
+        )
+    elif sw and sw.get("enabled"):
+        lines.append("- IMU 흔들림(스웨이) 검출: 사용 설정됨이나 원본 파일에 자이로/가속도 데이터 없음 (미적용)")
+    else:
+        lines.append("- IMU 흔들림(스웨이) 검출: 미적용")
+
+    base_qc = process_summary.get("base_qc")
+    if base_qc:
+        lines.append(
+            f"- **베이스 자료 QC**: 설치구간 {base_qc.get('n_trimmed_start')}건, 회수구간 {base_qc.get('n_trimmed_end')}건 트림, "
+            f"중간 스파이크 {base_qc.get('n_spikes_removed')}건 제거 "
+            f"({base_qc.get('n_points_raw')} → {base_qc.get('n_points_corrected')} 포인트)"
+        )
+
     diurnal = process_summary.get("diurnal")
     if diurnal:
         overlap_note = "정상 (비행-베이스 시간 겹침)" if diurnal.get("has_overlap") else "⚠ 베이스와 비행 시간이 겹치지 않음"
@@ -98,6 +145,34 @@ def generate_report_markdown(
         )
     elif cl:
         lines.append(f"- 타이라인 보정: 미적용 ({cl.get('reason') or '해당 없음'})")
+
+    nq = process_summary.get("noise_qc")
+    if nq and nq.get("available"):
+        lines.append(
+            f"- **노이즈 QC (정규화 4th/8th difference)**: 전체 RMS 4th={_fmt(nq.get('overall_rms_4th_diff_nt'), 3)} nT, "
+            f"8th={_fmt(nq.get('overall_rms_8th_diff_nt'), 3)} nT (샘플링 {_fmt(nq.get('sample_rate_hz'), 1)} Hz, "
+            f"기준참고값 {_fmt(nq.get('reference_threshold_4th_diff_nt'), 3)} nT) - 이상 측선 {nq.get('n_lines_flagged')}개 플래그됨"
+        )
+    else:
+        lines.append("- 노이즈 QC (4th/8th difference): 미적용")
+
+    sq = process_summary.get("sampling_qc")
+    if sq and sq.get("available"):
+        lines.append(
+            f"- **샘플링 거리 QC**: 중앙값 {_fmt(sq.get('median_distance_m'))} m, 최대 {_fmt(sq.get('max_distance_m'))} m "
+            f"(허용기준 {_fmt(sq.get('gap_tolerance_m'), 0)} m 초과 구간 {sq.get('n_gaps_exceeding_tolerance')}개, "
+            f"{_fmt(sq.get('pct_gaps_exceeding_tolerance'))}%)"
+        )
+
+    flc = process_summary.get("file_level_check")
+    if flc and flc.get("available"):
+        if flc.get("flagged_any"):
+            offenders = ", ".join(
+                f"파일#{f['source_file_index']} ({_fmt(f['deviation_nt'])} nT)" for f in flc["files"] if f["flagged"]
+            )
+            lines.append(f"- ⚠ **파일(타일) 간 레벨 불일치**: {offenders} - 베이스 위치 변경 등 확인 필요")
+        else:
+            lines.append(f"- 파일(타일) 간 레벨 불일치: 없음 ({flc.get('n_files')}개 파일 비교)")
     lines.append("")
 
     lines.append("## 4. 측선 판별 결과")
@@ -176,6 +251,45 @@ def generate_report_markdown(
                     f"{_fmt(t.get('moment_am2'))} | {t.get('size_class')} | {_fmt(t.get('peak_anomaly_nt'))} | "
                     f"{_fmt(t.get('fit_quality'))} |"
                 )
+        lines.append("")
+
+    if repeatability_summary and repeatability_summary.get("available"):
+        lines.append("## 10. 반복측선(Repeatability) 분석 결과")
+        lines.append("")
+        lines.append(
+            f"- 반복 그룹 수: {repeatability_summary.get('n_groups')}, 총 통과 횟수: {repeatability_summary.get('n_passes_total')}"
+        )
+        lines.append(
+            f"- 전체 노이즈 봉투: 1σ {_fmt(repeatability_summary.get('overall_noise_1sigma_nt'))} nT, "
+            f"2σ {_fmt(repeatability_summary.get('overall_noise_2sigma_nt'))} nT, "
+            f"3σ {_fmt(repeatability_summary.get('overall_noise_3sigma_nt'))} nT"
+        )
+        lines.append("")
+
+    if multiscale_edges_summary and multiscale_edges_summary.get("n_points"):
+        lines.append("## 11. 멀티스케일 엣지 검출(Worming) 결과")
+        lines.append("")
+        lines.append(
+            f"- 검출된 엣지 포인트 수: {multiscale_edges_summary.get('n_points')} "
+            f"(상향연속 고도: {multiscale_edges_summary.get('heights_m')})"
+        )
+        lines.append("")
+
+    if qc_certificate:
+        overall = {"pass": "✅ PASS", "fail": "❌ FAIL", "not_evaluated": "평가 불가"}.get(qc_certificate.get("overall_status"), "-")
+        lines.append("## 12. 표준 QC 인증서")
+        lines.append("")
+        lines.append(f"- **종합 결과: {overall}** ({qc_certificate.get('n_pass')} PASS / {qc_certificate.get('n_fail')} FAIL / {qc_certificate.get('n_not_evaluated')} 평가 불가)")
+        lines.append("")
+        lines.append("| 항목 | 측정값 | 허용기준 | 결과 | 비고 |")
+        lines.append("|---|---|---|---|---|")
+        status_label = {"pass": "PASS", "fail": "FAIL", "not_evaluated": "평가 불가"}
+        for c in qc_certificate.get("criteria", []):
+            value = c["value"]
+            value_str = f"{_fmt(value)}{c['unit']}" if isinstance(value, float) else ("N/A" if value is None else f"{value}{c['unit']}")
+            threshold = c["threshold"]
+            threshold_str = "-" if threshold is None else (f"{_fmt(threshold)}{c['unit']}" if isinstance(threshold, float) else str(threshold))
+            lines.append(f"| {c['name']} | {value_str} | {threshold_str} | {status_label.get(c['status'], c['status'])} | {c['detail']} |")
         lines.append("")
 
     return "\n".join(lines) + "\n"

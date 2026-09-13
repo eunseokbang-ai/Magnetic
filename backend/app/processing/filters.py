@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt, savgol_filter
+from scipy.signal import butter, filtfilt, iirnotch, savgol_filter
 
 
 def estimate_sample_rate_hz(timestamps: pd.Series) -> float:
@@ -35,6 +35,33 @@ def lowpass_filter(
         )
 
     b, a = butter(order, cutoff_hz / nyquist, btype="low")
+    return filtfilt(b, a, np.asarray(values, dtype=float))
+
+
+def notch_filter(
+    values: np.ndarray,
+    timestamps: pd.Series,
+    freq_hz: float,
+    quality_factor: float = 30.0,
+) -> np.ndarray:
+    """Zero-phase IIR notch filter removing a single known interference
+    frequency (e.g. UAV motor rotation frequency, or a cultural noise
+    source identified from the power spectrum - see processing/spectrum.py)
+    from a (near-)uniformly sampled time series, per the UAV magnetics
+    guidelines' recommendation to design a notch filter once a specific
+    frequency is identified in the power spectrum. A no-op when freq_hz is
+    at or above the Nyquist frequency (can't be represented at this
+    sampling rate) or the series is too short to filter."""
+    n = len(values)
+    if n < 19:  # filtfilt needs > 3*max(len(a), len(b)); iirnotch order 2 -> len 3
+        return np.asarray(values, dtype=float)
+
+    fs = estimate_sample_rate_hz(timestamps)
+    nyquist = fs / 2.0
+    if freq_hz <= 0 or freq_hz >= nyquist:
+        return np.asarray(values, dtype=float)
+
+    b, a = iirnotch(freq_hz / nyquist, quality_factor)
     return filtfilt(b, a, np.asarray(values, dtype=float))
 
 

@@ -10,6 +10,7 @@ import matplotlib
 import numpy as np
 import rasterio
 from matplotlib.colors import LightSource, Normalize
+from scipy.stats import norm as _scipy_norm
 from PIL import Image
 from pyproj import Transformer
 from rasterio.crs import CRS
@@ -44,6 +45,99 @@ class _EqualizeNorm(Normalize):
         return np.ma.array(result, mask=mask)
 
 
+# Scale factor making the median absolute deviation a consistent estimator
+# of the standard deviation for normally distributed data (1 / Phi^-1(0.75)).
+_MAD_TO_SIGMA = 1.4826
+
+
+def robust_center_scale(finite: np.ndarray) -> tuple[float, float]:
+    """Median and MAD-derived sigma of `finite` - the robust stand-ins for
+    mean/std used by the "normal" stretch. Falls back to the plain std
+    (then to 1.0) when the MAD is zero, which happens when more than half
+    the cells share one exact value (e.g. a mostly-flat mask or a
+    heavily-quantized grid) and would otherwise collapse the whole color
+    range onto that single value."""
+    center = float(np.median(finite))
+    scale = _MAD_TO_SIGMA * float(np.median(np.abs(finite - center)))
+    if scale <= 0:
+        scale = float(np.std(finite))
+    return center, (scale if scale > 0 else 1.0)
+
+
+class _NormalNorm(Normalize):
+    """"Normal distribution" stretch (per the UAV magnetics guidelines'
+    common-stretches list): maps each value through a Gaussian CDF fitted
+    to the grid's own background level and spread, rather than either a
+    plain linear fraction of [vmin, vmax] or the empirical-rank
+    _EqualizeNorm above. Unlike equalize (which reproduces whatever the
+    actual distribution shape is, exactly, via ranks), this assumes the
+    data is close to normally distributed and stretches accordingly - most
+    of the color range concentrates within a few sigma of the center,
+    which suits a grid that genuinely is roughly bell-shaped around a
+    background level (typical for anomaly grids dominated by background
+    noise with a few real anomalies), without needing every individual
+    rank to be preserved.
+
+    Center/scale come from the median and MAD, not the mean and standard
+    deviation. Those are the robust estimators of exactly the same two
+    quantities, and this stretch's whole premise - "background noise plus
+    a few real anomalies" - is the case where the non-robust pair fails:
+    a handful of strong anomalies inflates the std, widening the +-3 sigma
+    display range and flattening the color contrast across the background
+    the user actually wants to read. For genuinely Gaussian data the two
+    agree, so this only changes the outcome where the mean/std version was
+    being skewed by the very anomalies the map is meant to show."""
+
+    def __init__(self, center: float, scale: float):
+        scale = scale if scale > 0 else 1.0
+        super().__init__(vmin=center - 3.0 * scale, vmax=center + 3.0 * scale, clip=False)
+        self._center = center
+        self._scale = scale
+
+    def __call__(self, value, clip=None):
+        arr = np.ma.asarray(value, dtype=float)
+        filled = arr.filled(self._center) if np.ma.is_masked(arr) else np.asarray(arr)
+        result = _scipy_norm.cdf(filled, loc=self._center, scale=self._scale)
+        mask = np.ma.getmaskarray(arr) if np.ma.is_masked(arr) else False
+        return np.ma.array(result, mask=mask)
+
+
+# Color-bar fractions the legend places its value labels at. Fixed and
+# equally spaced so the frontend can lay the labels out with plain
+# space-between flexbox; what varies per stretch is the VALUE each
+# fraction corresponds to (see _stretch_stops).
+_LEGEND_TICK_FRACTIONS = np.array([0.0, 0.25, 0.5, 0.75, 1.0])
+# Knots for the value->color lookup handed to the frontend. One per entry
+# of the 256-colour map: at 64 the equalize stretch's CDF was still up to
+# two colour entries out on a long-tailed grid, and 256 floats cost
+# nothing next to the PNG they travel with.
+_COLOR_STOP_FRACTIONS = np.linspace(0.0, 1.0, 256)
+
+
+def _stretch_stops(
+    grid_values: np.ndarray, stretch: str, vmin: float, vmax: float, fractions: np.ndarray
+) -> list[float]:
+    """Data value whose color sits at each _LEGEND_TICK_FRACTIONS position
+    of the color bar, for the given stretch. A legend that only labels
+    vmin/vmax under a uniform gradient implicitly claims the mapping
+    between them is linear - true for the linear stretch, wrong for
+    equalize (rank/CDF-based) and normal (Gaussian-CDF-based), where the
+    value at the color bar's midpoint is the data's median / mean, not
+    (vmin+vmax)/2. These ticks give the legend honest intermediate labels
+    for every stretch, using the same definitions as the corresponding
+    Normalize classes above (_EqualizeNorm: empirical quantiles;
+    _NormalNorm: mean + std * Phi^-1(fraction), ends clamped to the
+    +-3 sigma display range it reports as vmin/vmax)."""
+    if stretch == "equalize":
+        finite = grid_values[np.isfinite(grid_values)]
+        return [float(v) for v in np.quantile(finite, fractions)]
+    if stretch == "normal":
+        center, scale = robust_center_scale(grid_values[np.isfinite(grid_values)])
+        ticks = center + scale * _scipy_norm.ppf(np.clip(fractions, _scipy_norm.cdf(-3.0), _scipy_norm.cdf(3.0)))
+        return [float(v) for v in ticks]
+    return [float(v) for v in vmin + fractions * (vmax - vmin)]
+
+
 def _render_rgba(
     grid_values: np.ndarray,
     cmap_name: str,
@@ -70,6 +164,9 @@ def _render_rgba(
         # a linear stretch) doesn't apply - every finite cell contributes.
         norm = _EqualizeNorm(np.sort(finite))
         vmin, vmax = float(finite.min()), float(finite.max())
+    elif stretch == "normal":
+        norm = _NormalNorm(*robust_center_scale(finite))
+        vmin, vmax = norm.vmin, norm.vmax
     else:
         explicit_range = vmin is not None and vmax is not None
         if vmin is None:
@@ -141,19 +238,72 @@ def grid_to_png_overlay(
     png_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     transformer = Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
-    corners_e = [easting.min(), easting.max(), easting.min(), easting.max()]
-    corners_n = [northing.min(), northing.min(), northing.max(), northing.max()]
+    # Leaflet's ImageOverlay stretches the PNG (one pixel per grid cell) to
+    # exactly fill `bounds`, treating each pixel as covering an *area* (its
+    # own square swath of ground), not as a point sample. easting/northing
+    # are each cell's *center* coordinate, so the image must extend half a
+    # cell past the outermost cell centers on every side for pixel i's
+    # rendered center to land exactly on easting[i]/northing[i] - otherwise
+    # every pixel is stretched across the wrong-sized box and each one's
+    # true screen position drifts away from its real coordinate (zero at
+    # the grid's own center, growing to half a cell at the edges). This is
+    # the same "pixel is area" convention already used correctly for the
+    # GeoTIFF export below (see from_origin(easting[0] - cell_size / 2,
+    # ...)) - kept consistent here so the interactive map overlay and the
+    # exported GeoTIFF agree on where each cell actually sits, and so a
+    # map click (see store.py::sample_overlay_value) samples the exact
+    # cell its color is drawn from instead of a neighboring one.
+    half_e = (easting[1] - easting[0]) / 2.0 if len(easting) > 1 else cell_size_m / 2.0
+    half_n = (northing[1] - northing[0]) / 2.0 if len(northing) > 1 else cell_size_m / 2.0
+    # Order: SW, SE, NW, NE.
+    corners_e = [easting.min() - half_e, easting.max() + half_e, easting.min() - half_e, easting.max() + half_e]
+    corners_n = [northing.min() - half_n, northing.min() - half_n, northing.max() + half_n, northing.max() + half_n]
     lon_c, lat_c = transformer.transform(corners_e, corners_n)
 
     bounds = [[float(min(lat_c)), float(min(lon_c))], [float(max(lat_c)), float(max(lon_c))]]
 
+    # `bounds` above is only a north/south/east/west axis-aligned envelope
+    # of the 4 corners - it is NOT the image's true footprint. A UTM grid's
+    # cell rows/columns are only exactly north-south/east-west along its
+    # own zone's central meridian; anywhere else, "grid north" is rotated a
+    # few tenths of a degree to a few degrees away from true north (map
+    # convergence), so the grid's real shape on a lat/lon map is a slightly
+    # sheared/rotated rectangle, not an axis-aligned one. A plain Leaflet
+    # ImageOverlay can only stretch this PNG into an axis-aligned `bounds`
+    # box, which silently discards that shear - every pixel not on the two
+    # corners that happen to be simultaneously N/S- and E/W-extreme drifts
+    # away from its true position, worse the farther the survey sits from
+    # its UTM zone's central meridian and the larger the survey (measured
+    # this at up to ~70m for a real multi-line survey in this app's own
+    # test fixtures - enough to visibly mismatch the "지점값 확인"
+    # click-to-inspect readout, which instead re-projects each click
+    # exactly and is never affected by this). The frontend therefore uses
+    # these exact 3 corners (leaflet-imageoverlay-rotated, which applies a
+    # CSS affine transform instead of an axis-aligned stretch) to place the
+    # image without that distortion; `bounds` is kept only as a fallback/
+    # fit-to-view helper.
+    topleft = [float(lat_c[2]), float(lon_c[2])]
+    topright = [float(lat_c[3]), float(lon_c[3])]
+    bottomleft = [float(lat_c[0]), float(lon_c[0])]
+
     return {
         "image_data_url": f"data:image/png;base64,{png_b64}",
         "bounds": bounds,
+        "topleft": topleft,
+        "topright": topright,
+        "bottomleft": bottomleft,
         "vmin": vmin,
         "vmax": vmax,
         "cmap": cmap_name,
         "stretch": stretch,
+        "legend_ticks": _stretch_stops(grid_values, stretch, vmin, vmax, _LEGEND_TICK_FRACTIONS),
+        # The same value->color mapping the image above was rendered with,
+        # sampled finely enough to interpolate through. The flight-line
+        # points are drawn client-side on top of this image, and without
+        # this they were colored by a plain linear ramp over a different
+        # value range entirely - so every line read as a stripe of the
+        # wrong color over the grid it sits on. See colormap.js.
+        "color_stops": _stretch_stops(grid_values, stretch, vmin, vmax, _COLOR_STOP_FRACTIONS),
     }
 
 

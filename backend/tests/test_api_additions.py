@@ -60,6 +60,40 @@ def test_new_transforms_via_api():
     print("NEW TRANSFORM ENDPOINT CHECKS PASSED")
 
 
+def test_microlevel_pre_apply_affects_other_transforms_and_base_grid():
+    """microlevel_pre_apply should change the result of any transform
+    other than "microlevel" itself, and of the plain grid endpoint too -
+    it's meant to pre-clean corrugation before RTP/derivative transforms
+    (or the base grid view) see it, not just be reachable as its own
+    mutually-exclusive transform choice."""
+    client, project_id, _summary = _make_processed_project()
+
+    r_off = client.post(f"/api/projects/{project_id}/transform", json={"transform": "rtp", "cell_size_m": 15.0})
+    assert r_off.status_code == 200, r_off.text
+    r_on = client.post(
+        f"/api/projects/{project_id}/transform",
+        json={"transform": "rtp", "cell_size_m": 15.0, "microlevel_pre_apply": True},
+    )
+    assert r_on.status_code == 200, r_on.text
+    assert r_off.json()["stats"] != r_on.json()["stats"]
+
+    # applying it to "microlevel" itself must not double-apply / error
+    r_ml_off = client.post(f"/api/projects/{project_id}/transform", json={"transform": "microlevel", "cell_size_m": 15.0})
+    r_ml_on = client.post(
+        f"/api/projects/{project_id}/transform",
+        json={"transform": "microlevel", "cell_size_m": 15.0, "microlevel_pre_apply": True},
+    )
+    assert r_ml_off.status_code == 200 and r_ml_on.status_code == 200
+    assert r_ml_off.json()["stats"] == r_ml_on.json()["stats"]
+
+    # the plain grid endpoint (grid(원본) in the UI) must respect it too
+    g_off = client.post(f"/api/projects/{project_id}/grid", json={"cell_size_m": 15.0})
+    g_on = client.post(f"/api/projects/{project_id}/grid", json={"cell_size_m": 15.0, "microlevel_pre_apply": True})
+    assert g_off.status_code == 200 and g_on.status_code == 200
+    assert g_off.json()["stats"] != g_on.json()["stats"]
+    print("MICROLEVEL PRE-APPLY CHECKS PASSED")
+
+
 def test_line_profile_endpoint():
     client, project_id, summary = _make_processed_project()
     line_id = summary["lines"][0]["line_id"]

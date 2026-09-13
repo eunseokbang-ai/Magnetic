@@ -188,6 +188,69 @@ def test_pca_dominant_azimuth_recovers_elongated_axis():
     assert diff < 2.0
 
 
+def test_minimum_curvature_multilevel_matches_single_level_on_large_grid():
+    """A grid big enough to trigger the multilevel path should still
+    converge to essentially the same smooth surface a direct (slow)
+    single-level solve would produce."""
+    from app.processing.gridding import _minimum_curvature_multilevel, _minimum_curvature_relax
+
+    rng = np.random.default_rng(4)
+    ny, nx = 80, 80  # 6400 cells - safely above _MULTILEVEL_BASE_CELLS
+    mask = rng.random((ny, nx)) < 0.05
+    values = np.zeros((ny, nx))
+    Y, X = np.mgrid[0:ny, 0:nx]
+    smooth = 50.0 * np.sin(X / 20.0) + 30.0 * np.cos(Y / 15.0)
+    values[mask] = smooth[mask]
+
+    multilevel = _minimum_curvature_multilevel((ny, nx), mask, values)
+    single = _minimum_curvature_relax((ny, nx), mask, values, max_iterations=3000, tol=1e-6)
+
+    # RMS (not max) agreement: a handful of cells in a sparse, randomly
+    # scattered synthetic constraint set can converge slightly slower at
+    # the fine level's bounded iteration budget, but the overall surface
+    # should closely track the fully-converged single-level reference.
+    rms_diff = float(np.sqrt(np.mean((multilevel - single) ** 2)))
+    value_range = float(values[mask].max() - values[mask].min())
+    assert rms_diff < 0.05 * value_range
+    # constraints themselves must be respected exactly
+    assert np.allclose(multilevel[mask], values[mask])
+
+
+def test_grid_points_rejects_absurdly_fine_cell_size():
+    rng = np.random.default_rng(5)
+    n = 50
+    x = rng.uniform(0, 5000, n)
+    y = rng.uniform(0, 5000, n)
+    values = rng.normal(0, 10, n)
+    try:
+        grid_points(x, y, values, cell_size_m=0.01)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "너무 작아" in str(exc)
+
+
+def test_spline_control_point_cap_on_line_shaped_data():
+    """Data lying along thin lines (not filling the plane) block-reduces
+    to far more points per unit spacing increase than an area/spacing^2
+    estimate predicts - the control-point cap must still converge under
+    the cap via the geometric-growth retry loop, not just on the first
+    guess."""
+    rng = np.random.default_rng(6)
+    xs = []
+    ys = []
+    for line_x in np.linspace(0, 1000, 40):
+        n_along = 200
+        xs.append(np.full(n_along, line_x) + rng.normal(0, 0.1, n_along))
+        ys.append(np.linspace(0, 4000, n_along))
+    x = np.concatenate(xs)
+    y = np.concatenate(ys)
+    values = rng.normal(0, 10, len(x))
+
+    result = grid_points(x, y, values, cell_size_m=5.0, method="spline", max_distance_m=20.0)
+    assert result.values.shape[0] > 0
+    assert np.isfinite(result.values).any()
+
+
 def test_minimum_curvature_gridding_smooth_and_matches_scattered_trend():
     rng = np.random.default_rng(1)
     n = 300

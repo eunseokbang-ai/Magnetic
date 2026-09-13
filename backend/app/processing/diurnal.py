@@ -17,6 +17,15 @@ class DiurnalResult:
     base_time_range: tuple
     drone_time_range: tuple
     has_overlap: bool
+    # True for each drone sample whose timestamp falls outside the base
+    # station's own [t0, t1] coverage - np.interp has no extrapolation
+    # mode, so those samples silently get base_interp clamped to the
+    # nearest boundary base reading instead of tracking the (still
+    # varying) real external field, a real mechanism for a day-specific
+    # offset in exactly the stretch coverage_pct already warns about
+    # (e.g. the base logger powered on after takeoff or off before
+    # landing). Same length as drone_mag/corrected.
+    extrapolated_mask: np.ndarray
 
 
 def apply_diurnal_correction(
@@ -67,4 +76,5 @@ def apply_diurnal_correction(
         base_time_range=(base["timestamp"].min(), base["timestamp"].max()),
         drone_time_range=(drone_timestamps.min(), drone_timestamps.max()),
         has_overlap=bool(coverage_pct > 0),
+        extrapolated_mask=~within,
     )

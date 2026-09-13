@@ -1,98 +1,60 @@
-// Small dependency-free colormaps. Names match valid matplotlib colormap
-// names 1:1 so the same choice can be sent as the backend's `cmap` request
-// field for grid/transform PNG rendering and stay visually consistent with
-// the point layer's client-side coloring.
+// Exact 256-entry lookup tables for every colormap this app offers,
+// generated from matplotlib itself (the backend's renderer) so the
+// client-side point layer and the backend-rendered grid PNG assign
+// IDENTICAL colors to identical values. Previously the point layer
+// interpolated between 8-17 hand-listed control stops while the grid PNG
+// went through matplotlib's own 256-entry table, so the same value could
+// read as noticeably different colors depending on which layer it was
+// drawn in - confusing precisely when the point overlay is being used to
+// sanity-check the gridded surface beneath it.
+//
+// Each entry is one flat lowercase hex string of 256 concatenated rrggbb
+// triplets (1536 chars). Regenerate with matplotlib if a colormap is
+// added; names must stay valid matplotlib colormap names, since the same
+// string is sent to the backend as the `cmap` request field.
+const COLORMAP_LUTS = {
+  viridis:
+    "44015444025645045745055946075a46085c460a5d460b5e470d60470e6147106347116447136548146748166848176948186a481a6c481b6d481c6e481d6f481f70482071482173482374482475482576482677482878482979472a7a472c7a472d7b472e7c472f7d46307e46327e46337f463480453581453781453882443983443a83443b84433d84433e85423f854240864241864142874144874045884046883f47883f48893e49893e4a893e4c8a3d4d8a3d4e8a3c4f8a3c508b3b518b3b528b3a538b3a548c39558c39568c38588c38598c375a8c375b8d365c8d365d8d355e8d355f8d34608d34618d33628d33638d32648e32658e31668e31678e31688e30698e306a8e2f6b8e2f6c8e2e6d8e2e6e8e2e6f8e2d708e2d718e2c718e2c728e2c738e2b748e2b758e2a768e2a778e2a788e29798e297a8e297b8e287c8e287d8e277e8e277f8e27808e26818e26828e26828e25838e25848e25858e24868e24878e23888e23898e238a8d228b8d228c8d228d8d218e8d218f8d21908d21918c20928c20928c20938c1f948c1f958b1f968b1f978b1f988b1f998a1f9a8a1e9b8a1e9c891e9d891f9e891f9f881fa0881fa1881fa1871fa28720a38620a48621a58521a68522a78522a88423a98324aa8325ab8225ac8226ad8127ad8128ae8029af7f2ab07f2cb17e2db27d2eb37c2fb47c31b57b32b67a34b67935b77937b87838b9773aba763bbb753dbc743fbc7340bd7242be7144bf7046c06f48c16e4ac16d4cc26c4ec36b50c46a52c56954c56856c66758c7655ac8645cc8635ec96260ca6063cb5f65cb5e67cc5c69cd5b6ccd5a6ece5870cf5773d05675d05477d1537ad1517cd2507fd34e81d34d84d44b86d54989d5488bd6468ed64590d74393d74195d84098d83e9bd93c9dd93ba0da39a2da37a5db36a8db34aadc32addc30b0dd2fb2dd2db5de2bb8de29bade28bddf26c0df25c2df23c5e021c8e020cae11fcde11dd0e11cd2e21bd5e21ad8e219dae319dde318dfe318e2e418e5e419e7e419eae51aece51befe51cf1e51df4e61ef6e620f8e621fbe723fde725",
+  plasma:
+    "0d088710078813078916078a19068c1b068d1d068e20068f2206902406912605912805922a05932c05942e05952f059631059733059735049837049938049a3a049a3c049b3e049c3f049c41049d43039e44039e46039f48039f4903a04b03a14c02a14e02a25002a25102a35302a35502a45601a45801a45901a55b01a55c01a65e01a66001a66100a76300a76400a76600a76700a86900a86a00a86c00a86e00a86f00a87100a87201a87401a87501a87701a87801a87a02a87b02a87d03a87e03a88004a88104a78305a78405a78606a68707a68808a68a09a58b0aa58d0ba58e0ca48f0da4910ea3920fa39410a29511a19613a19814a099159f9a169f9c179e9d189d9e199da01a9ca11b9ba21d9aa31e9aa51f99a62098a72197a82296aa2395ab2494ac2694ad2793ae2892b02991b12a90b22b8fb32c8eb42e8db52f8cb6308bb7318ab83289ba3388bb3488bc3587bd3786be3885bf3984c03a83c13b82c23c81c33d80c43e7fc5407ec6417dc7427cc8437bc9447aca457acb4679cc4778cc4977cd4a76ce4b75cf4c74d04d73d14e72d24f71d35171d45270d5536fd5546ed6556dd7566cd8576bd9586ada5a6ada5b69db5c68dc5d67dd5e66de5f65de6164df6263e06363e16462e26561e26660e3685fe4695ee56a5de56b5de66c5ce76e5be76f5ae87059e97158e97257ea7457eb7556eb7655ec7754ed7953ed7a52ee7b51ef7c51ef7e50f07f4ff0804ef1814df1834cf2844bf3854bf3874af48849f48948f58b47f58c46f68d45f68f44f79044f79143f79342f89441f89540f9973ff9983ef99a3efa9b3dfa9c3cfa9e3bfb9f3afba139fba238fca338fca537fca636fca835fca934fdab33fdac33fdae32fdaf31fdb130fdb22ffdb42ffdb52efeb72dfeb82cfeba2cfebb2bfebd2afebe2afec029fdc229fdc328fdc527fdc627fdc827fdca26fdcb26fccd25fcce25fcd025fcd225fbd324fbd524fbd724fad824fada24f9dc24f9dd25f8df25f8e125f7e225f7e425f6e626f6e826f5e926f5eb27f4ed27f3ee27f3f027f2f227f1f426f1f525f0f724f0f921",
+  turbo:
+    "30123b32154333184a341b51351e5836215f37246638276d392a733a2d793b2f803c32863d358b3e38913f3b973f3e9c4040a24143a74146ac4249b1424bb5434eba4451bf4454c34456c74559cb455ccf455ed34661d64664da4666dd4669e0466be3476ee64771e94773eb4776ee4778f0477bf2467df44680f64682f84685fa4687fb458afc458cfd448ffe4391fe4294ff4196ff4099ff3e9bfe3d9efe3ba0fd3aa3fc38a5fb37a8fa35abf833adf731aff52fb2f42eb4f22cb7f02ab9ee28bceb27bee925c0e723c3e422c5e220c7df1fc9dd1ecbda1ccdd81bd0d51ad2d21ad4d019d5cd18d7ca18d9c818dbc518ddc218dec018e0bd19e2bb19e3b91ae4b61ce6b41de7b21fe9af20eaac22ebaa25eca727eea42aefa12cf09e2ff19b32f29835f39438f4913cf58e3ff68a43f78746f8844af8804ef97d52fa7a55fa7659fb735dfc6f61fc6c65fd6969fd666dfe6271fe5f75fe5c79fe597dff5680ff5384ff5188ff4e8bff4b8fff4992ff4796fe4499fe429cfe409ffd3fa1fd3da4fc3ca7fc3aa9fb39acfb38affa37b1f936b4f836b7f735b9f635bcf534bef434c1f334c3f134c6f034c8ef34cbed34cdec34d0ea34d2e935d4e735d7e535d9e436dbe236dde037dfdf37e1dd37e3db38e5d938e7d739e9d539ebd339ecd13aeecf3aefcd3af1cb3af2c93af4c73af5c53af6c33af7c13af8be39f9bc39faba39fbb838fbb637fcb336fcb136fdae35fdac34fea933fea732fea431fea130fe9e2ffe9b2dfe992cfe962bfe932afe9029fd8d27fd8a26fc8725fc8423fb8122fb7e21fa7b1ff9781ef9751df8721cf76f1af66c19f56918f46617f36315f26014f15d13f05b12ef5811ed5510ec530feb500eea4e0de84b0ce7490ce5470be4450ae2430ae14109df3f08dd3d08dc3b07da3907d83706d63506d43305d23105d02f05ce2d04cc2b04ca2a04c82803c52603c32503c12302be2102bc2002b91e02b71d02b41b01b21a01af1801ac1701a91601a71401a41301a112019e10019b0f01980e01950d01920b018e0a018b09028808028507028106027e05027a0403",
+  RdYlBu_r:
+    "313695323896333b97333d9934409a35429b36459c36479e374a9f384ca0394fa13a51a23a54a43b56a53c59a63d5ba73e5ea83e60aa3f62ab4065ac4167ad416aaf426cb0436fb14471b24574b34676b54878b64a7ab74b7db84d7fb94f81ba5183bb5385bd5588be578abf588cc05a8ec15c90c25e93c36095c46297c66399c7659bc8679ec969a0ca6ba2cb6da4cc6ea6ce70a9cf72abd074add176afd278b0d37ab2d47db4d57fb6d681b7d783b9d885bbd987bdd98abeda8cc0db8ec2dc90c3dd92c5de94c7df97c9e099cae19bcce29dcee39fd0e4a1d1e5a3d3e6a6d5e7a8d6e8aad8e9acdae9aedbeab0dceab2ddebb4deecb6dfecb9e0edbbe1edbde2eebfe3efc1e4efc3e5f0c5e6f0c7e7f1c9e8f2cbe9f2cdeaf3cfebf3d1ecf4d4edf4d6eef5d8eff6daf0f6dcf1f7def2f7e0f3f8e1f3f6e2f4f4e4f4f1e5f5efe6f5ede7f6ebe9f6e8eaf7e6ebf7e4ecf8e2edf8dfeff9ddf0f9dbf1fad9f2fad6f3fbd4f5fbd2f6fbd0f7fccef8fccbfafdc9fbfdc7fcfec5fdfec2feffc0fffebefffdbcfffcbafffbb9fffab7fff8b5fff7b3fff6b1fff5affff3adfff2acfff1aafff0a8feefa6feeda4feeca2feeba1feea9ffee99dfee79bfee699fee597fee496fee294fee192fee090fede8efedc8cfeda8afed889fed687fed485fed283fed081fece7ffecc7efeca7cfec87afdc778fdc576fdc374fdc173fdbf71fdbd6ffdbb6dfdb96bfdb769fdb567fdb366fdb164fdaf62fdad60fcaa5ffca85efca55dfba35cfba05bfb9d59fa9b58fa9857fa9656f99355f99153f98e52f88c51f88950f8864ff7844ef7814cf67f4bf67c4af67a49f57748f57547f57245f47044f46d43f36b42f26841f16640ef633fee613eed5f3cec5c3beb5a3aea5739e95538e75337e65036e54e35e44c34e34933e24731e14430e0422fde402edd3d2ddc3b2cdb382bda362ad93429d83128d62f27d42d27d22b27d02927ce2827cc2627ca2427c82227c62027c41e27c21c27c01a27be1827bd1726bb1526b91326b71126b50f26b30d26b10b26af0926ad0826ab0626a90426a70226a50026",
+  RdBu_r:
+    "05306106326407346708366a09386d0a3b700c3d730d3f760e41790f437b10457e114781124984134c87144e8a15508d1752901854931956961a58991b5a9c1c5c9f1d5fa21e61a51f63a82065ab2267ac2369ad246aae266caf276eb02870b12a71b22b73b32c75b42e77b52f79b5307ab6327cb7337eb83480b93681ba3783bb3885bc3a87bd3b88be3c8abe3e8cbf3f8ec0408fc14291c24393c34695c44997c54c99c64f9bc7529dc8569fc959a1ca5ca3cb5fa5cd62a7ce65a9cf68abd06bacd16eaed271b0d375b2d478b4d57bb6d67eb8d781bad884bcd987beda8ac0db8dc2dc90c4dd93c6de96c7df98c8e09bc9e09dcbe1a0cce2a2cde3a5cee3a7d0e4a9d1e5acd2e5aed3e6b1d5e7b3d6e8b6d7e8b8d8e9bbdaeabddbeac0dcebc2ddecc5dfecc7e0edcae1eecce2efcfe4efd1e5f0d2e6f0d4e6f1d5e7f1d7e8f1d8e9f1dae9f2dbeaf2ddebf2deebf2e0ecf3e1edf3e3edf3e4eef4e6eff4e7f0f4e9f0f4eaf1f5ecf2f5edf2f5eff3f5f0f4f6f2f5f6f3f5f6f5f6f7f6f7f7f7f6f6f7f5f4f8f4f2f8f3f0f8f2eff8f1edf9f0ebf9efe9f9eee7f9ede5f9ebe3faeae1fae9dffae8defae7dcfbe6dafbe5d8fbe4d6fbe3d4fce2d2fce0d0fcdfcffcdecdfdddcbfddcc9fddbc7fdd9c4fcd7c2fcd5bffcd3bcfbd0b9fbceb7fbccb4facab1fac8aff9c6acf9c4a9f9c2a7f8bfa4f8bda1f8bb9ef7b99cf7b799f7b596f6b394f6b191f6af8ef5ac8bf5aa89f5a886f4a683f3a481f2a17ff19e7df09c7bef9979ee9677ec9374eb9172ea8e70e98b6ee8896ce6866ae58368e48066e37e64e27b62e17860df765ede735cdd7059dc6e57db6b55da6853d86551d7634fd6604dd55d4cd35a4ad25849d05548cf5246ce4f45cc4c44cb4942c94741c84440c6413ec53e3dc43b3cc2383ac13639bf3338be3036bd2d35bb2a34ba2832b82531b72230b61f2eb41c2db3192cb1182bae172aab162aa81529a51429a213289f12289c1127991027960f27930e26900d268d0c258a0b25870a248409248108237f08237c07227906227605217304217003206d02206a011f67001f",
+  Spectral_r:
+    "5e4fa25c51a35b53a45956a55758a6555aa7545ca8525fa95061aa4e63ac4d65ad4b68ae496aaf486cb0466eb14471b24273b34175b43f77b53d79b63b7cb73a7eb83880b93682ba3585bb3387bc3389bd358bbc378ebb3990ba3b92b93d95b83f97b74199b6439bb5459eb447a0b349a2b24ba4b14ea7b050a9af52abae54aead56b0ad58b2ac5ab4ab5cb7aa5eb9a960bba862bda764c0a666c2a569c3a56bc4a56ec5a571c6a574c7a576c8a579c9a57ccaa57ecca581cda584cea586cfa589d0a48cd1a48fd2a491d3a494d4a497d5a499d6a49cd7a49fd8a4a2d9a4a4daa4a7dba4aadca4acdda4aedea3b1dfa3b3e0a2b5e1a2b8e2a1bae3a1bce4a0bfe5a0c1e6a0c3e79fc6e89fc8e99ecaea9ecdeb9dcfec9dd1ed9cd3ed9cd6ee9bd8ef9bdaf09addf19adff299e1f399e4f498e6f598e7f59ae8f69be9f69deaf79eebf7a0ecf7a1edf8a3eef8a4eff9a6f0f9a7f1f9a9f2faaaf3faacf4faadf5fbaff6fbb0f7fcb2f8fcb4f9fcb5fafdb7fbfdb8fcfebafdfebbfefebdffffbefffebefffdbcfffcbafffbb8fffab6fff8b4fff7b2fff6b0fff5aefff3acfff2aafff1a8fff0a6feefa3feeda1feec9ffeeb9dfeea9bfee999fee797fee695fee593fee491fee28ffee18dfee08bfede89fedc88feda86fed884fed683fed481fed27ffed07efece7cfecc7bfeca79fec877fdc776fdc574fdc372fdc171fdbf6ffdbd6dfdbb6cfdb96afdb768fdb567fdb365fdb163fdaf62fdad60fcaa5ffca85efca55dfba35cfba05bfb9d59fa9b58fa9857fa9656f99355f99153f98e52f88c51f88950f8864ff7844ef7814cf67f4bf67c4af67a49f57748f57547f57245f47044f46d43f36b43f26944f06744ef6645ee6445ed6246eb6046ea5e47e95c47e85b48e75948e55749e45549e3534ae2514ae1504bdf4e4bde4c4bdd4a4cdc484cda464dd9444dd8434ed7414ed63f4fd43d4fd23a4ed0384ecd364dcb334dc9314cc72e4cc52c4bc32a4bc1274abe254abc2249ba2049b81e48b61b48b41947b11747af1446ad1246ab0f45a90d45a70b44a40844a20643a003439e0142",
+  gray:
+    "0000000101010202020303030404040505050606060707070808080909090a0a0a0b0b0b0c0c0c0d0d0d0e0e0e0f0f0f1010101111111212121313131414141515151616161717171818181919191a1a1a1b1b1b1c1c1c1d1d1d1e1e1e1f1f1f2020202121212222222323232424242525252626262727272828282929292a2a2a2b2b2b2c2c2c2d2d2d2e2e2e2f2f2f3030303131313232323333333434343535353636363737373838383939393a3a3a3b3b3b3c3c3c3d3d3d3e3e3e3f3f3f4040404141414242424343434444444545454646464747474848484949494a4a4a4b4b4b4c4c4c4d4d4d4e4e4e4f4f4f5050505151515252525353535454545555555656565757575858585959595a5a5a5b5b5b5c5c5c5d5d5d5e5e5e5f5f5f6060606161616262626363636464646565656666666767676868686969696a6a6a6b6b6b6c6c6c6d6d6d6e6e6e6f6f6f7070707171717272727373737474747575757676767777777878787979797a7a7a7b7b7b7c7c7c7d7d7d7e7e7e7f7f7f8080808181818282828383838484848585858686868787878888888989898a8a8a8b8b8b8c8c8c8d8d8d8e8e8e8f8f8f9090909191919292929393939494949595959696969797979898989999999a9a9a9b9b9b9c9c9c9d9d9d9e9e9e9f9f9fa0a0a0a1a1a1a2a2a2a3a3a3a4a4a4a5a5a5a6a6a6a7a7a7a8a8a8a9a9a9aaaaaaabababacacacadadadaeaeaeafafafb0b0b0b1b1b1b2b2b2b3b3b3b4b4b4b5b5b5b6b6b6b7b7b7b8b8b8b9b9b9babababbbbbbbcbcbcbdbdbdbebebebfbfbfc0c0c0c1c1c1c2c2c2c3c3c3c4c4c4c5c5c5c6c6c6c7c7c7c8c8c8c9c9c9cacacacbcbcbcccccccdcdcdcecececfcfcfd0d0d0d1d1d1d2d2d2d3d3d3d4d4d4d5d5d5d6d6d6d7d7d7d8d8d8d9d9d9dadadadbdbdbdcdcdcdddddddedededfdfdfe0e0e0e1e1e1e2e2e2e3e3e3e4e4e4e5e5e5e6e6e6e7e7e7e8e8e8e9e9e9eaeaeaebebebecececedededeeeeeeefefeff0f0f0f1f1f1f2f2f2f3f3f3f4f4f4f5f5f5f6f6f6f7f7f7f8f8f8f9f9f9fafafafbfbfbfcfcfcfdfdfdfefefeffffff",
+  geosoft_rainbow:
+    "0a0a780a0c7b0b0e7e0b10810c12850c14880c168b0d188e0d1a910e1c940e1e970e209b0f229e0f23a10f25a41027a71029aa112bad112db0112fb41231b71233ba1335bd1337c01339c3143bc6143ec81342c91246ca114acb104ecc1052cc0f55cd0e59ce0d5dcf0d61cf0c65d00b69d10a6dd20971d30975d30879d4077dd50681d60585d70588d7048cd80390d90294da0298da019cdb00a0dc00a2db00a4da00a6d800a8d700aad600acd500aed400b0d300b2d100b4d000b6cf00b8ce00b9cd00bbcc00bdca00bfc900c1c800c3c700c5c600c7c400c9c300cbc200cdc100cfc000d1bf00d2bc00d1b800d1b400d1b000d0ac00d0a800cfa500cfa100cf9d00ce9900ce9500cd9100cd8d00cd8900cc8500cc8100cc7d00cb7900cb7500ca7200ca6e00ca6a00c96600c96200c85e00c85a05c9580bca5610ca5416cb521bcc5021cd4e26cd4c2cce4a31cf4837d0463cd14442d14247d2414dd33f52d43d58d53b5dd53963d63768d7356ed83373d83179d92f7eda2d84db2b89dc298fdd2794df259ae023a0e221a5e41fabe51db1e71bb6e919bceb17c2ec15c7ee13cdf011d2f10fd8f30edef50ce3f70ae9f808effa06f4fc04fafd02ffff00fffb00fff700fff400fff000ffec00ffe900ffe500ffe100ffde00ffda00ffd600ffd300ffcf00ffcb00ffc700ffc400ffc000ffbc00ffb900ffb500ffb100ffad00ffa800ffa400ff9f00ff9b00ff9600ff9200ff8e00ff8900ff8500ff8000ff7c00ff7800ff7300ff6f00ff6a00ff6600ff6100ff5d00ff5900fd5601fc5202fb4f03fa4b04f94805f74406f64107f53e08f43a09f2370af1330bf0300cef2c0ded290eec250feb2210ea1f11e91b12e71813e61414e5141ae31421e21428e0142fdf1436dd143cdc1443da144ad91451d71458d6145fd41466d3146dd21473d0147acf1481cd1488cc148fca1496c9149dc918a1cb1fa4cd26a7d02daad234add43bb0d642b3d849b6da50b9dc57bcdf5ebfe165c2e36cc5e573c8e77acbe981ceec88d1ee90d3f097d6f29ed9f4a5dcf6acdff9b3e2fbbae5fdc1e8ffc8eb",
+  cubehelix:
+    "0000000201020301030502050702060803080a030a0b040c0c050e0e050f0f0611100713110815120817130919140a1b150b1d160c1f160d21170e23180f2518102719112919122b19132d1a142f1a16311a17331a18351b1a361b1b381b1c3a1b1e3b1b1f3d1a213e1a22401a24411a25431a2744192845192a46192c47192d48182f4918314a18324b17344c17364c17374d16394d163b4e163d4e163f4e16404e15424e15444f15464e15474e15494e154b4e154d4e154e4d15504d15524c16534c16554b16574b17584a175a49185b48195d48195e471a60461b61451c63441d64431e65421f674120684022693f236a3e256b3d266c3c286d3b2a6e3a2b6f392d70382f71373172363373353574353874343a75333c76323f76324177314477314678304978304c792f4e792f51792f54792f577a2f5a7a2f5d7a2f607a2f637a2f667a30697b306c7b316f7b31727b32757b33787b347b7a357e7a36817a37847a38877a3a8a7a3b8d7a3d907a3e937a40967a429979449c79469f7948a1794aa4794ca7794fa97951ac7954ae7956b17959b3795bb5795eb77961b97964bc7967be796abf796dc17a70c37a73c57a76c67a79c87b7cc97b7fca7c83cc7c86cd7d89ce7d8ccf7e8fd07e93d17f96d18099d2809cd381a0d382a3d383a6d484a9d485acd486afd487b2d588b5d589b8d48abbd48cbed48dc1d48ec3d490c6d391c9d392cbd294ced295d0d297d2d198d4d09ad7d09cd9cf9ddbcf9fddcea1dfcda2e0cca4e2cca6e4cba8e5caa9e7caabe8c9ade9c8afeac8b1ecc7b2edc6b4eec6b6eec5b8efc5baf0c4bcf1c4bdf1c3bff2c3c1f2c2c3f2c2c5f3c2c6f3c2c8f3c1caf3c1ccf3c1cdf3c1cff3c1d1f3c2d2f3c2d4f3c2d6f3c2d7f3c3d9f3c3daf2c4dcf2c4ddf2c5dff2c6e0f1c6e1f1c7e3f1c8e4f0c9e5f0cae7f0cbe8f0cce9efcdeaefcfebefd0ecefd1edefd3eeefd4efefd6f0efd7f1efd9f2efdbf3efdcf3efdef4efe0f5f0e2f6f0e3f6f0e5f7f1e7f8f1e9f8f2ebf9f3edfaf4effaf4f0fbf5f2fbf6f4fcf7f6fcf8f8fdfafafdfbfbfefcfdfefeffffff",
+};
 
-const VIRIDIS_STOPS = [
-  [68, 1, 84], [72, 40, 120], [62, 74, 137], [49, 104, 142],
-  [38, 130, 142], [31, 158, 137], [53, 183, 121], [109, 205, 89],
-  [180, 222, 44], [253, 231, 37],
-];
+const COLORMAP_CACHE = new Map();
 
-const PLASMA_STOPS = [
-  [13, 8, 135], [84, 2, 163], [139, 10, 165], [185, 50, 137],
-  [219, 92, 104], [244, 136, 73], [254, 188, 43], [240, 249, 33],
-];
-
-const TURBO_STOPS = [
-  [48, 18, 59], [65, 69, 171], [70, 117, 237], [57, 162, 237],
-  [24, 199, 197], [63, 220, 140], [146, 231, 73], [216, 215, 44],
-  [247, 161, 38], [231, 90, 15], [122, 4, 3],
-];
-
-// low -> high already in "reversed" (red = high) orientation
-const RDYLBU_R_STOPS = [
-  [49, 54, 149], [69, 117, 180], [116, 173, 209], [171, 217, 233],
-  [224, 243, 248], [255, 255, 191], [254, 224, 144], [253, 174, 97],
-  [244, 109, 67], [215, 48, 39], [165, 0, 38],
-];
-
-const RDBU_R_STOPS = [
-  [5, 48, 97], [33, 102, 172], [67, 147, 195], [146, 197, 222],
-  [209, 229, 240], [253, 219, 199], [244, 165, 130], [214, 96, 77],
-  [178, 24, 43], [103, 0, 31],
-];
-
-const SPECTRAL_R_STOPS = [
-  [94, 79, 162], [50, 136, 189], [102, 194, 165], [171, 221, 164],
-  [230, 245, 152], [255, 255, 191], [254, 224, 139], [253, 174, 97],
-  [244, 109, 67], [213, 62, 79], [158, 1, 66],
-];
-
-const GRAY_STOPS = [
-  [20, 20, 20], [255, 255, 255],
-];
-
-// Approximates the classic Geosoft Oasis Montaj default grid color table
-// (dark blue -> blue -> cyan -> green -> yellow -> orange -> red -> magenta
-// -> pink). Control points are unevenly spaced, unlike the other palettes
-// above, so they're resampled into an evenly-spaced array once at load time
-// (matches backend/app/processing/colormaps.py's control points).
-const GEOSOFT_RAINBOW_CONTROL_POINTS = [
-  [0.0, [10, 10, 120]],
-  [0.1, [20, 60, 200]],
-  [0.2, [0, 160, 220]],
-  [0.3, [0, 210, 190]],
-  [0.4, [0, 200, 90]],
-  [0.5, [140, 220, 40]],
-  [0.58, [255, 255, 0]],
-  [0.66, [255, 180, 0]],
-  [0.74, [255, 90, 0]],
-  [0.82, [230, 20, 20]],
-  [0.9, [200, 20, 160]],
-  [1.0, [255, 200, 235]],
-];
-
-function resampleControlPoints(controlPoints, n) {
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1);
-    let j = 0;
-    while (j < controlPoints.length - 2 && controlPoints[j + 1][0] < t) j++;
-    const [t0, c0] = controlPoints[j];
-    const [t1, c1] = controlPoints[j + 1];
-    const frac = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
-    out.push([
-      Math.round(c0[0] + (c1[0] - c0[0]) * frac),
-      Math.round(c0[1] + (c1[1] - c0[1]) * frac),
-      Math.round(c0[2] + (c1[2] - c0[2]) * frac),
-    ]);
+// Decode "rrggbb..." into an array of 256 "rgb(r,g,b)" strings, once per
+// colormap on first use.
+function decodeLut(hex) {
+  const out = new Array(256);
+  for (let i = 0; i < 256; i++) {
+    const j = i * 6;
+    out[i] = `rgb(${parseInt(hex.slice(j, j + 2), 16)},${parseInt(hex.slice(j + 2, j + 4), 16)},${parseInt(hex.slice(j + 4, j + 6), 16)})`;
   }
   return out;
 }
 
-const GEOSOFT_RAINBOW_STOPS = resampleControlPoints(GEOSOFT_RAINBOW_CONTROL_POINTS, 64);
-
-const COLORMAPS = {
-  viridis: VIRIDIS_STOPS,
-  plasma: PLASMA_STOPS,
-  turbo: TURBO_STOPS,
-  RdYlBu_r: RDYLBU_R_STOPS,
-  RdBu_r: RDBU_R_STOPS,
-  Spectral_r: SPECTRAL_R_STOPS,
-  gray: GRAY_STOPS,
-  geosoft_rainbow: GEOSOFT_RAINBOW_STOPS,
-};
+function lutFor(cmapName) {
+  const key = COLORMAP_LUTS[cmapName] ? cmapName : "viridis";
+  let lut = COLORMAP_CACHE.get(key);
+  if (!lut) {
+    lut = decodeLut(COLORMAP_LUTS[key]);
+    COLORMAP_CACHE.set(key, lut);
+  }
+  return lut;
+}
 
 export const COLORMAP_OPTIONS = [
   { value: "viridis", label: "Viridis (연속)" },
@@ -103,29 +65,53 @@ export const COLORMAP_OPTIONS = [
   { value: "Spectral_r", label: "Spectral (발산)" },
   { value: "gray", label: "Grayscale" },
   { value: "geosoft_rainbow", label: "Geosoft Rainbow (물리탐사 표준)" },
+  { value: "cubehelix", label: "Cubehelix (지각 균일 레인보우, UAV 가이드라인 권장)" },
 ];
 
-function interpolateStops(stops, t) {
-  const clamped = Math.min(1, Math.max(0, t));
-  const scaled = clamped * (stops.length - 1);
-  const i0 = Math.floor(scaled);
-  const i1 = Math.min(stops.length - 1, i0 + 1);
-  const frac = scaled - i0;
-  const c0 = stops[i0];
-  const c1 = stops[i1];
-  const r = Math.round(c0[0] + (c1[0] - c0[0]) * frac);
-  const g = Math.round(c0[1] + (c1[1] - c0[1]) * frac);
-  const b = Math.round(c0[2] + (c1[2] - c0[2]) * frac);
-  return `rgb(${r},${g},${b})`;
-}
-
 export function getColorFn(cmapName) {
-  const stops = COLORMAPS[cmapName] || COLORMAPS.viridis;
-  return (t) => interpolateStops(stops, t);
+  const lut = lutFor(cmapName);
+  // matplotlib's own index rule for a float in [0, 1]:
+  // floor(t * N), with t == 1 folded back onto the last entry. Matching
+  // it exactly (rather than interpolating between entries) is what makes
+  // the point colors byte-identical to the rendered grid's.
+  return (t) => lut[Math.max(0, Math.min(255, Math.floor((Number.isFinite(t) ? t : 0) * 256)))];
 }
 
-export function makeColorScale(cmapName, vmin, vmax) {
+export function makeColorScale(cmapName, vmin, vmax, colorStops) {
   const fn = getColorFn(cmapName);
+
+  // colorStops are the data values whose colors sit at evenly spaced
+  // positions of the color bar, as the server rendered the grid image
+  // (render.py:_stretch_stops). Interpolating a value's position through
+  // them reproduces whichever stretch that image used - which matters
+  // because these points are drawn on top of that image: color them by a
+  // plain linear ramp instead and every flight line reads as a stripe of
+  // the wrong color, an artifact easily mistaken for a leveling error in
+  // the data. With no stops (no grid displayed) a linear ramp is right.
+  if (Array.isArray(colorStops) && colorStops.length > 1) {
+    const stops = colorStops;
+    const last = stops.length - 1;
+    return (value) => {
+      if (!Number.isFinite(value)) return fn(0);
+      if (value <= stops[0]) return fn(0);
+      if (value >= stops[last]) return fn(1);
+      // Binary search for the bracketing pair; stops are monotone
+      // non-decreasing by construction.
+      let lo = 0;
+      let hi = last;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (stops[mid] <= value) lo = mid;
+        else hi = mid;
+      }
+      const width = stops[hi] - stops[lo];
+      // Equal stops mean a flat run in the stretch (e.g. a repeated
+      // quantile); anywhere in it maps to the run's own position.
+      const withinPair = width > 0 ? (value - stops[lo]) / width : 0;
+      return fn((lo + withinPair) / last);
+    };
+  }
+
   const span = vmax - vmin || 1;
   return (value) => fn((value - vmin) / span);
 }
