@@ -35,6 +35,7 @@ from .models import (
     ManualExcludeRequest,
     AutoBoundaryRequest,
     DisplayBoundaryRequest,
+    AnomalyCandidateRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
     NearestIntermagnetRequest,
@@ -522,6 +523,12 @@ def qc_certificate(project_id: str, req: QcCertificateRequest):
 def structure_scan(project_id: str, req: StructureScanRequest):
     project = store.get(project_id)
     return project.scan_structure_distortion(req)
+
+
+@app.post("/api/projects/{project_id}/anomaly-candidates")
+def anomaly_candidates(project_id: str, req: AnomalyCandidateRequest):
+    project = store.get(project_id)
+    return project.scan_anomaly_candidates(req)
 
 
 @app.post("/api/projects/{project_id}/multiscale-edges")

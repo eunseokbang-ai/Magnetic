@@ -546,6 +546,72 @@ function StructureCandidateLayer({ result, selectedPolygonIndices, selectedAnoma
   return null;
 }
 
+// Ranked local anomalies offered as removal candidates
+// (processing/anomaly_candidates.py) - a numbered marker over each peak
+// with its suggested region around it, so ten places worth looking at can
+// be worked through in order instead of hunted for by eye.
+function AnomalyCandidateLayer({ result, selectedIndices }) {
+  const map = useMap();
+  const groupRef = useRef(null);
+
+  useEffect(() => {
+    const group = L.layerGroup().addTo(map);
+    groupRef.current = group;
+    return () => group.remove();
+  }, [map]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.clearLayers();
+    if (!result) return;
+
+    (result.candidates || []).forEach((c, i) => {
+      const selected = selectedIndices?.has(i);
+      // orange for anything the operator still has to check by hand (a
+      // single-line feature, or one against the edge of coverage), teal
+      // for a candidate several lines agree on
+      const suspect = c.single_line || c.at_coverage_edge;
+      const color = suspect ? "#b45309" : "#0f766e";
+
+      if (c.polygon && c.polygon.length >= 3) {
+        group.addLayer(
+          L.polygon(c.polygon, {
+            color,
+            weight: selected ? 3 : 1.5,
+            fillColor: color,
+            fillOpacity: selected ? 0.3 : 0.08,
+            dashArray: selected ? null : "4,3",
+          })
+        );
+      }
+
+      const marker = L.marker([c.lat, c.lon], {
+        icon: L.divIcon({
+          className: "",
+          html:
+            `<div style="width:22px;height:22px;border-radius:11px;background:${color};` +
+            `border:2px solid ${selected ? "#2c2418" : "white"};color:white;font:700 12px/18px sans-serif;` +
+            `text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.4)">${c.rank}</div>`,
+          iconSize: [22, 22],
+          iconAnchor: [11, 11],
+        }),
+      });
+      marker.bindTooltip(
+        `#${c.rank} ${c.peak_anomaly_nt.toFixed(1)} nT (${c.polarity === "max" ? "최대" : "최소"})<br/>` +
+          `깊이 약 ${c.depth_m.toFixed(1)} m · 반경 ${c.radius_m.toFixed(0)} m<br/>` +
+          `측선 ${c.n_lines}개 · 자료점 ${c.n_points}개` +
+          (c.single_line ? "<br/>단일 측선 — 프로파일 확인 필요" : "") +
+          (c.at_coverage_edge ? "<br/>자료 경계 — 가장자리 효과 주의" : ""),
+        { sticky: true }
+      );
+      group.addLayer(marker);
+    });
+  }, [result, selectedIndices]);
+
+  return null;
+}
+
 // Magnetic lineaments (processing/lineaments.py::extract_lineaments) as
 // polylines, colored by strike (0-180deg mapped to a hue wheel so parallel
 // structures read as the same color at a glance - matching the rose
@@ -856,6 +922,8 @@ export default function MapView({
   measurements,
   onMeasureShapeDrawn,
   structureScanResult,
+  anomalyCandidateResult,
+  selectedAnomalyCandidateIndices,
   selectedStructurePolygonIndices,
   selectedStructureAnomalyIndices,
   boundaryMode,
@@ -987,6 +1055,9 @@ export default function MapView({
           <ImageOverlay url={prospectivityOverlay.image_data_url} bounds={prospectivityOverlay.bounds} opacity={0.6} />
         ))}
       {prospectivityTargets && <ProspectivityTargetLayer targets={prospectivityTargets} />}
+      {anomalyCandidateResult && (
+        <AnomalyCandidateLayer result={anomalyCandidateResult} selectedIndices={selectedAnomalyCandidateIndices} />
+      )}
       {structureScanResult && (
         <StructureCandidateLayer
           result={structureScanResult}

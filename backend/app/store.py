@@ -19,6 +19,7 @@ from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
 from .models import (
     AnalyticSignalDepthRequest,
+    AnomalyCandidateRequest,
     ContactDetectionRequest,
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
@@ -59,6 +60,7 @@ from .processing.intermagnet import (
     select_nearest_observatories,
 )
 from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
+from .processing.anomaly_candidates import SUPPORT_RADIUS_LINE_SPACINGS, find_anomaly_candidates
 from .processing.despike import despike
 from .processing.dipole_fit import classify_moment, detect_targets
 from .processing.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
@@ -2989,6 +2991,123 @@ class Project:
             "anomalies": anomaly_dicts,
             "n_anomalies": len(anomaly_dicts),
             "n_matched": sum(1 for a in anomaly_dicts if a["matched_structure"]),
+        }
+
+    def scan_anomaly_candidates(self, req: AnomalyCandidateRequest) -> dict:
+        """Rank the strongest local anomalies in the block and suggest a
+        removal region for each - the "start editing" step of cultural
+        noise removal, on a survey where the structures are stronger than
+        the geology being looked for.
+
+        Unlike scan_structure_distortion this needs no OpenStreetMap
+        footprints and makes no claim about what any candidate *is*: it
+        reports where the field is most extreme, how compact it is, how
+        deep its source sits, and how many flight lines actually crossed
+        it, and leaves the structure-or-geology call to the operator.
+        That is deliberate - the two are only separable by judgement where
+        they overlap, and the stated workflow is to take the cleanly
+        isolated cultural anomalies first.
+
+        See processing/anomaly_candidates.py for why candidates are ranked
+        on the analytic signal by default and why the suggested region is
+        sized from the anomaly's own half-width.
+        """
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        if req.field == "rtp" and self.inclination_deg is None:
+            raise ProjectError("RTP 기준으로 순위를 매기려면 지자기 경사각 정보가 필요합니다.")
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다.")
+
+        active = self._active_mask()
+        df = self.processed.loc[active]
+        if df.empty:
+            raise ProjectError("유효한 측선 포인트가 없습니다.")
+
+        # Along-line smoothing stays ON here, unlike run_target_detection.
+        # This hunts for sources big enough to be seen across several
+        # flight lines; anything finer than the line spacing is corrugation
+        # as far as the grid is concerned, and letting it through would
+        # rank levelling stripes among the ten strongest "anomalies".
+        grid = self._grid_for("anomaly", req.cell_size_m, req.method, req.max_distance_m)
+        anomaly = grid.values
+
+        if req.field == "as":
+            ranking = analytic_signal(anomaly, grid.cell_size_m)
+        elif req.field == "rtp":
+            ranking = reduction_to_pole(
+                anomaly, grid.cell_size_m, self.inclination_deg, self.declination_deg
+            )
+        elif req.field == "residual":
+            ranking, _trend = remove_regional_trend(
+                anomaly, grid.easting, grid.northing, order=req.trend_order
+            )
+        else:
+            ranking = anomaly
+
+        candidates = find_anomaly_candidates(
+            ranking,
+            anomaly,
+            grid.easting,
+            grid.northing,
+            grid.cell_size_m,
+            n_candidates=req.n_candidates,
+            region_level_fraction=req.region_level_fraction,
+            region_margin_m=req.region_margin_m,
+            max_radius_m=req.max_radius_m,
+            min_separation_m=req.min_separation_m,
+            point_x=df["x"].to_numpy(),
+            point_y=df["y"].to_numpy(),
+            point_line_id=df["line_id"].to_numpy(),
+            support_radius_m=(
+                req.support_radius_m
+                if req.support_radius_m is not None
+                else (
+                    SUPPORT_RADIUS_LINE_SPACINGS * self.line_spacing_m
+                    if self.line_spacing_m
+                    else None
+                )
+            ),
+        )
+
+        transformer = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
+        out = []
+        for c in candidates:
+            lon, lat = transformer.transform(c.x, c.y)
+            if c.polygon_xy:
+                ring_lon, ring_lat = transformer.transform(
+                    [p[0] for p in c.polygon_xy], [p[1] for p in c.polygon_xy]
+                )
+                polygon = [[float(la), float(lo)] for la, lo in zip(ring_lat, ring_lon)]
+            else:
+                polygon = []
+            out.append(
+                {
+                    "rank": c.rank,
+                    "lat": float(lat),
+                    "lon": float(lon),
+                    "ranking_value": c.ranking_value,
+                    "peak_anomaly_nt": c.peak_anomaly_nt,
+                    "polarity": c.polarity,
+                    "half_width_m": c.half_width_m,
+                    "depth_m": c.depth_m,
+                    "radius_m": c.radius_m,
+                    "n_lines": c.n_lines,
+                    "n_points": c.n_points,
+                    "single_line": c.single_line,
+                    "at_coverage_edge": c.at_coverage_edge,
+                    "region_capped": c.region_capped,
+                    "depth_resolved": c.depth_resolved,
+                    "polygon": polygon,
+                }
+            )
+
+        return {
+            "field": req.field,
+            "cell_size_m": grid.cell_size_m,
+            "line_spacing_m": self.line_spacing_m,
+            "n_candidates": len(out),
+            "candidates": out,
         }
 
     def load_dem(self, data: bytes, name: str) -> dict:

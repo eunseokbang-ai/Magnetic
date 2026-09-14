@@ -847,6 +847,51 @@ class StructureScanRequest(BaseModel):
     min_fit_quality: float = Field(0.2, ge=0, le=1)
 
 
+# What candidate peaks are ranked on. "as" (analytic signal) is the
+# default because it puts one peak over each source regardless of
+# magnetization direction; the raw anomaly instead splits every compact
+# source into a positive peak and a negative lobe, so the same object
+# would take two of the ten slots. See processing/anomaly_candidates.py
+# for the measured comparison.
+CandidateField = Literal["as", "rtp", "residual", "anomaly"]
+
+
+class AnomalyCandidateRequest(BaseModel):
+    """List the strongest local anomalies in the survey, each with a
+    suggested removal region, so ground structures can be worked through
+    one at a time instead of hunted for by eye - see
+    processing/anomaly_candidates.py and
+    store.py::scan_anomaly_candidates.
+
+    This finds and ranks; it removes nothing. The regions it suggests are
+    fed to the existing ManualSmoothRequest(mode="polygons") once the
+    operator has chosen which ones are structures and which are geology."""
+    field: CandidateField = "as"
+    n_candidates: int = Field(10, gt=0, le=100)
+    cell_size_m: float = Field(2.0, gt=0)
+    method: GridMethod = DEFAULT_GRID_METHOD
+    max_distance_m: Optional[float] = None
+    # Order of the polynomial regional removed when field="residual".
+    trend_order: int = Field(1, ge=1, le=3)
+    # Level the suggested region is grown down to, as a fraction of the
+    # candidate's own peak.
+    region_level_fraction: float = Field(0.25, gt=0, lt=1)
+    # How far the region is pushed out past the grown blob. None = one
+    # estimated source depth, which is what it takes to get a compact
+    # source's negative lobe inside the region instead of leaving it
+    # behind as a crater.
+    region_margin_m: Optional[float] = Field(None, gt=0)
+    # A region wanting to grow beyond this is not a compact source.
+    max_radius_m: float = Field(60.0, gt=0)
+    # How far apart two candidates must be. None = 2.5x the first one's
+    # own region radius.
+    min_separation_m: Optional[float] = Field(None, gt=0)
+    # How far a candidate's peak may be from the nearest sample. None =
+    # 0.75 line spacings, which keeps the search on ground the survey
+    # actually flew instead of on the interpolator's fill between blocks.
+    support_radius_m: Optional[float] = Field(None, gt=0)
+
+
 class MultiscaleEdgeRequest(BaseModel):
     # Multi-scale edge detection ("worming") - see
     # processing/multiscale_edges.py. Traces THDR ridges at a series of

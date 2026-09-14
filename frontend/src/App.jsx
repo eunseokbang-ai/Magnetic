@@ -31,6 +31,7 @@ import QcCertificatePanel from "./components/QcCertificatePanel";
 import LineamentPanel from "./components/LineamentPanel";
 import DepthEstimationPanel from "./components/DepthEstimationPanel";
 import StructureDistortionPanel from "./components/StructureDistortionPanel";
+import AnomalyCandidatePanel from "./components/AnomalyCandidatePanel";
 import ContactPanel from "./components/ContactPanel";
 import ProspectivityPanel from "./components/ProspectivityPanel";
 
@@ -124,6 +125,16 @@ const DEFAULT_STRUCTURE_SCAN_PARAMS = {
   fit_window_m: 25.0,
   max_depth_m: 10.0,
   min_fit_quality: 0.2,
+};
+
+// Ranked removal candidates - see processing/anomaly_candidates.py for
+// why "as" (analytic signal) is the ranking field and why the region is
+// sized from the anomaly's own half-width rather than a fixed radius.
+const DEFAULT_ANOMALY_CANDIDATE_PARAMS = {
+  field: "as",
+  n_candidates: 10,
+  cell_size_m: 5.0,
+  max_radius_m: 60.0,
 };
 
 const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
@@ -512,6 +523,13 @@ export default function App() {
   const [structureScanError, setStructureScanError] = useState(null);
   const [structureScanShow, setStructureScanShow] = useState(true);
   const [structureScanApplying, setStructureScanApplying] = useState(false);
+  const [candidateParams, setCandidateParams] = useState(DEFAULT_ANOMALY_CANDIDATE_PARAMS);
+  const [candidateRunning, setCandidateRunning] = useState(false);
+  const [candidateResult, setCandidateResult] = useState(null);
+  const [candidateError, setCandidateError] = useState(null);
+  const [candidateShow, setCandidateShow] = useState(true);
+  const [candidateApplying, setCandidateApplying] = useState(false);
+  const [selectedCandidateIndices, setSelectedCandidateIndices] = useState(new Set());
   const [selectedStructurePolygonIndices, setSelectedStructurePolygonIndices] = useState(new Set());
   const [selectedStructureAnomalyIndices, setSelectedStructureAnomalyIndices] = useState(new Set());
 
@@ -1767,6 +1785,59 @@ export default function App() {
     });
   };
 
+  const handleRunAnomalyCandidates = async () => {
+    try {
+      setCandidateError(null);
+      setCandidateRunning(true);
+      const resp = await api.scanAnomalyCandidates(projectId, candidateParams);
+      setCandidateResult(resp);
+      // nothing pre-selected: which of these are structures and which are
+      // geology is the operator's call, and the panel says so
+      setSelectedCandidateIndices(new Set());
+    } catch (e) {
+      setCandidateResult(null);
+      setCandidateError(e.message || String(e));
+    } finally {
+      setCandidateRunning(false);
+    }
+  };
+
+  const handleToggleCandidate = (i) => {
+    setSelectedCandidateIndices((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const handleApplyCandidateSmoothing = async () => {
+    if (!candidateResult) return;
+    try {
+      setError(null);
+      setCandidateApplying(true);
+      const polygons = [];
+      for (const i of selectedCandidateIndices) {
+        const c = candidateResult.candidates[i];
+        if (c?.polygon?.length >= 3) polygons.push(c.polygon);
+      }
+      if (polygons.length === 0) return;
+      const summary = await api.applySmoothing(projectId, { mode: "polygons", polygons });
+      if (Array.isArray(summary.manual_smooth_point_ids)) {
+        setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
+      }
+      await _afterSmoothingApplied(summary);
+      // the field has changed underneath them, so the old ranking no
+      // longer describes it - rerun to see what is left
+      setSelectedCandidateIndices(new Set());
+      await handleRunAnomalyCandidates();
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setCandidateApplying(false);
+    }
+  };
+
   const handleApplyStructureSmoothing = async () => {
     if (!structureScanResult) return;
     try {
@@ -2433,6 +2504,8 @@ export default function App() {
           measureMode={measureMode}
           measurements={measurements}
           onMeasureShapeDrawn={handleMeasureShapeDrawn}
+          anomalyCandidateResult={candidateShow ? candidateResult : null}
+          selectedAnomalyCandidateIndices={selectedCandidateIndices}
           structureScanResult={structureScanShow ? structureScanResult : null}
           selectedStructurePolygonIndices={selectedStructurePolygonIndices}
           selectedStructureAnomalyIndices={selectedStructureAnomalyIndices}
@@ -2557,7 +2630,29 @@ export default function App() {
           onToggleShowRampPoints={setShowRampPoints}
         />
 
-        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-1. 지상구조물 왜곡 자동탐지 (OSM + 신호분석)</h2>
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-1. 이상 후보 표시 후 수동 제거 (편집 모드)</h2>
+        <AnomalyCandidatePanel
+          ready={!!processSummary}
+          params={candidateParams}
+          setParams={setCandidateParams}
+          onRun={handleRunAnomalyCandidates}
+          running={candidateRunning}
+          result={candidateResult}
+          error={candidateError}
+          showOnMap={candidateShow}
+          setShowOnMap={setCandidateShow}
+          selectedIndices={selectedCandidateIndices}
+          onToggle={handleToggleCandidate}
+          onSelectAll={() =>
+            setSelectedCandidateIndices(new Set((candidateResult?.candidates || []).map((_c, i) => i)))
+          }
+          onClearSelection={() => setSelectedCandidateIndices(new Set())}
+          onFocusCandidate={(c) => setFlyToTarget({ lat: c.lat, lon: c.lon, nonce: Date.now() })}
+          onApplySelected={handleApplyCandidateSmoothing}
+          applying={candidateApplying}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-2. 지상구조물 왜곡 자동탐지 (OSM + 신호분석)</h2>
         <StructureDistortionPanel
           ready={!!processSummary}
           params={structureScanParams}
