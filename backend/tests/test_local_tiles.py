@@ -29,6 +29,33 @@ def _reset_registry():
     local_tiles._registry.clear()
 
 
+@pytest.fixture(autouse=True)
+def _never_open_a_real_dialog(monkeypatch):
+    """No test may open the native folder picker.
+
+    pick_folder_dialog() opens a real, modal Tk window on whatever machine
+    runs the backend - which during a test run is the developer's own
+    screen. A test that reaches it does not fail; it blocks, with the rest
+    of the suite behind it, until somebody notices the window and dismisses
+    it. That is what it looked like when the suite appeared to hang
+    part-way through on a machine that has tkinter installed.
+
+    So Tk itself is made unavailable for the duration. A test that wants
+    the dialog's behaviour patches pick_folder_dialog directly and never
+    gets here; anything else fails fast down the documented "no display"
+    path instead of waiting for a human.
+    """
+    try:
+        import tkinter
+    except ImportError:
+        return
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("tests must not open the native folder dialog")
+
+    monkeypatch.setattr(tkinter, "Tk", refuse)
+
+
 def test_register_rejects_missing_folder(tmp_path):
     with pytest.raises(local_tiles.LocalTileError, match="찾을 수 없습니다"):
         local_tiles.register_local_tile_folder(str(tmp_path / "does_not_exist"))
@@ -169,9 +196,10 @@ def test_get_tile_returns_none_for_unknown_layer_id():
 
 
 def test_pick_folder_dialog_raises_clear_error_without_tkinter(monkeypatch):
-    # This sandbox has no tkinter (headless, no display) - exercises the
-    # exact fallback path a cloud/headless deployment would hit, since a
-    # dialog can't be shown there either way.
+    # Exercises the fallback a headless deployment hits, by making the
+    # import fail the way it would there. tkinter is missing on some
+    # machines and present on others, so the condition is simulated rather
+    # than relied on.
     import builtins
 
     real_import = builtins.__import__
@@ -186,13 +214,34 @@ def test_pick_folder_dialog_raises_clear_error_without_tkinter(monkeypatch):
         local_tiles.pick_folder_dialog()
 
 
-def test_pick_folder_endpoint_returns_clear_error_without_tkinter():
-    # Same headless-environment situation as the unit test above, but
-    # exercised through the actual /api/local-tiles/pick-folder route to
-    # confirm LocalTileError (a ValueError subclass) is turned into a
-    # proper 400 with the Korean message by main.py's generic handler.
-    client = TestClient(app)
-    r = client.post("/api/local-tiles/pick-folder")
+def test_the_dialog_cannot_be_opened_from_a_test():
+    """The guard above, pinned - and with it pick_folder_dialog's second
+    error path, for a machine that has tkinter but no display to put a
+    window on. Whichever of the two applies here, reaching this function
+    from a test must raise rather than wait for someone to click."""
+    with pytest.raises(local_tiles.LocalTileError):
+        local_tiles.pick_folder_dialog()
+
+
+def test_pick_folder_endpoint_turns_a_dialog_failure_into_a_400(monkeypatch):
+    # What this is really about is main.py's generic handler: LocalTileError
+    # is a ValueError subclass, and the route has to come back as a 400
+    # carrying its Korean message rather than a 500.
+    #
+    # The failure is injected instead of being provoked by a machine that
+    # happens to lack tkinter. Calling the route for real would open the
+    # native folder picker and block the suite on a machine that has it -
+    # and on a machine that hasn't, the test would be asserting something
+    # about the host rather than about the route.
+    def no_dialog_here(*_args, **_kwargs):
+        raise local_tiles.LocalTileError(
+            "이 서버 환경에서는 폴더 선택 창을 지원하지 않습니다 (tkinter 미설치) - 경로를 직접 입력하세요."
+        )
+
+    monkeypatch.setattr(local_tiles, "pick_folder_dialog", no_dialog_here)
+
+    r = TestClient(app).post("/api/local-tiles/pick-folder")
+
     assert r.status_code == 400, r.text
     assert "tkinter" in r.json()["detail"]
 
