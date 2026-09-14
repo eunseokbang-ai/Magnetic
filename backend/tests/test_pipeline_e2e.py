@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
@@ -498,7 +499,7 @@ def _check_inversion(client, project_id, pts):
     df = project.processed
     xmin, xmax = df["x"].min() - 500, df["x"].max() + 500
     ymin, ymax = df["y"].min() - 500, df["y"].max() + 500
-    dem_path = "/tmp/_e2e_inversion_dem.tif"
+    dem_path = str(pathlib.Path(tempfile.gettempdir()) / "_e2e_inversion_dem.tif")
     w, h = 60, 60
     transform = from_origin(xmin, ymax, (xmax - xmin) / w, (ymax - ymin) / h)
     crs = CRS.from_epsg(project.utm_epsg)
@@ -633,7 +634,7 @@ def _check_overlay_image_upload(client):
     from rasterio.crs import CRS
     from rasterio.transform import from_origin
 
-    path = "/tmp/_e2e_test_overlay.tif"
+    path = str(pathlib.Path(tempfile.gettempdir()) / "_e2e_test_overlay.tif")
     transform = from_origin(590000, 5155000, 10, 10)
     crs = CRS.from_epsg(32648)
     data = (np.indices((50, 50)).sum(axis=0) % 3).astype("uint8")

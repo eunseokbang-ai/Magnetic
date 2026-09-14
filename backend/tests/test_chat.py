@@ -94,11 +94,11 @@ def test_tool_execution_functions_grounded_in_real_project():
     print("ALL TOOL EXECUTION CHECKS PASSED")
 
 
-def test_reference_layer_upload_list_sample_remove():
+def test_reference_layer_upload_list_sample_remove(tmp_path):
     client, project_id = _make_processed_project()
 
     # build a tiny synthetic geology GeoTIFF covering the survey area, with an indexed colormap
-    path = "/tmp/_chat_test_geology.tif"
+    path = str(tmp_path / "_chat_test_geology.tif")
     transform = from_origin(590000, 5155000, 10, 10)
     crs = CRS.from_epsg(32648)
     data = np.ones((50, 50), dtype="uint8")
@@ -205,8 +205,12 @@ def test_run_chat_turn_tool_loop_with_mocked_client():
 
 
 if __name__ == "__main__":
+    import tempfile
+
     test_tool_execution_functions_grounded_in_real_project()
-    test_reference_layer_upload_list_sample_remove()
+    with tempfile.TemporaryDirectory() as _tmp:
+        # stands in for pytest's tmp_path when this file is run as a script
+        test_reference_layer_upload_list_sample_remove(pathlib.Path(_tmp))
     test_chat_endpoint_without_api_key_returns_400()
     test_run_chat_turn_tool_loop_with_mocked_client()
     print("\nALL CHECKS PASSED")
