@@ -569,6 +569,14 @@ class Project:
             "max_distance_km": max_distance_km,
             "n_points": len(combined),
             "time_range": [combined["timestamp"].min().isoformat(), combined["timestamp"].max().isoformat()],
+            # Where the set of contributing observatories changed and the
+            # blend had to be levelled across the handover. Reported rather
+            # than left silent: a handover is where this estimate is least
+            # trustworthy, and because station data is fetched a calendar
+            # day at a time, handovers land at midnight - which is exactly
+            # where a flight that starts at 00:00 sits. See
+            # processing/intermagnet.py::_remove_handover_steps.
+            "station_handovers": combined.attrs.get("station_handovers", []),
         }
 
     def apply_nearest_intermagnet_preview(self) -> dict:

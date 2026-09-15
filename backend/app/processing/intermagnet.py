@@ -284,6 +284,21 @@ def _pick_direction_diverse(
 
 
 _MINUTES_PER_DAY = 24 * 60
+# Minutes two stations must share before one's level can be measured
+# against the other's. An hour is long enough that the difference
+# measured is the stations' levels rather than one disturbed stretch,
+# and short enough that a station present for only part of a day
+# still gets levelled instead of falling back to its own mean.
+_MIN_STATION_OVERLAP_SAMPLES = 60
+# Minutes either side of a station handover used to measure the step it
+# produced. Half an hour is long enough to average out ordinary minute-to
+# -minute variation and short enough that the real diurnal curve barely
+# bends across it.
+_HANDOVER_WINDOW_MINUTES = 30
+_MIN_HANDOVER_SAMPLES = 10
+# Below this a handover is not worth levelling - it is within what two
+# observatories' curves ordinarily disagree by from one minute to the next.
+_MIN_HANDOVER_STEP_NT = 1.0
 _MIN_DAY_COVERAGE = 0.5  # below this fraction of samples present, treat the whole day as missing rather than gap-interpolate it
 
 
@@ -579,6 +594,154 @@ def select_nearest_observatories(
     return result_stations, estimated_dates_by_code
 
 
+def _level_stations_onto_one_baseline(
+    series_by_station: list[pd.Series], weights: np.ndarray
+) -> tuple[list[np.ndarray], np.ndarray]:
+    """Put every station on a common level, measured where they overlap.
+
+    This is what keeps the blended series continuous when the set of
+    contributing stations changes. Referencing each station to its OWN
+    mean instead leaves them at levels that differ by however much their
+    diurnal curves differ over their own coverage - so the instant a
+    station drops in or out and the weights renormalise, the blend steps
+    by that difference.
+
+    That is not hypothetical. Observatory data is fetched one calendar day
+    at a time per station (fetch_observatory_dates), so a station's
+    coverage begins and ends at midnight and the active set can only ever
+    change there. The 2026-09 HaeNam base file built by the older code has
+    exactly that signature: its 1-minute changes have a median of 0.13 nT
+    and a 99.9th percentile of 2.12 nT, and it jumps 20.86 nT at
+    2026-09-09 00:00:00 and 26.34 nT at 2026-08-03 00:00:00 - both at
+    midnight, both far outside anything the field does in a minute.
+
+    That step lands in the survey one for one. The diurnal correction is
+    drone - (base - reference), so between two times the reference
+    cancels exactly:
+
+        corrected(t2) - corrected(t1)
+            = [drone(t2) - drone(t1)] - [base(t2) - base(t1)]
+
+    No choice of reference - per day, per flight, or one for the whole
+    survey - can remove a step that is inside the base series itself. It
+    has to not be there. On the HaeNam block that 20.86 nT base jump
+    measured as a 20.86 nT level step between the blocks flown either side
+    of that midnight.
+
+    Levels are fixed to the highest-weighted (nearest) station where
+    possible, chaining through an intermediate station for one that does
+    not overlap it directly; a station overlapping nothing keeps its own
+    mean, which is the old behaviour and the best available when there is
+    no shared minute to measure against.
+    """
+    n = len(series_by_station)
+    values = [s.to_numpy(dtype=float) for s in series_by_station]
+    valid = [np.isfinite(v) for v in values]
+    offsets = np.array([
+        float(np.mean(v[m])) if m.any() else 0.0 for v, m in zip(values, valid)
+    ])
+
+    anchor = int(np.argmax(weights))
+    resolved = {anchor}
+    # Breadth-first over "shares enough minutes with something already
+    # resolved", so a station reachable only through a third one still
+    # gets a measured level rather than falling back to its own mean.
+    progress = True
+    while progress and len(resolved) < n:
+        progress = False
+        for i in range(n):
+            if i in resolved:
+                continue
+            best_j, best_overlap = None, 0
+            for j in resolved:
+                shared = int((valid[i] & valid[j]).sum())
+                if shared > best_overlap:
+                    best_j, best_overlap = j, shared
+            if best_j is None or best_overlap < _MIN_STATION_OVERLAP_SAMPLES:
+                continue
+            shared = valid[i] & valid[best_j]
+            # median, not mean: robust to a spike or a short disturbed
+            # stretch in either station over the minutes they share
+            offsets[i] = float(np.median(
+                values[i][shared] - (values[best_j][shared] - offsets[best_j])
+            ))
+            resolved.add(i)
+            progress = True
+
+    levelled = [v - off for v, off in zip(values, offsets)]
+    return levelled, offsets
+
+
+def _edge_value(values: np.ndarray, at_start: bool) -> float:
+    """Where a straight line through `values` reaches the edge of the
+    window - its start if `at_start`, otherwise just past its end."""
+    n = len(values)
+    x = np.arange(n, dtype=float)
+    slope, intercept = np.polyfit(x, values, 1)
+    return float(intercept + slope * (0.0 if at_start else n - 1 + 1.0))
+
+
+def _remove_handover_steps(
+    mag: np.ndarray, active: np.ndarray, window: int = _HANDOVER_WINDOW_MINUTES
+) -> list[dict]:
+    """Make the blend continuous where the set of contributing stations
+    changes. Edits `mag` in place; returns what it did, per handover.
+
+    Levelling the stations onto a common baseline
+    (_level_stations_onto_one_baseline) removes the *constant* part of
+    their disagreement, which is the large part - hundreds of nT, set by
+    latitude. It cannot remove the rest: two observatories' Sq curves
+    differ in amplitude and in phase (roughly an hour of phase per 15
+    degrees of longitude), so at any given minute their levelled values
+    still differ by something like ten nT. The moment the active set
+    changes, the blend moves by that instantaneous difference, and a
+    station's coverage begins and ends at midnight because the data is
+    fetched a calendar day at a time - so the jump lands at midnight,
+    which is where flights that start at 00:00 sit.
+
+    There is no way to cross-fade out of it: at the minute a station's
+    data stops there is nothing left of it to fade. But the step is known
+    to be an artifact - the field did not move ten nT in a minute, the
+    estimator changed its mind about who to listen to - and the absolute
+    level of this series carries no meaning for the diurnal correction,
+    which only ever uses (base - reference). So the series after each
+    handover is shifted onto the level before it, measured as the
+    difference of medians over `window` minutes either side.
+
+    The one thing this can get wrong is a genuine rapid change that
+    happens to coincide with a handover, which would be partly absorbed.
+    That is the better trade: a sudden storm onset at exactly midnight is
+    rare, the median window is half an hour wide, and the alternative is a
+    twenty-nanotesla artifact going into the survey unannounced - measured
+    at 20.86 nT on the 2026-09 HaeNam base, and landing in the anomaly as
+    a 20.86 nT step between the blocks flown either side of it.
+    """
+    changes = [
+        k for k in range(1, len(mag))
+        if active[k] != active[k - 1] and np.isfinite(mag[k]) and np.isfinite(mag[k - 1])
+    ]
+    applied: list[dict] = []
+    for k in changes:
+        before = mag[max(0, k - window):k]
+        after = mag[k:k + window]
+        before = before[np.isfinite(before)]
+        after = after[np.isfinite(after)]
+        if len(before) < _MIN_HANDOVER_SAMPLES or len(after) < _MIN_HANDOVER_SAMPLES:
+            continue
+        # Fit a line on each side and read both at the break, rather than
+        # differencing two medians: the curves either side have different
+        # slopes, and a median sits half a window away from the boundary,
+        # so a median difference measures the step plus half a window of
+        # slope mismatch.
+        step = float(_edge_value(after, at_start=True) - _edge_value(before, at_start=False))
+        if abs(step) < _MIN_HANDOVER_STEP_NT:
+            continue
+        mag[k:] -= step
+        applied.append({"index": k, "step_nt": step,
+                        "before": active[k - 1], "after": active[k]})
+    return applied
+
+
 def estimate_base_from_observatories(
     stations: list[IagaObservatoryData], target_lat: float, target_lon: float, power: float = 2.0
 ) -> pd.DataFrame:
@@ -588,54 +751,76 @@ def estimate_base_from_observatories(
     normalized to sum to 1 - the standard IDW spatial interpolation
     scheme).
 
-    Each station's series is first converted to a deviation from that
-    station's OWN mean level before blending, and a single fixed offset
-    (the weighted average of the stations' own absolute means, using the
-    same overall weights) is added back once at the end. This matters
-    because the per-timestamp weights actually used below aren't fixed:
-    whichever stations happen to have data at a given minute get their
-    weights renormalized to sum to 1 at that minute (see weight_total),
-    so the effective weighting changes as stations drop in and out of
-    coverage. Blending stations' raw absolute F values under a
-    *changing* weight set would make the combined series jump by
-    however much those stations' absolute levels differ (tens of
-    thousands of nT, since that's dominated by latitude/IGRF main-field
-    strength, not local weather) every time the active station set
-    changes - e.g. whenever the nearest station has a brief dropout.
-    Blending deviations from each station's own mean instead means the
-    combined series only reflects genuine differences in the *diurnal
-    variation itself* between stations (tens of nT) when the active set
-    changes, which is the whole point of combining multiple stations in
-    the first place."""
+    The per-timestamp weights are not fixed: whichever stations have data
+    at a given minute get their weights renormalised to sum to 1 at that
+    minute, so the effective weighting changes as stations drop in and out
+    of coverage. Blending raw absolute F values under a changing weight
+    set would make the combined series jump by however much those
+    stations' absolute levels differ - tens of thousands of nT, since that
+    is dominated by latitude/IGRF main-field strength rather than by
+    anything the field is doing that day.
+
+    So the stations are first put on one common level, measured over the
+    minutes they share (_level_stations_onto_one_baseline), and that level
+    is added back once at the end. Measuring it from the overlap rather
+    than from each station's own mean is what makes the blend continuous
+    across a change in the active set - see that function for the real
+    base file this exists because of, and for why no choice of diurnal
+    reference can repair such a step afterwards.
+
+    The absolute level of the result carries no meaning for the diurnal
+    correction, which only ever uses (base - reference); it is set to the
+    nearest contributing station's own level so the series still reads as
+    a plausible field strength.
+    """
     if not stations:
         raise IntermagnetFetchError("결합할 관측소 자료가 없습니다.")
 
     weights = np.array([1.0 / max(haversine_km(target_lat, target_lon, s.lat, s.lon), 1.0) ** power for s in stations])
     weights = weights / weights.sum()
-    station_means = np.array([s.df["mag"].mean() for s in stations])
-    overall_offset = float(np.sum(weights * station_means))
 
     start = min(s.df["timestamp"].min() for s in stations)
     end = max(s.df["timestamp"].max() for s in stations)
     grid = pd.date_range(start, end, freq="1min")
 
-    weighted_sum = np.zeros(len(grid))
-    weight_total = np.zeros(len(grid))
-    for w, s, station_mean in zip(weights, stations, station_means):
+    series_by_station = []
+    for s in stations:
         series = s.df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
         # Interpolate only small internal gaps (a station's own brief
         # dropouts) - never extrapolate past a station's real coverage.
-        series = series.interpolate(limit=5, limit_area="inside")
-        deviation = series.to_numpy() - station_mean
-        valid = series.notna().to_numpy()
-        weighted_sum[valid] += w * deviation[valid]
-        weight_total[valid] += w
+        series_by_station.append(series.interpolate(limit=5, limit_area="inside"))
+
+    levelled, offsets = _level_stations_onto_one_baseline(series_by_station, weights)
+    common_level = float(offsets[int(np.argmax(weights))])
+
+    weighted_sum = np.zeros(len(grid))
+    weight_total = np.zeros(len(grid))
+    for w, deviation in zip(weights, levelled):
+        ok = np.isfinite(deviation)
+        weighted_sum[ok] += w * deviation[ok]
+        weight_total[ok] += w
 
     has_data = weight_total > 0
     mag = np.full(len(grid), np.nan)
-    mag[has_data] = overall_offset + weighted_sum[has_data] / weight_total[has_data]
+    mag[has_data] = common_level + weighted_sum[has_data] / weight_total[has_data]
+
+    # Which stations actually contributed to each minute. A change here is
+    # the only thing that can step the blend once the stations share a
+    # level - see _remove_handover_steps.
+    codes = [s.iaga_code for s in stations]
+    present = np.array([np.isfinite(dev) for dev in levelled])       # (n_stations, n_minutes)
+    active = np.array([
+        ",".join(c for c, on in zip(codes, present[:, i]) if on) or "-"
+        for i in range(len(grid))
+    ])
+    handovers = _remove_handover_steps(mag, active)
 
     out = pd.DataFrame({"timestamp": grid, "mag": mag}).dropna(subset=["mag"]).reset_index(drop=True)
+    out.attrs["station_handovers"] = [
+        {"timestamp": str(grid[h["index"]]), "step_nt": h["step_nt"],
+         "stations_before": h["before"], "stations_after": h["after"]}
+        for h in handovers
+    ]
     if out.empty:
         raise IntermagnetFetchError("선택된 관측소들의 자료가 겹치는 시간대가 없습니다.")
     return out

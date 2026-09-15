@@ -310,13 +310,29 @@ def test_estimate_base_from_observatories_weights_toward_closer_station():
     assert out["mag"].mean() > 48000
 
 
-def test_estimate_base_from_observatories_equal_distance_is_plain_average():
-    t = pd.date_range("2026-07-24", periods=3, freq="1min")
-    a = IagaObservatoryData("A", "A", 0.0, 1.0, 0.0, "F", pd.DataFrame({"timestamp": t, "mag": 100.0}))
-    b = IagaObservatoryData("B", "B", 0.0, -1.0, 0.0, "F", pd.DataFrame({"timestamp": t, "mag": 200.0}))
+def test_estimate_base_from_observatories_equal_distance_weights_them_equally():
+    """Two stations the same distance away contribute equally to the
+    variation - which is the only thing the diurnal correction uses, since
+    it works on (base - reference) and the absolute level cancels.
+
+    The level itself is deliberately not the average of the two stations'
+    absolute fields any more: the stations are put on one common level
+    before blending, so that the series does not step whenever one of them
+    drops in or out of coverage (see
+    processing/intermagnet.py::_level_stations_onto_one_baseline). The
+    level that survives is the nearest station's own."""
+    t = pd.date_range("2026-07-24", periods=180, freq="1min")
+    wobble_a = 10.0 * np.sin(np.linspace(0, 2 * np.pi, len(t)))
+    wobble_b = 30.0 * np.sin(np.linspace(0, 2 * np.pi, len(t)))
+    a = IagaObservatoryData("A", "A", 0.0, 1.0, 0.0, "F",
+                            pd.DataFrame({"timestamp": t, "mag": 100.0 + wobble_a}))
+    b = IagaObservatoryData("B", "B", 0.0, -1.0, 0.0, "F",
+                            pd.DataFrame({"timestamp": t, "mag": 200.0 + wobble_b}))
 
     out = estimate_base_from_observatories([a, b], 0.0, 0.0)
-    assert np.allclose(out["mag"].to_numpy(), 150.0)
+
+    variation = out["mag"].to_numpy() - out["mag"].to_numpy().mean()
+    assert np.allclose(variation, (wobble_a + wobble_b) / 2.0, atol=1e-6)
 
 
 def test_estimate_base_from_observatories_interpolates_small_gaps_not_extrapolate():
