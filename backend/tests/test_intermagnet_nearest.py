@@ -442,3 +442,68 @@ def test_fill_missing_days_handles_empty_dataframe():
     filled, estimated_dates = fill_missing_days(df, date(2026, 7, 23), date(2026, 7, 24))
     assert filled.empty
     assert estimated_dates == []
+
+
+def _drifting_station_days(days, level, amp, drift_per_day=0.0, seed=0):
+    """One observatory over consecutive whole days, its field drifting
+    day to day the way a real one does."""
+    rng = np.random.default_rng(seed)
+    frames = []
+    for i, d in enumerate(days):
+        t = pd.date_range(d, periods=1440, freq="1min")
+        hours = t.hour + t.minute / 60.0
+        sq = amp * np.sin(2 * np.pi * hours / 24.0)
+        frames.append(pd.DataFrame(
+            {"timestamp": t, "mag": level + i * drift_per_day + sq + rng.normal(0, 0.05, 1440)}))
+    return pd.concat(frames, ignore_index=True)
+
+
+def test_a_rebuilt_day_joins_the_real_days_on_both_sides():
+    """A day estimated from the template used to be anchored by one
+    constant offset, so it joined one neighbour and stepped at its other
+    end - at midnight, which is where a flight starting at 00:00 sits.
+
+    The step matters more than the level error: the diurnal correction is
+    drone - (base - reference), so a step inside the base lands in the
+    anomaly one for one.
+    """
+    from datetime import date
+
+    from app.processing.intermagnet import fill_missing_days
+
+    days = [date(2026, 9, 7), date(2026, 9, 8), date(2026, 9, 9)]
+    truth = _drifting_station_days(days, 50130.0, 22.0, drift_per_day=4.0, seed=1)
+    missing = truth[truth["timestamp"].dt.date != days[1]].reset_index(drop=True)
+
+    filled, estimated = fill_missing_days(missing, days[0], days[-1])
+
+    assert estimated == ["2026-09-08"]
+    f = filled.sort_values("timestamp").reset_index(drop=True)
+    step = f["mag"].diff()
+    for boundary in ("2026-09-08 00:00", "2026-09-09 00:00"):
+        k = f.index[f["timestamp"] == pd.Timestamp(boundary)][0]
+        assert abs(step[k]) < 1.0, f"{boundary} steps {step[k]:+.2f} nT"
+    # and the day it rebuilt should sit at the right level, not 4 nT low
+    err = (f.set_index("timestamp")["mag"] - truth.set_index("timestamp")["mag"]).dropna()
+    assert abs(err[err.index.date == days[1]].mean()) < 1.0
+
+
+def test_a_rebuilt_day_with_nothing_after_it_still_uses_what_is_there():
+    """The last day of a request has no following day to join to - the
+    older single-sided anchoring is still the best available then, and
+    must not be lost."""
+    from datetime import date
+
+    from app.processing.intermagnet import fill_missing_days
+
+    days = [date(2026, 9, 7), date(2026, 9, 8), date(2026, 9, 9)]
+    truth = _drifting_station_days(days, 50130.0, 22.0, drift_per_day=4.0, seed=2)
+    missing = truth[truth["timestamp"].dt.date != days[2]].reset_index(drop=True)
+
+    filled, estimated = fill_missing_days(missing, days[0], days[-1])
+
+    assert estimated == ["2026-09-09"]
+    f = filled.sort_values("timestamp").reset_index(drop=True)
+    k = f.index[f["timestamp"] == pd.Timestamp("2026-09-09 00:00")][0]
+    assert abs(f["mag"].diff()[k]) < 6.0
+    assert len(f[f["timestamp"].dt.date == days[2]]) == 1440

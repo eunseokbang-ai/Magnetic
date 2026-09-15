@@ -299,7 +299,63 @@ _MIN_HANDOVER_SAMPLES = 10
 # Below this a handover is not worth levelling - it is within what two
 # observatories' curves ordinarily disagree by from one minute to the next.
 _MIN_HANDOVER_STEP_NT = 1.0
+# Real samples either side of a rebuilt day used to anchor it onto its
+# neighbours, and the fewest that makes the measurement worth trusting.
+_ANCHOR_WINDOW_MINUTES = 120
+_MIN_ANCHOR_SAMPLES = 20
 _MIN_DAY_COVERAGE = 0.5  # below this fraction of samples present, treat the whole day as missing rather than gap-interpolate it
+
+
+def _edge_offset(
+    values: np.ndarray, template_at: np.ndarray, valid: np.ndarray, take_last: bool
+) -> float | None:
+    """How far real data sits above the template at one end of a run, from
+    the `_ANCHOR_WINDOW_MINUTES` real samples closest to that end. None if
+    there are too few to measure with."""
+    idx = np.flatnonzero(valid)
+    if len(idx) < _MIN_ANCHOR_SAMPLES:
+        return None
+    idx = idx[-_ANCHOR_WINDOW_MINUTES:] if take_last else idx[:_ANCHOR_WINDOW_MINUTES]
+    return float(np.median(values[idx] - template_at[idx]))
+
+
+def _anchor_offsets(
+    values: np.ndarray,
+    template: np.ndarray,
+    valid: np.ndarray,
+    day_of: pd.DatetimeIndex,
+    minute_of_day: np.ndarray,
+    d: pd.Timestamp,
+    n_minutes: int,
+) -> np.ndarray | None:
+    """A per-minute offset that makes a templated day join the real data on
+    both sides of it, ramped linearly from one edge to the other. None when
+    the day is not bounded by real data on both sides.
+
+    A synthesized day anchored by one constant offset joins whichever
+    neighbour the offset was taken from and steps at its other end. That
+    step is not a small matter downstream: the diurnal correction is
+    drone - (base - reference), so a step in the base lands in the survey
+    one for one, and because a day boundary is midnight it lands on any
+    flight that starts at 00:00. Measured here on a station whose field
+    drifts 4 nT/day: one day removed and rebuilt sat 4.00 nT off and left
+    an 8.10 nT step at the following midnight.
+
+    Continuity is therefore preferred over the day's own sparse samples
+    when both are available. The day is an estimate either way - a couple
+    of nT of level error in it is ordinary estimate error, while a step is
+    an artifact that propagates into the anomaly undiminished.
+    """
+    before = (day_of < d)
+    after = (day_of > d)
+    if not (before.any() and after.any()):
+        return None
+
+    left = _edge_offset(values[before], template[minute_of_day[before]], valid[before], take_last=True)
+    right = _edge_offset(values[after], template[minute_of_day[after]], valid[after], take_last=False)
+    if left is None or right is None:
+        return None
+    return np.linspace(left, right, n_minutes)
 
 
 def fill_missing_days(df: pd.DataFrame, start_date: date, end_date: date) -> tuple[pd.DataFrame, list[str]]:
@@ -359,9 +415,14 @@ def fill_missing_days(df: pd.DataFrame, start_date: date, end_date: date) -> tup
         day_minutes = minute_of_day[day_mask]
         day_template = template[day_minutes]
         day_valid = valid[day_mask]
-        if day_valid.any():
+        # Join the real data either side of this day where that is
+        # possible, so the rebuilt day does not step at midnight - see
+        # _anchor_offsets for why that is preferred over the day's own
+        # sparse samples.
+        offset = _anchor_offsets(values, template, valid, day_of, minute_of_day, d, int(day_mask.sum()))
+        if offset is None and day_valid.any():
             offset = np.nanmedian(day_values[day_valid] - day_template[day_valid])
-        else:
+        elif offset is None:
             nearest_day = min(good_days, key=lambda gd: abs((gd - d).days))
             nearest_mask = day_of == nearest_day
             nearest_values = values[nearest_mask]
@@ -371,7 +432,8 @@ def fill_missing_days(df: pd.DataFrame, start_date: date, end_date: date) -> tup
 
         day_filled = day_values.copy()
         to_fill = ~day_valid
-        day_filled[to_fill] = day_template[to_fill] + offset
+        day_offset = offset[to_fill] if isinstance(offset, np.ndarray) else offset
+        day_filled[to_fill] = day_template[to_fill] + day_offset
         filled[day_mask] = day_filled
         filled_dates.append(str(d.date()))
 
