@@ -20,6 +20,7 @@ from .io_.drone_loader import load_drone_csvs
 from .models import (
     AnalyticSignalDepthRequest,
     AnomalyCandidateRequest,
+    SourceRemovalRequest,
     ContactDetectionRequest,
     DisplayBoundaryRequest,
     EulerDeconvolutionRequest,
@@ -48,6 +49,7 @@ from .models import (
 from .processing.base_qc import process_base_station
 from .processing.base_segments import level_base_segments
 from .processing.manual_smooth import apply_manual_smoothing
+from .processing.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
 from .processing.intermagnet import (
     DEFAULT_MAX_STATION_DISTANCE_KM,
     IagaParseError,
@@ -342,6 +344,11 @@ class Project:
     # disturbance (building, fence, vehicle, ...) and interpolated across
     # - see _apply_manual_smoothing / set_manual_smoothing.
     manual_smooth_point_ids: set = field(default_factory=set)
+    # Ground-structure fields fitted and subtracted as models, in the order
+    # they were added - see processing/source_removal.py. Applied to
+    # processed_base before the point smoothing above, so either can be
+    # undone without disturbing the other.
+    source_removals: list = field(default_factory=list)
     # Optional user-drawn [[lat, lon], ...] polygon that clips grid display
     # (overlay/export) to exactly that outline, on top of the automatic
     # convex-hull extrapolation cap in gridding.py - see set_display_boundary.
@@ -1120,6 +1127,7 @@ class Project:
         self.processed_base = df.copy()
         self.manual_overrides = {}
         self.manual_smooth_point_ids = set()
+        self.source_removals = []
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
@@ -1346,6 +1354,7 @@ class Project:
             "n_kept": int(active.sum()),
             "n_excluded_auto": int((df["line_id"] < 0).sum()),
             "n_manual_included": sum(1 for v in self.manual_overrides.values() if v),
+            "source_removals": [r.summary() for r in self.source_removals],
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "utm_epsg": self.utm_epsg,
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
@@ -1534,6 +1543,79 @@ class Project:
         self.transform_cache = {}
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
+    def _base_without_structures(self) -> pd.DataFrame:
+        """processed_base with every fitted structure model subtracted."""
+        base = self.processed_base
+        if not self.source_removals:
+            return base
+        out = base.copy()
+        x, y = out["x"].to_numpy(), out["y"].to_numpy()
+        for col in ("anomaly", "tmi"):
+            out[col] = apply_source_removals(x, y, out[col].to_numpy(), self.source_removals)
+        return out
+
+    def _rebuild_processed(self, base_df: pd.DataFrame | None = None) -> None:
+        if base_df is None:
+            base_df = self._base_without_structures()
+        self.processed = apply_manual_smoothing(base_df, self.manual_smooth_point_ids)
+        self.grid_cache = {}
+        self.transform_cache = {}
+
+    def set_source_removal(self, req: SourceRemovalRequest) -> dict:
+        """Remove ground-structure anomalies by fitting each marked region
+        as a patch of dipoles and subtracting the fitted field - see
+        processing/source_removal.py for why this, rather than cutting the
+        region out and interpolating across it."""
+        if self.processed_base is None or self.inclination_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        added: list[dict] = []
+        if req.mode == "reset":
+            self.source_removals = []
+        elif req.mode == "undo":
+            if self.source_removals:
+                self.source_removals.pop()
+        else:
+            if not req.polygons:
+                raise ProjectError("polygons가 필요합니다.")
+            if self.utm_epsg is None:
+                raise ProjectError("좌표계 정보가 없습니다.")
+            to_local = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            active = self._active_mask().to_numpy()
+            for i, polygon in enumerate(req.polygons):
+                if len(polygon) < 3:
+                    continue
+                # Fit against the data with earlier removals already taken
+                # out, so two neighbouring structures are not counted twice.
+                current = self._base_without_structures()
+                xs, ys = to_local.transform([pt[1] for pt in polygon], [pt[0] for pt in polygon])
+                hint = None
+                if req.depth_hints_m and i < len(req.depth_hints_m):
+                    hint = req.depth_hints_m[i]
+                try:
+                    removal = fit_source_removal(
+                        current["x"].to_numpy()[active],
+                        current["y"].to_numpy()[active],
+                        current["anomaly"].to_numpy()[active],
+                        current["line_id"].to_numpy()[active],
+                        list(zip(xs, ys)),
+                        self.inclination_deg,
+                        self.declination_deg,
+                        self.line_spacing_m,
+                        depth_hint_m=hint,
+                    )
+                except ValueError as exc:
+                    raise ProjectError(f"구조물 모델을 맞출 수 없습니다: {exc}") from exc
+                self.source_removals.append(removal)
+                added.append(removal.summary())
+        self._rebuild_processed()
+        return {
+            **self.process_summary(),
+            "exclusion": self.get_exclusion_state(),
+            "n_source_removals": len(self.source_removals),
+            "added": added,
+            "source_removals": [r.summary() for r in self.source_removals],
+        }
+
     def set_manual_smoothing(self, req: ManualSmoothRequest) -> dict:
         """Remove a user-identified ground-structure distortion (a house,
         building etc. visibly perturbing the signal) from a stretch of a
@@ -1547,7 +1629,7 @@ class Project:
         what makes "always fresh, never compounding" possible."""
         if self.processed_base is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
-        base_df = self.processed_base
+        base_df = self._base_without_structures()
 
         if req.mode == "reset":
             self.manual_smooth_point_ids = set()
@@ -1577,9 +1659,7 @@ class Project:
                     new_ids |= set(base_df.loc[inside, "point_id"])
             self.manual_smooth_point_ids |= new_ids
 
-        self.processed = apply_manual_smoothing(base_df, self.manual_smooth_point_ids)
-        self.grid_cache = {}
-        self.transform_cache = {}
+        self._rebuild_processed(base_df)
         return {
             **self.process_summary(),
             "exclusion": self.get_exclusion_state(),
@@ -3090,13 +3170,14 @@ class Project:
         out = []
         for c in candidates:
             lon, lat = transformer.transform(c.x, c.y)
-            if c.polygon_xy:
-                ring_lon, ring_lat = transformer.transform(
-                    [p[0] for p in c.polygon_xy], [p[1] for p in c.polygon_xy]
-                )
-                polygon = [[float(la), float(lo)] for la, lo in zip(ring_lat, ring_lon)]
-            else:
-                polygon = []
+            def to_latlon(ring):
+                if not ring:
+                    return []
+                ring_lon, ring_lat = transformer.transform([q[0] for q in ring], [q[1] for q in ring])
+                return [[float(la), float(lo)] for la, lo in zip(ring_lat, ring_lon)]
+
+            polygon = to_latlon(c.polygon_xy)
+            source_polygon = to_latlon(c.source_polygon_xy)
             out.append(
                 {
                     "rank": c.rank,
@@ -3115,6 +3196,7 @@ class Project:
                     "region_capped": c.region_capped,
                     "depth_resolved": c.depth_resolved,
                     "polygon": polygon,
+                    "source_polygon": source_polygon,
                 }
             )
 
@@ -3327,6 +3409,7 @@ class Project:
             "last_params": self.last_params.model_dump() if self.last_params is not None else None,
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
+            "source_removals": [r.to_dict() for r in self.source_removals],
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
@@ -3407,9 +3490,16 @@ class Project:
                         self.manual_overrides = {int(k): v for k, v in overrides.items()}
                         self.grid_cache = {}
                         self.transform_cache = {}
+                    # Stored as fitted models, not refitted: the result is
+                    # exactly what was saved.
+                    self.source_removals = [
+                        SourceRemoval.from_dict(d) for d in (meta.get("source_removals") or [])
+                    ]
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
+                    elif self.source_removals:
+                        self._rebuild_processed()
                     # Restore the saved boundary state exactly, including
                     # "none". The run_pipeline replay above regenerates an
                     # automatic boundary (ProcessParams.auto_display_boundary

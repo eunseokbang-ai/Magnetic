@@ -36,6 +36,7 @@ from .models import (
     AutoBoundaryRequest,
     DisplayBoundaryRequest,
     AnomalyCandidateRequest,
+    SourceRemovalRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
     NearestIntermagnetRequest,
@@ -523,6 +524,12 @@ def qc_certificate(project_id: str, req: QcCertificateRequest):
 def structure_scan(project_id: str, req: StructureScanRequest):
     project = store.get(project_id)
     return project.scan_structure_distortion(req)
+
+
+@app.post("/api/projects/{project_id}/source-removal")
+def source_removal(project_id: str, req: SourceRemovalRequest):
+    project = store.get(project_id)
+    return project.set_source_removal(req)
 
 
 @app.post("/api/projects/{project_id}/anomaly-candidates")

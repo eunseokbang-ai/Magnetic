@@ -557,6 +557,19 @@ class ManualSmoothRequest(BaseModel):
     polygons: Optional[list[list[list[float]]]] = None  # [[[lat, lon], ...], ...]
 
 
+class SourceRemovalRequest(BaseModel):
+    """Remove ground-structure anomalies by modelling them - see
+    processing/source_removal.py. Each polygon marks one structure; its
+    field is fitted as a patch of dipoles inside the polygon and subtracted
+    wherever it reaches, lobes and tails included. "undo" drops the most
+    recent removal, "reset" all of them."""
+    mode: Literal["add", "undo", "reset"] = "add"
+    polygons: Optional[list[list[list[float]]]] = None  # [[[lat, lon], ...], ...]
+    # Optional per-polygon depth estimate (m), e.g. from the anomaly
+    # candidate scan; centres the depth search.
+    depth_hints_m: Optional[list[Optional[float]]] = None
+
+
 class DisplayBoundaryRequest(BaseModel):
     """Optional user-drawn polygon that further restricts where grid
     interpolation/extrapolation is shown, on top of the automatic

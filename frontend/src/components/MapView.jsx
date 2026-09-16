@@ -550,7 +550,7 @@ function StructureCandidateLayer({ result, selectedPolygonIndices, selectedAnoma
 // (processing/anomaly_candidates.py) - a numbered marker over each peak
 // with its suggested region around it, so ten places worth looking at can
 // be worked through in order instead of hunted for by eye.
-function AnomalyCandidateLayer({ result, selectedIndices }) {
+function AnomalyCandidateLayer({ result, selectedIndices, removalMethod }) {
   const map = useMap();
   const groupRef = useRef(null);
 
@@ -574,9 +574,11 @@ function AnomalyCandidateLayer({ result, selectedIndices }) {
       const suspect = c.single_line || c.at_coverage_edge;
       const color = suspect ? "#b45309" : "#0f766e";
 
-      if (c.polygon && c.polygon.length >= 3) {
+      // show the region that will actually be used
+      const ring = removalMethod === "model" && c.source_polygon?.length >= 3 ? c.source_polygon : c.polygon;
+      if (ring && ring.length >= 3) {
         group.addLayer(
-          L.polygon(c.polygon, {
+          L.polygon(ring, {
             color,
             weight: selected ? 3 : 1.5,
             fillColor: color,
@@ -607,7 +609,7 @@ function AnomalyCandidateLayer({ result, selectedIndices }) {
       );
       group.addLayer(marker);
     });
-  }, [result, selectedIndices]);
+  }, [result, selectedIndices, removalMethod]);
 
   return null;
 }
@@ -923,6 +925,7 @@ export default function MapView({
   onMeasureShapeDrawn,
   structureScanResult,
   anomalyCandidateResult,
+  anomalyCandidateRemovalMethod,
   selectedAnomalyCandidateIndices,
   selectedStructurePolygonIndices,
   selectedStructureAnomalyIndices,
@@ -1056,7 +1059,11 @@ export default function MapView({
         ))}
       {prospectivityTargets && <ProspectivityTargetLayer targets={prospectivityTargets} />}
       {anomalyCandidateResult && (
-        <AnomalyCandidateLayer result={anomalyCandidateResult} selectedIndices={selectedAnomalyCandidateIndices} />
+        <AnomalyCandidateLayer
+          result={anomalyCandidateResult}
+          selectedIndices={selectedAnomalyCandidateIndices}
+          removalMethod={anomalyCandidateRemovalMethod}
+        />
       )}
       {structureScanResult && (
         <StructureCandidateLayer

@@ -45,6 +45,66 @@ function Field({ label, children }) {
   );
 }
 
+export function RemovalMethodControls({
+  removalMethod,
+  setRemovalMethod,
+  nSourceRemovals,
+  onUndoSourceRemoval,
+  onResetSourceRemovals,
+  busy,
+}) {
+  const small = {
+    padding: "4px 8px",
+    fontSize: 12,
+    borderRadius: 6,
+    border: "1px solid #ddd0b2",
+    background: "white",
+    cursor: nSourceRemovals ? "pointer" : "default",
+    opacity: nSourceRemovals && !busy ? 1 : 0.5,
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+      <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ color: "#6b5c42" }}>제거 방식</span>
+        <select
+          value={removalMethod}
+          onChange={(e) => setRemovalMethod(e.target.value)}
+          style={{ padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" }}
+        >
+          <option value="model">구조물 모델 차감 — 권장</option>
+          <option value="interpolate">영역 잘라내고 측선방향 보간</option>
+        </select>
+      </label>
+      <div style={{ color: "#8a7a5c", fontSize: 11 }}>
+        {removalMethod === "model"
+          ? "표시한 영역 안에 쌍극자들을 놓아 구조물의 자기장을 맞춘 뒤, 그 계산된 자기장만 뺍니다. 영역 밖으로 뻗은 꼬리와 (−)로브까지 함께 빠지고, 구멍을 메우지 않으므로 경계 테두리나 측선 방향 줄무늬가 생기지 않습니다. 영역은 구조물(해석신호 덩어리)을 감싸면 충분합니다. 영역 안의 작은 지질 굴곡은 함께 빠질 수 있습니다."
+          : "영역 안 측점을 각 측선의 앞뒤 배경값으로 직선 보간합니다. 측선마다 따로 채우므로 해석신호·미분 그리드에 측선 방향 줄무늬나 테두리가 남을 수 있고, 영역 밖으로 뻗은 (−)로브는 그대로 남습니다. 측선 프로파일의 짧은 구간 제거에 적합합니다."}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ color: "#8a7a5c" }}>
+          {nSourceRemovals > 0 ? `구조물 모델 차감 ${nSourceRemovals}건` : "차감된 구조물 모델 없음"}
+        </span>
+        <button
+          style={{ ...small, marginLeft: "auto" }}
+          disabled={busy || !nSourceRemovals}
+          onClick={onUndoSourceRemoval}
+          title="가장 최근에 차감한 구조물 모델 1건을 되돌립니다"
+        >
+          ↩ 실행취소
+        </button>
+        <button
+          style={small}
+          disabled={busy || !nSourceRemovals}
+          onClick={onResetSourceRemovals}
+          title="차감한 구조물 모델을 모두 되돌립니다"
+        >
+          전체 되돌리기
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AnomalyCandidatePanel({
   ready,
   params,
@@ -62,6 +122,13 @@ export default function AnomalyCandidatePanel({
   onFocusCandidate,
   onApplySelected,
   applying,
+  removalMethod,
+  setRemovalMethod,
+  sourceRemovals,
+  lastRemovalAdded,
+  onUndoSourceRemoval,
+  onResetSourceRemovals,
+  removalWorking,
 }) {
   const update = (key, val) => setParams((p) => ({ ...p, [key]: val }));
   const nSelected = selectedIndices?.size || 0;
@@ -191,13 +258,38 @@ export default function AnomalyCandidatePanel({
               ))}
             </div>
 
-            <div style={{ color: "#8a7a5c", fontSize: 11 }}>
-              깊이는 해석신호 첨두의 폭에서 측정하고(반치폭 = 깊이 × 0.556, 실측), 제거 영역은 그 깊이의 약 2배 반경까지
-              잡습니다. 첨두만 좁게 잘라내면 첨두의 −31% 크기인 (−)로브가 그대로 남아 오히려 구덩이가 생기기 때문입니다.
-            </div>
+            <RemovalMethodControls
+              removalMethod={removalMethod}
+              setRemovalMethod={setRemovalMethod}
+              nSourceRemovals={sourceRemovals?.length || 0}
+              onUndoSourceRemoval={onUndoSourceRemoval}
+              onResetSourceRemovals={onResetSourceRemovals}
+              busy={applying || removalWorking}
+            />
             <button style={applyButtonStyle} disabled={applying || nSelected === 0} onClick={onApplySelected}>
-              {applying ? "적용 중..." : `선택한 ${nSelected}개 영역 제거 (측선방향 보간)`}
+              {applying
+                ? removalMethod === "model"
+                  ? "구조물 모델 맞추는 중..."
+                  : "적용 중..."
+                : removalMethod === "model"
+                  ? `선택한 ${nSelected}개 구조물 모델 차감`
+                  : `선택한 ${nSelected}개 영역 제거 (측선방향 보간)`}
             </button>
+            {lastRemovalAdded?.length > 0 && (
+              <div style={{ fontSize: 11, color: "#4a3d28" }}>
+                {lastRemovalAdded.map((r, i) => (
+                  <div key={i}>
+                    모델 {i + 1}: 쌍극자 {r.n_sources}개, 깊이 {r.depth_m.toFixed(0)} m, 맞춤 오차 {r.fit_rms_nt.toFixed(1)} nT
+                    (주변 자료 변동 {r.data_rms_nt.toFixed(0)} nT), 최대 {r.peak_model_nt.toFixed(0)} nT 차감
+                    {r.warnings?.map((w, j) => (
+                      <div key={j} style={warnStyle}>
+                        {w}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -530,6 +530,12 @@ export default function App() {
   const [candidateShow, setCandidateShow] = useState(true);
   const [candidateApplying, setCandidateApplying] = useState(false);
   const [selectedCandidateIndices, setSelectedCandidateIndices] = useState(new Set());
+  // How a marked ground structure is removed: "model" fits its field and
+  // subtracts it (processing/source_removal.py); "interpolate" cuts the
+  // region out and fills it along each line (processing/manual_smooth.py).
+  const [removalMethod, setRemovalMethod] = useState("model");
+  const [removalWorking, setRemovalWorking] = useState(false);
+  const [lastRemovalAdded, setLastRemovalAdded] = useState(null);
   const [selectedStructurePolygonIndices, setSelectedStructurePolygonIndices] = useState(new Set());
   const [selectedStructureAnomalyIndices, setSelectedStructureAnomalyIndices] = useState(new Set());
 
@@ -1335,6 +1341,10 @@ export default function App() {
     try {
       setError(null);
       setSmoothing(true);
+      if (removalMethod === "model") {
+        await _removeStructuresByModel([latlngCoords], [null]);
+        return;
+      }
       const summary = await api.applySmoothing(projectId, { mode: "polygon", polygon: latlngCoords });
       if (Array.isArray(summary.manual_smooth_point_ids)) {
         setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
@@ -1811,22 +1821,58 @@ export default function App() {
     });
   };
 
+  const _removeStructuresByModel = async (polygons, depthHints) => {
+    const summary = await api.applySourceRemoval(projectId, {
+      mode: "add",
+      polygons,
+      depth_hints_m: depthHints,
+    });
+    setLastRemovalAdded(summary.added || null);
+    await _afterSmoothingApplied(summary);
+    return summary;
+  };
+
+  const handleSourceRemovalHistory = async (mode) => {
+    try {
+      setError(null);
+      setRemovalWorking(true);
+      const summary = await api.applySourceRemoval(projectId, { mode });
+      setLastRemovalAdded(null);
+      await _afterSmoothingApplied(summary);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setRemovalWorking(false);
+    }
+  };
+
   const handleApplyCandidateSmoothing = async () => {
     if (!candidateResult) return;
     try {
       setError(null);
       setCandidateApplying(true);
       const polygons = [];
+      const depthHints = [];
       for (const i of selectedCandidateIndices) {
         const c = candidateResult.candidates[i];
-        if (c?.polygon?.length >= 3) polygons.push(c.polygon);
+        // a model needs room for the whole source, a cut only the reach
+        // of its field - see AnomalyCandidate.source_polygon_xy
+        const ring = removalMethod === "model" ? c?.source_polygon : c?.polygon;
+        if (ring?.length >= 3) {
+          polygons.push(ring);
+          depthHints.push(c.depth_m ?? null);
+        }
       }
       if (polygons.length === 0) return;
-      const summary = await api.applySmoothing(projectId, { mode: "polygons", polygons });
-      if (Array.isArray(summary.manual_smooth_point_ids)) {
-        setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
+      if (removalMethod === "model") {
+        await _removeStructuresByModel(polygons, depthHints);
+      } else {
+        const summary = await api.applySmoothing(projectId, { mode: "polygons", polygons });
+        if (Array.isArray(summary.manual_smooth_point_ids)) {
+          setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
+        }
+        await _afterSmoothingApplied(summary);
       }
-      await _afterSmoothingApplied(summary);
       // the field has changed underneath them, so the old ranking no
       // longer describes it - rerun to see what is left
       setSelectedCandidateIndices(new Set());
@@ -2505,6 +2551,7 @@ export default function App() {
           measurements={measurements}
           onMeasureShapeDrawn={handleMeasureShapeDrawn}
           anomalyCandidateResult={candidateShow ? candidateResult : null}
+          anomalyCandidateRemovalMethod={removalMethod}
           selectedAnomalyCandidateIndices={selectedCandidateIndices}
           structureScanResult={structureScanShow ? structureScanResult : null}
           selectedStructurePolygonIndices={selectedStructurePolygonIndices}
@@ -2598,6 +2645,11 @@ export default function App() {
           nSmoothedActions={smoothHistory.length}
           onUndoSmoothing={handleUndoSmoothing}
           onResetAllSmoothing={handleResetAllSmoothing}
+          removalMethod={removalMethod}
+          setRemovalMethod={setRemovalMethod}
+          nSourceRemovals={(processSummary?.source_removals || []).length}
+          onUndoSourceRemoval={() => handleSourceRemovalHistory("undo")}
+          onResetSourceRemovals={() => handleSourceRemovalHistory("reset")}
           onResetManual={handleResetManual}
           nManualIncluded={processSummary?.n_manual_included}
           nManualExcluded={processSummary?.n_manual_excluded}
@@ -2650,6 +2702,13 @@ export default function App() {
           onFocusCandidate={(c) => setFlyToTarget({ lat: c.lat, lon: c.lon, nonce: Date.now() })}
           onApplySelected={handleApplyCandidateSmoothing}
           applying={candidateApplying}
+          removalMethod={removalMethod}
+          setRemovalMethod={setRemovalMethod}
+          sourceRemovals={processSummary?.source_removals || []}
+          lastRemovalAdded={lastRemovalAdded}
+          onUndoSourceRemoval={() => handleSourceRemovalHistory("undo")}
+          onResetSourceRemovals={() => handleSourceRemovalHistory("reset")}
+          removalWorking={removalWorking}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-2. 지상구조물 왜곡 자동탐지 (OSM + 신호분석)</h2>

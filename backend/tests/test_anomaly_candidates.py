@@ -222,3 +222,28 @@ def test_a_source_the_grid_cannot_resolve_is_flagged_not_guessed():
 
     assert found and not found[0].depth_resolved
     assert found[0].depth_m > 3.0        # the floor, and it overstates the depth
+
+
+def test_the_reported_radius_is_what_the_cut_region_actually_reaches():
+    """It used to report the uncapped figure: 155 m for a region clipped
+    to 60 m."""
+    anomaly, e, n, cell = _grid([(0.0, 0.0, 100.0)], depth_m=40.0, span=600.0, cell=4.0)
+
+    c = _candidates(anomaly, e, n, cell, max_radius_m=30.0)[0]
+
+    reach = max(np.hypot(px - c.x, py - c.y) for px, py in c.polygon_xy)
+    assert c.radius_m <= 30.0 + 1e-6
+    assert reach <= 30.0 + 2 * cell
+
+
+def test_a_candidate_offers_a_source_region_not_capped_like_the_cut():
+    """Removing by model needs room for the whole source; the cut's cap is
+    about how far a hole may reach, and would squeeze a broad source."""
+    anomaly, e, n, cell = _grid([(0.0, 0.0, 100.0)], depth_m=40.0, span=600.0, cell=4.0)
+
+    c = _candidates(anomaly, e, n, cell, max_radius_m=30.0)[0]
+
+    cut = max(np.hypot(px - c.x, py - c.y) for px, py in c.polygon_xy)
+    src = max(np.hypot(px - c.x, py - c.y) for px, py in c.source_polygon_xy)
+    assert src > cut
+    assert src <= 300.0 + 2 * cell

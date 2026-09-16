@@ -214,6 +214,10 @@ export function scanStructureDistortion(projectId, req) {
   return request(`/projects/${projectId}/structure-scan`, { method: "POST", body: JSON.stringify(req) });
 }
 
+export function applySourceRemoval(projectId, req) {
+  return request(`/projects/${projectId}/source-removal`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function scanAnomalyCandidates(projectId, req) {
   return request(`/projects/${projectId}/anomaly-candidates`, { method: "POST", body: JSON.stringify(req) });
 }

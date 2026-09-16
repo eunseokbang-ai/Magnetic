@@ -135,6 +135,11 @@ SUPPORT_RADIUS_LINE_SPACINGS = 0.75
 # to remove even if its peak passed the support test.
 MIN_SUPPORTING_POINTS = 5
 
+# Largest radius a source region for removal-by-modelling may take - see
+# AnomalyCandidate.source_polygon_xy. Well beyond any building; short of
+# swallowing a geological body.
+SOURCE_MAX_RADIUS_M = 300.0
+
 
 @dataclass
 class AnomalyCandidate:
@@ -159,6 +164,13 @@ class AnomalyCandidate:
     # the grid cannot resolve the source: the depth is then the grid's own
     # floor and an upper bound, not a measurement.
     depth_resolved: bool = True
+    # Where the source itself sits, for removal by modelling
+    # (processing/source_removal.py): the analytic-signal blob, not capped
+    # at max_radius_m. That cap is about how far a *cut* may reach; a model
+    # needs room for the whole source instead, and does its own reaching.
+    # A 984 nT HaeNam structure fitted inside the capped 60 m region left
+    # the analytic signal at 0.65 over it; inside its 220 m blob, 0.07.
+    source_polygon_xy: list = None
 
     @property
     def single_line(self) -> bool:
@@ -458,7 +470,16 @@ def find_anomaly_candidates(
             region, easting, northing, margin,
             min_radius_m=clear_radius, max_radius_m=max_radius_m,
         )
-        radius = max(_equivalent_radius_m(region, cell_size_m) + margin, clear_radius)
+        source_cells = max(SOURCE_MAX_RADIUS_M / cell_size_m, max_radius_cells)
+        source_region = _grow_region(strength, peak_rc, level, source_cells)
+        source_polygon = _region_polygon_xy(
+            source_region, easting, northing, cell_size_m,
+            min_radius_m=min(depth, SOURCE_MAX_RADIUS_M), max_radius_m=SOURCE_MAX_RADIUS_M,
+        )
+        # What the polygon actually reaches - every sector of it is capped at
+        # max_radius_m, so reporting the uncapped figure told the operator
+        # the cut was 155 m wide when it was 60 m.
+        radius = min(max(_equivalent_radius_m(region, cell_size_m) + margin, clear_radius), max_radius_m)
 
         in_region = anomaly[region]
         in_region = in_region[np.isfinite(in_region)]
@@ -487,6 +508,7 @@ def find_anomaly_candidates(
                 depth_m=float(depth),
                 radius_m=float(radius),
                 polygon_xy=polygon,
+                source_polygon_xy=source_polygon,
                 n_lines=n_lines,
                 n_points=n_points,
                 at_coverage_edge=at_edge,

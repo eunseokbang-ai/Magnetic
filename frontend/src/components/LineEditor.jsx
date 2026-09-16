@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { RemovalMethodControls } from "./AnomalyCandidatePanel";
 
 export default function LineEditor({
   lines,
@@ -29,6 +30,11 @@ export default function LineEditor({
   smoothing,
   nSmoothedActions,
   onUndoSmoothing,
+  removalMethod,
+  setRemovalMethod,
+  nSourceRemovals,
+  onUndoSourceRemoval,
+  onResetSourceRemovals,
   onResetAllSmoothing,
 }) {
   const [uncheckedLines, setUncheckedLines] = useState(new Set());
@@ -247,8 +253,26 @@ export default function LineEditor({
               opacity: smoothing ? 0.6 : 1,
             }}
           >
-            {smoothing ? "스무딩 적용 중..." : smoothDrawMode ? "지도에서 왜곡 영역 그리기 (종료하려면 다시 클릭)" : "지도에서 왜곡 영역 그려 스무딩"}
+            {smoothing
+              ? removalMethod === "model"
+                ? "구조물 모델 맞추는 중..."
+                : "스무딩 적용 중..."
+              : smoothDrawMode
+                ? "지도에서 왜곡 영역 그리기 (종료하려면 다시 클릭)"
+                : removalMethod === "model"
+                  ? "지도에서 구조물 영역 그려 모델 차감"
+                  : "지도에서 왜곡 영역 그려 스무딩"}
           </button>
+          {setRemovalMethod && (
+            <RemovalMethodControls
+              removalMethod={removalMethod}
+              setRemovalMethod={setRemovalMethod}
+              nSourceRemovals={nSourceRemovals || 0}
+              onUndoSourceRemoval={onUndoSourceRemoval}
+              onResetSourceRemovals={onResetSourceRemovals}
+              busy={smoothing}
+            />
+          )}
           {(onUndoSmoothing || onResetAllSmoothing) && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
               <span style={{ color: "#8a7a5c" }}>
