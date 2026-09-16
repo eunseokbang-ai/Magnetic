@@ -24,10 +24,16 @@ Two ways to get an observatory's data into this shape:
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -82,19 +88,7 @@ def parse_iaga2002(text: str) -> IagaObservatoryData:
     observatories/GINs) into an IagaObservatoryData with a (timestamp, mag)
     DataFrame ready to use as a diurnal-correction base series."""
     lines = text.splitlines()
-    header: dict[str, str] = {}
-    data_start = None
-    for i, line in enumerate(lines):
-        stripped = line.rstrip()
-        if stripped.startswith(("DATE", "date")):
-            data_start = i + 1
-            break
-        if line.startswith(" ") and not line.startswith(" #"):
-            content = stripped[:-1] if stripped.endswith("|") else stripped
-            label = content[1:_HEADER_LABEL_END].strip()
-            value = content[_HEADER_LABEL_END:].strip()
-            if label:
-                header[label] = value
+    header, data_start = _parse_iaga_header(lines)
 
     if data_start is None or data_start >= len(lines):
         raise IagaParseError("IAGA-2002 형식이 아닙니다 (DATE로 시작하는 컬럼 헤더 줄을 찾을 수 없음).")
@@ -136,20 +130,40 @@ def parse_iaga2002(text: str) -> IagaObservatoryData:
     if df.empty:
         raise IagaParseError("총자력 계산 후 유효한 데이터가 남지 않았습니다 (결측값 비율이 너무 높음).")
 
+    return replace(_station_from_header(header), reported=reported, df=df)
+
+
+def _parse_iaga_header(lines: list[str]) -> tuple[dict[str, str], int | None]:
+    """IAGA-2002 header fields, and the index of the first data line
+    (None if the column-heading line was not reached)."""
+    header: dict[str, str] = {}
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if stripped.startswith(("DATE", "date")):
+            return header, i + 1
+        if line.startswith(" ") and not line.startswith(" #"):
+            content = stripped[:-1] if stripped.endswith("|") else stripped
+            label = content[1:_HEADER_LABEL_END].strip()
+            value = content[_HEADER_LABEL_END:].strip()
+            if label:
+                header[label] = value
+    return header, None
+
+
+def _station_from_header(header: dict[str, str]) -> IagaObservatoryData:
+    """Station identity and position from header fields alone, no data."""
     lat = _parse_float(header.get("Geodetic Latitude"))
     lon = _parse_float(header.get("Geodetic Longitude"))
     if lon is not None and lon > 180:
         lon -= 360  # IAGA-2002 reports longitude as 0-360 east; normalize to -180..180
-    elevation = _parse_float(header.get("Elevation"))
-
     return IagaObservatoryData(
         station_name=header.get("Station Name", "").strip() or header.get("IAGA CODE", "").strip() or "unknown",
         iaga_code=(header.get("IAGA CODE", "") or header.get("IAGA Code", "")).strip(),
         lat=lat,
         lon=lon,
-        elevation_m=elevation,
-        reported=reported,
-        df=df,
+        elevation_m=_parse_float(header.get("Elevation")),
+        reported=header.get("Reported", "").strip(),
+        df=pd.DataFrame({"timestamp": pd.Series(dtype="datetime64[ns]"), "mag": pd.Series(dtype="float64")}),
     )
 
 
@@ -193,7 +207,21 @@ def fetch_iaga2002_text(iaga_code: str, start_date: date, days: int = 2, timeout
     if not re.fullmatch(r"[A-Za-z0-9]{3,4}", iaga_code or ""):
         raise IntermagnetFetchError(f"올바르지 않은 IAGA 관측소 코드입니다: {iaga_code!r}")
 
-    params = {
+    params = _gin_params(iaga_code, start_date, days)
+    resp = _gin_get(params, timeout_seconds)
+    if resp.status_code != 200:
+        raise IntermagnetFetchError(
+            f"INTERMAGNET 서버가 오류를 반환했습니다 (HTTP {resp.status_code}). "
+            "관측소 코드/날짜를 확인하거나, 해당 날짜 자료가 아직 게시되지 않았을 수 있습니다."
+        )
+    text = resp.text
+    if "Reported" not in text or "DATE" not in text:
+        raise IntermagnetFetchError("응답이 IAGA-2002 형식이 아닙니다 - 관측소 코드나 날짜를 확인하세요.")
+    return text
+
+
+def _gin_params(iaga_code: str, start_date: date, days: int) -> dict:
+    return {
         "Request": "GetData",
         "format": "IAGA2002",
         "testObsys": "0",
@@ -211,22 +239,211 @@ def fetch_iaga2002_text(iaga_code: str, start_date: date, days: int = 2, timeout
         "dataStartDate": f"{start_date.isoformat()}T00:00:00.000Z",
         "dataDuration": str(max(1, int(days))),
     }
-    try:
-        resp = requests.get(_GIN_BASE_URL, params=params, timeout=timeout_seconds)
-    except requests.RequestException as exc:
-        raise IntermagnetFetchError(
-            f"INTERMAGNET 관측소 자료 요청에 실패했습니다 (네트워크 접근이 막혀 있을 수 있습니다): {exc}"
-        ) from exc
 
-    if resp.status_code != 200:
-        raise IntermagnetFetchError(
-            f"INTERMAGNET 서버가 오류를 반환했습니다 (HTTP {resp.status_code}). "
-            "관측소 코드/날짜를 확인하거나, 해당 날짜 자료가 아직 게시되지 않았을 수 있습니다."
-        )
-    text = resp.text
-    if "Reported" not in text or "DATE" not in text:
-        raise IntermagnetFetchError("응답이 IAGA-2002 형식이 아닙니다 - 관측소 코드나 날짜를 확인하세요.")
-    return text
+
+def _gin_get(params: dict, timeout_seconds: float, stream: bool = False):
+    """GET from the GIN service, retrying what is worth retrying.
+
+    A timeout or a 5xx is usually the service or the line having a bad
+    moment, not a verdict on the data - and a single one of those used to
+    cost a whole station its place in the blend. Retried a couple of times
+    with a short pause; a 4xx (no such data) is answered at once. Measured
+    against the service on a bad day: single-day requests took 4-22 s and
+    about a third failed outright, the same station succeeding minutes
+    later.
+    """
+    kwargs = {"params": params, "timeout": timeout_seconds}
+    if stream:
+        kwargs["stream"] = True
+    for attempt in range(_FETCH_ATTEMPTS):
+        try:
+            resp = requests.get(_GIN_BASE_URL, **kwargs)
+        except requests.RequestException as exc:
+            if attempt + 1 < _FETCH_ATTEMPTS:
+                _sleep(_FETCH_BACKOFF_SECONDS[attempt])
+                continue
+            raise IntermagnetFetchError(
+                f"INTERMAGNET 관측소 자료 요청에 실패했습니다 (네트워크 접근이 막혀 있을 수 있습니다): {exc}"
+            ) from exc
+        if (resp.status_code >= 500 or resp.status_code == 429) and attempt + 1 < _FETCH_ATTEMPTS:
+            _sleep(_FETCH_BACKOFF_SECONDS[attempt])
+            continue
+        return resp
+    return resp
+
+
+def fetch_observatory_header(
+    iaga_code: str, d: date, timeout_seconds: float = 15.0
+) -> IagaObservatoryData | None:
+    """Where an observatory is, read from the header of a response and
+    nothing more. None if the station cannot be reached right now.
+
+    Choosing stations only needs their positions, and those sit in the
+    first ~2 KB of a day's file; the rest is ~100 KB of minute data. On a
+    slow line that difference is most of the wait - measured at 3.6-5.7 s
+    to the header against 10-46 s for the whole day - so the response is
+    read only as far as the column-heading line and then dropped.
+    Observatories do not move, so a position once read is remembered
+    (see _remember_station) and never fetched again.
+    """
+    known = _known_station(iaga_code)
+    if known is not None:
+        return known
+    if not re.fullmatch(r"[A-Za-z0-9]{3,4}", iaga_code or ""):
+        return None
+    try:
+        resp = _gin_get(_gin_params(iaga_code, d, 1), timeout_seconds, stream=True)
+    except IntermagnetFetchError:
+        return None
+    try:
+        if resp.status_code != 200:
+            return None
+        buf = b""
+        try:
+            for chunk in resp.iter_content(2048):
+                buf += chunk
+                k = buf.find(b"\nDATE")
+                if k >= 0 and buf.find(b"\n", k + 1) >= 0:
+                    break
+        except requests.RequestException:
+            pass
+        text = buf.decode("utf-8", errors="replace")
+        if "\nDATE" not in text:
+            text = resp.text      # stream not honoured - the whole body is here anyway
+        header, data_start = _parse_iaga_header(text.splitlines())
+        if data_start is None:
+            return None
+        station = _station_from_header(header)
+    except requests.RequestException:
+        return None
+    finally:
+        close = getattr(resp, "close", None)
+        if callable(close):
+            close()
+    if station.lat is None or station.lon is None or not station.iaga_code:
+        return None
+    _remember_station(station)
+    return station
+
+
+def _stations_file() -> Path:
+    return _cache_dir() / "stations.json"
+
+
+_stations_lock = threading.Lock()
+
+
+def _known_station(iaga_code: str) -> IagaObservatoryData | None:
+    with _stations_lock:
+        try:
+            known = json.loads(_stations_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+    entry = known.get(iaga_code.upper())
+    if not entry:
+        return None
+    return replace(
+        _station_from_header({}),
+        station_name=entry.get("name") or iaga_code.upper(),
+        iaga_code=iaga_code.upper(),
+        lat=entry["lat"],
+        lon=entry["lon"],
+        elevation_m=entry.get("elevation_m"),
+    )
+
+
+def _remember_station(station: IagaObservatoryData) -> None:
+    if station.lat is None or station.lon is None or not station.iaga_code:
+        return
+    with _stations_lock:
+        path = _stations_file()
+        try:
+            known = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            known = {}
+        code = station.iaga_code.upper()
+        entry = {"name": station.station_name, "lat": station.lat, "lon": station.lon,
+                 "elevation_m": station.elevation_m}
+        if known.get(code) == entry:
+            return
+        known[code] = entry
+        try:
+            path.write_text(json.dumps(known, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError:
+            pass
+
+
+_FETCH_ATTEMPTS = 3
+_FETCH_BACKOFF_SECONDS = (1.0, 3.0)
+_sleep = time.sleep          # indirection so tests do not actually wait
+
+# Parallel requests to the GIN service. Enough to turn a few dozen
+# sequential day requests into a few seconds; few enough to stay a polite
+# client of a shared public service.
+_FETCH_WORKERS = 6
+
+# Set to a directory to keep downloaded observatory days between runs
+# (tests point it at a temporary directory). Unset: the app's own data dir.
+CACHE_DIR_ENV = "MAGNETIC_INTERMAGNET_CACHE_DIR"
+
+
+def _cache_dir() -> Path:
+    override = os.environ.get(CACHE_DIR_ENV)
+    if override:
+        path = Path(override)
+    else:
+        from ..paths import data_dir
+        path = data_dir() / "intermagnet_cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def fetch_observatory_day(
+    iaga_code: str, d: date, timeout_seconds: float = 15.0
+) -> IagaObservatoryData | None:
+    """One observatory, one UT day - from the local cache if it has been
+    fetched before, otherwise from the service. None if the day cannot be
+    had right now.
+
+    Only a day that came back substantially complete is cached, and never
+    one from the last two days, which may still be filling in. So a run
+    cut short by a bad connection keeps everything it did get, and running
+    it again only asks for what is missing - rather than starting over and
+    meeting the same timeouts on the same requests.
+    """
+    code = iaga_code.upper()
+    cache_file = _cache_dir() / f"{code}_{d.isoformat()}.iaga2002"
+    if cache_file.exists():
+        try:
+            data = parse_iaga2002(cache_file.read_text(encoding="utf-8"))
+            if _day_coverage(data.df, d) >= _MIN_DAY_COVERAGE:
+                return data
+        except (OSError, IagaParseError):
+            pass
+    try:
+        text = fetch_iaga2002_text(code, d, days=1, timeout_seconds=timeout_seconds)
+        data = parse_iaga2002(text)
+    except (IntermagnetFetchError, IagaParseError):
+        return None
+    _remember_station(data)
+    if _day_coverage(data.df, d) >= _MIN_DAY_COVERAGE and d <= date.today() - timedelta(days=2):
+        try:
+            cache_file.write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+    return data
+
+
+def fetch_observatory_days(
+    requests_wanted: list[tuple[str, date]], timeout_seconds: float = 15.0
+) -> dict[tuple[str, date], IagaObservatoryData | None]:
+    """Many (station, day) pairs at once, in parallel."""
+    wanted = list(dict.fromkeys((c.upper(), d) for c, d in requests_wanted))
+    if not wanted:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, len(wanted))) as pool:
+        results = pool.map(lambda cd: fetch_observatory_day(cd[0], cd[1], timeout_seconds), wanted)
+        return dict(zip(wanted, results))
 
 
 def _bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -307,7 +524,8 @@ _ANCHOR_WINDOW_MINUTES = 120
 _MIN_ANCHOR_SAMPLES = 20
 _MIN_DAY_COVERAGE = 0.5
 # A station needing more than this share of its days estimated is not
-# measuring the period in any useful sense - see fetch_observatory_span.
+# measuring the survey's days in any useful sense - see
+# select_nearest_observatories.
 MAX_ESTIMATED_DAY_FRACTION = 0.34
 
 # Despiking applied to each station before blending. Conservative: a
@@ -487,20 +705,15 @@ def fetch_observatory_dates(
     requested date's fetch succeeded first) restricted to just the
     requested dates, plus the list of dates that had to be estimated."""
     dates = sorted(set(dates))
-    day_data: dict[date, IagaObservatoryData | None] = {}
+    day_data: dict[date, IagaObservatoryData | None] = {
+        d: v for (_, d), v in fetch_observatory_days(
+            [(iaga_code, d) for d in dates], timeout_seconds=timeout_seconds).items()
+    }
 
     def _fetch_day(d: date) -> IagaObservatoryData | None:
-        if d in day_data:
-            return day_data[d]
-        try:
-            text = fetch_iaga2002_text(iaga_code, d, days=1, timeout_seconds=timeout_seconds)
-            day_data[d] = parse_iaga2002(text)
-        except (IntermagnetFetchError, IagaParseError):
-            day_data[d] = None
+        if d not in day_data:
+            day_data[d] = fetch_observatory_day(iaga_code, d, timeout_seconds=timeout_seconds)
         return day_data[d]
-
-    for d in dates:
-        _fetch_day(d)
     header = next((v for v in day_data.values() if v is not None), None)
 
     result_frames = []
@@ -562,74 +775,6 @@ region's INTERMAGNET network; it is a default, not a hard physical
 threshold - callers can loosen or disable it (max_distance_km=None)."""
 
 
-def fetch_observatory_span(
-    iaga_code: str,
-    start_date: date,
-    end_date: date,
-    timeout_seconds: float = 15.0,
-    max_estimated_fraction: float = MAX_ESTIMATED_DAY_FRACTION,
-) -> tuple[IagaObservatoryData, list[str]] | None:
-    """One unbroken series per observatory, covering every calendar day
-    from start_date to end_date, or None if this station cannot provide
-    one.
-
-    Fetching only the survey's own flight dates is cheaper, and it is what
-    this used to do. But it leaves each station's coverage full of holes,
-    and - the part that matters - a station that fails on one date and
-    succeeds on the next *drops in and out of the blend*. The set of
-    contributing stations then changes, the per-minute weights renormalise,
-    and the blended series steps. Because observatory data is published one
-    UT day at a time, that change lands at 00:00 UT.
-
-    Which is 09:00 in Korea. Drone surveys fly mid-morning, so a UT day
-    boundary falls in the middle of a flight rather than safely between
-    them: on the 2026-09 HaeNam survey, four of the nine flight sessions
-    crossed UT midnight, including the one whose block came out stepped
-    against its neighbours on both sides.
-
-    A real base station logging continuously across midnight has no step
-    there, and a substitute for one should behave the same way. So each
-    station is made continuous over the whole project period before any
-    blending, and a station that cannot be made continuous is dropped
-    entirely rather than being allowed to come and go. With every station
-    spanning the whole period the active set cannot change, and the
-    mechanism is gone rather than corrected for afterwards.
-
-    Missing days inside the span are estimated against the whole span's
-    template and joined to the real data on both sides (fill_missing_days),
-    not against a three-day window. A station needing more than
-    `max_estimated_fraction` of its days estimated is not a measurement of
-    anything useful and is dropped.
-    """
-    days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
-    frames = []
-    for d in days:
-        try:
-            frames.append(parse_iaga2002(
-                fetch_iaga2002_text(iaga_code, d, days=1, timeout_seconds=timeout_seconds)))
-        except (IntermagnetFetchError, IagaParseError):
-            continue
-    if not frames:
-        return None
-    header = frames[0]
-
-    combined = pd.concat([f.df for f in frames], ignore_index=True)
-    combined = (combined.dropna(subset=["mag"]).drop_duplicates(subset="timestamp")
-                .sort_values("timestamp").reset_index(drop=True))
-    if combined.empty:
-        return None
-
-    filled, estimated = fill_missing_days(combined, start_date, end_date)
-    if len(estimated) > max_estimated_fraction * len(days):
-        return None
-
-    covered = {d for d in days if _day_coverage(filled, d) >= _MIN_DAY_COVERAGE}
-    if len(covered) < len(days):
-        return None
-
-    return replace(header, df=filled), estimated
-
-
 def select_nearest_observatories(
     target_lat: float,
     target_lon: float,
@@ -638,6 +783,7 @@ def select_nearest_observatories(
     max_candidates: int = 20,
     timeout_seconds: float = 15.0,
     max_distance_km: float | None = DEFAULT_MAX_STATION_DISTANCE_KM,
+    report: dict | None = None,
 ) -> tuple[list[IagaObservatoryData], dict[str, list[str]]]:
     """Finds up to n_stations INTERMAGNET observatories spread around
     (target_lat, target_lon), for combining into a substitute base series
@@ -666,14 +812,20 @@ def select_nearest_observatories(
     range, so a survey flown on a handful of separate days weeks apart
     only ever downloads those exact days. Any requested date that comes
     back missing is estimated from its own immediate neighbors - see
-    fetch_observatory_dates's docstring. Returns both the station data and
-    a {iaga_code: [estimated ISO dates]} map so callers can disclose
-    exactly which dates in the result are real measurements vs.
-    best-effort estimates.
+    fetch_observatory_dates's docstring. A selected station that still
+    cannot cover every date is replaced by the next candidate in its
+    direction (see the comment in the body for why coverage of every
+    flight date is required). Returns both the station data and a
+    {iaga_code: [estimated ISO dates]} map so callers can disclose exactly
+    which dates in the result are real measurements vs. best-effort
+    estimates; pass `report` (a dict) to also get which stations were
+    dropped and why.
 
-    This makes up to max_candidates + a handful of requests per selected
-    station live outbound HTTPS requests - see fetch_iaga2002_text's
-    docstring on network reachability.
+    Requests run in parallel, are retried on timeouts and server errors,
+    and every complete day fetched is cached on disk
+    (fetch_observatory_day), so a run cut short by a bad connection
+    resumes where it stopped. These are live outbound HTTPS requests -
+    see fetch_iaga2002_text's docstring on network reachability.
 
     max_distance_km (default DEFAULT_MAX_STATION_DISTANCE_KM) drops any
     candidate farther than that from (target_lat, target_lon) BEFORE the
@@ -684,23 +836,25 @@ def select_nearest_observatories(
     max_distance_km=None to disable the cutoff and restore the old
     reach-as-far-as-needed behavior."""
     candidates = _candidates_by_rough_distance(target_lat, target_lon, max_candidates)
+    # Positions only - see fetch_observatory_header. Stations already
+    # known cost nothing; the rest are asked in parallel. The first date
+    # is tried first and later ones only if nobody answered at all.
     probed: list[tuple[float, float, IagaObservatoryData]] = []
     for probe_date in dates:
-        for entry in candidates:
-            try:
-                text = fetch_iaga2002_text(entry.iaga_code, probe_date, days=1, timeout_seconds=timeout_seconds)
-                data = parse_iaga2002(text)
-            except (IntermagnetFetchError, IagaParseError):
+        with ThreadPoolExecutor(max_workers=min(_FETCH_WORKERS, max(1, len(candidates)))) as pool:
+            headers = list(pool.map(
+                lambda entry: fetch_observatory_header(entry.iaga_code, probe_date, timeout_seconds),
+                candidates))
+        for station in headers:
+            if station is None or station.lat is None or station.lon is None:
                 continue
-            if data.lat is None or data.lon is None:
-                continue
-            d = haversine_km(target_lat, target_lon, data.lat, data.lon)
+            d = haversine_km(target_lat, target_lon, station.lat, station.lon)
             if max_distance_km is not None and d > max_distance_km:
                 continue
-            bearing = _bearing_deg(target_lat, target_lon, data.lat, data.lon)
-            probed.append((d, bearing, data))
+            bearing = _bearing_deg(target_lat, target_lon, station.lat, station.lon)
+            probed.append((d, bearing, station))
         if probed:
-            break  # found real coordinates for at least one candidate on this date - no need to try later dates too
+            break
 
     if not probed:
         distance_note = (
@@ -711,52 +865,79 @@ def select_nearest_observatories(
             f"해당 날짜 자료가 아직 게시되지 않았을 수 있습니다){distance_note}."
         )
 
-    selected = _pick_direction_diverse(probed, n_stations)
-    selected.sort(key=lambda t: t[0])
-
-    result_stations: list[IagaObservatoryData] = []
-    estimated_dates_by_code: dict[str, list[str]] = {}
-    dropped_codes: list[str] = []
-    for _, _, probe_data in selected:
-        if len(dates) == 1:
-            station_data, estimated_dates = probe_data, []
-        else:
-            # The whole project period, unbroken - not just the flight
-            # dates. See fetch_observatory_span for why a station that
-            # comes and goes is worse than one that is absent throughout.
-            span = fetch_observatory_span(
-                probe_data.iaga_code, min(dates), max(dates), timeout_seconds=timeout_seconds
-            )
-            if span is None:
-                dropped_codes.append(probe_data.iaga_code)
-                continue
-            station_data, estimated_dates = span
-        if estimated_dates:
-            estimated_dates_by_code[station_data.iaga_code] = estimated_dates
-        result_stations.append(station_data)
-
-    # Every station that got this far spans the whole period, so the set
-    # contributing to the blend cannot change and there is nothing to step
-    # at a UT day boundary. If none of them can - a short-lived station, a
-    # date the network has not published yet - fall back to the old
-    # per-date fetch rather than leaving the operator with no base at all,
-    # and say so, because that result can carry the seams this exists to
-    # avoid.
-    if not result_stations:
-        for _, _, probe_data in selected:
+    # Every selected station must cover every flight date. Flight dates
+    # are UT dates taken from the drone's own timestamps, so a flight that
+    # crosses 00:00 UT - which is 09:00 in Korea, mid-morning, when drone
+    # surveys fly - already contributes both of its dates. A station
+    # holding all of them is therefore present for every minute there is
+    # drone data, and the set being blended cannot change under a flight;
+    # a station that drops out for one date would make the blend step at
+    # that date's 00:00 UT, inside the flight that crosses it.
+    #
+    # A station that cannot cover them is replaced by the next candidate in
+    # its direction rather than simply lost. Only the flight dates are
+    # fetched: the weeks between flight periods hold no drone data, and
+    # asking for them (as this briefly did) multiplied the requests several
+    # times over - 228 instead of 40 on the HaeNam survey - which on a slow
+    # connection meant long waits and stations dropped for timeouts.
+    accepted: dict[str, tuple[IagaObservatoryData, list[str]]] = {}
+    rejected: dict[str, str] = {}
+    fallback: dict[str, tuple[IagaObservatoryData, list[str]]] = {}
+    while True:
+        pool = [p for p in probed if p[2].iaga_code not in rejected]
+        picks = _pick_direction_diverse(pool, n_stations)
+        todo = [p for p in picks if p[2].iaga_code not in accepted]
+        if not todo:
+            break
+        # warm the cache for every (station, date) this round needs, in parallel
+        fetch_observatory_days(
+            [(p[2].iaga_code, d) for p in todo for d in dates], timeout_seconds=timeout_seconds
+        )
+        for _, _, probe_data in todo:
+            code = probe_data.iaga_code
             try:
-                station_data, estimated_dates = fetch_observatory_dates(
-                    probe_data.iaga_code, dates, timeout_seconds=timeout_seconds
-                )
+                station_data, estimated = fetch_observatory_dates(code, dates, timeout_seconds=timeout_seconds)
             except IntermagnetFetchError:
-                station_data, estimated_dates = probe_data, []
-            if estimated_dates:
-                estimated_dates_by_code[station_data.iaga_code] = estimated_dates
-            result_stations.append(station_data)
+                rejected[code] = "자료를 받지 못함"
+                continue
+            missing = [d for d in dates if _day_coverage(station_data.df, d) < _MIN_DAY_COVERAGE]
+            if missing:
+                rejected[code] = "비행일 자료 없음: " + ", ".join(str(d) for d in missing)
+                fallback[code] = (station_data, estimated)
+            elif len(estimated) > MAX_ESTIMATED_DAY_FRACTION * len(dates):
+                rejected[code] = f"비행일 {len(dates)}일 중 {len(estimated)}일이 추정값"
+                fallback[code] = (station_data, estimated)
+            else:
+                accepted[code] = (station_data, estimated)
 
-    if not result_stations:
-        raise IntermagnetFetchError("주변 관측소 자료를 하나도 받아오지 못했습니다.")
-    return result_stations, estimated_dates_by_code
+    chosen = [p for p in _pick_direction_diverse(
+        [p for p in probed if p[2].iaga_code in accepted], n_stations)]
+    chosen.sort(key=lambda t: t[0])
+    result = [accepted[p[2].iaga_code] for p in chosen]
+
+    # Nothing covers every flight date: better a base with seams, said so,
+    # than no base at all.
+    used_fallback = False
+    if not result and fallback:
+        used_fallback = True
+        ranked = sorted((p for p in probed if p[2].iaga_code in fallback), key=lambda t: t[0])
+        result = [fallback[p[2].iaga_code] for p in ranked[:n_stations]]
+
+    if not result:
+        raise IntermagnetFetchError(
+            "주변 관측소 자료를 받아오지 못했습니다 - 네트워크 상태를 확인하고 다시 시도하세요 "
+            "(이미 받은 날짜는 저장되어 있어 다시 받지 않습니다)."
+        )
+
+    if report is not None:
+        report.update({
+            "n_probed": len(probed),
+            "dropped": [{"iaga_code": c, "reason": r} for c, r in rejected.items()],
+            "used_incomplete_stations": used_fallback,
+        })
+    stations = [data for data, _ in result]
+    estimated_dates_by_code = {data.iaga_code: est for data, est in result if est}
+    return stations, estimated_dates_by_code
 
 
 def _level_stations_onto_one_baseline(

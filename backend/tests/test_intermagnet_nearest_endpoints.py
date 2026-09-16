@@ -43,7 +43,7 @@ def _make_iaga_text(code: str, lat: float, lon: float, base_f: float, n: int = 4
     return "\n".join(lines) + "\n"
 
 
-def _fake_requests_get(url, params=None, timeout=None):
+def _fake_requests_get(url, params=None, timeout=None, **_kwargs):
     code = (params or {}).get("observatoryIagaCode")
     resp = MagicMock()
     if code in _MOCK_STATIONS:

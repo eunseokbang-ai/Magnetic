@@ -197,11 +197,24 @@ export default function IntermagnetPanel({
               {nearestPreview.n_requested != null &&
                 nearestPreview.stations?.length < nearestPreview.n_requested && (
                   <div style={{ color: "#b45309" }}>
-                    요청한 {nearestPreview.n_requested}개 중 최대 거리
-                    {nearestPreview.max_distance_km != null ? ` ${nearestPreview.max_distance_km}km` : ""} 조건 안에
-                    드는 관측소가 {nearestPreview.stations?.length}개뿐이어서 그만큼만 선택됐습니다.
+                    요청한 {nearestPreview.n_requested}개 중 {nearestPreview.stations?.length}개만 선택됐습니다 — 최대 거리
+                    {nearestPreview.max_distance_km != null ? ` ${nearestPreview.max_distance_km}km` : ""} 안에 드는
+                    관측소가 부족했거나, 아래 관측소들이 비행일 자료를 모두 제공하지 못했습니다. 네트워크가 불안정했다면 다시
+                    조회해 보세요. 이미 받은 날짜는 저장되어 있어 다시 받지 않습니다.
                   </div>
                 )}
+              {nearestPreview.used_incomplete_stations && (
+                <div style={{ color: "#dc2626" }}>
+                  비행일 자료를 모두 갖춘 관측소가 없어, 일부 날짜가 빠진 관측소로 만들었습니다. 날짜가 바뀌는 시각(한국시간
+                  09시)에 단차가 생길 수 있으니 다시 조회하는 것을 권장합니다.
+                </div>
+              )}
+              {nearestPreview.dropped_stations?.length > 0 && (
+                <div style={{ color: "#8a7a5c", fontSize: 11 }}>
+                  제외된 관측소:{" "}
+                  {nearestPreview.dropped_stations.map((d) => `${d.iaga_code} (${d.reason})`).join(", ")}
+                </div>
+              )}
               <ul style={{ margin: 0, paddingLeft: 16 }}>
                 {nearestPreview.stations?.map((s) => (
                   <li key={s.iaga_code}>

@@ -152,7 +152,7 @@ def test_fetch_auto_mode_without_drone_data_fails_clearly(client):
     assert "드론" in r.json()["detail"]
 
 
-def _fake_requests_get_irt(url, params=None, timeout=None):
+def _fake_requests_get_irt(url, params=None, timeout=None, **_kwargs):
     code = (params or {}).get("observatoryIagaCode")
     resp = MagicMock()
     if code == "IRT":

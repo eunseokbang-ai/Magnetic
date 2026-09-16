@@ -534,8 +534,10 @@ class Project:
                 raise ProjectError("대상 좌표가 없습니다 - 드론 자료를 먼저 업로드하거나 좌표를 직접 입력하세요.")
             target_lat, target_lon = centroid
         try:
+            selection_report: dict = {}
             stations, estimated_dates_by_code = select_nearest_observatories(
-                target_lat, target_lon, dates, n_stations=n_stations, max_distance_km=max_distance_km
+                target_lat, target_lon, dates, n_stations=n_stations, max_distance_km=max_distance_km,
+                report=selection_report,
             )
             combined = estimate_base_from_observatories(stations, target_lat, target_lon)
         except IntermagnetFetchError as exc:
@@ -577,6 +579,12 @@ class Project:
             # where a flight that starts at 00:00 sits. See
             # processing/intermagnet.py::_remove_handover_steps.
             "station_handovers": combined.attrs.get("station_handovers", []),
+            # Stations passed over because they could not supply every
+            # flight date (usually a network timeout or an unpublished
+            # day), and whether the result had to fall back to incomplete
+            # stations because none could.
+            "dropped_stations": selection_report.get("dropped", []),
+            "used_incomplete_stations": selection_report.get("used_incomplete_stations", False),
         }
 
     def apply_nearest_intermagnet_preview(self) -> dict:

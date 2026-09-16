@@ -57,7 +57,7 @@ _MOCK_STATIONS = {
 }
 
 
-def _fake_requests_get(url, params=None, timeout=None):
+def _fake_requests_get(url, params=None, timeout=None, **_kwargs):
     code = (params or {}).get("observatoryIagaCode")
     resp = MagicMock()
     if code in _MOCK_STATIONS:
@@ -218,7 +218,7 @@ def test_select_nearest_observatories_max_distance_none_reaches_far_stations():
 
 
 def test_select_nearest_observatories_raises_clear_error_when_nothing_found():
-    def _all_404(url, params=None, timeout=None):
+    def _all_404(url, params=None, timeout=None, **_kwargs):
         resp = MagicMock(status_code=404, text="not found")
         return resp
 
@@ -258,7 +258,7 @@ def test_fetch_observatory_dates_estimates_sparse_missing_date_from_its_own_neig
         "2026-08-04": 51000.0,
     }
 
-    def _fake_requests_get_by_date(url, params=None, timeout=None):
+    def _fake_requests_get_by_date(url, params=None, timeout=None, **_kwargs):
         code = (params or {}).get("observatoryIagaCode")
         req_day = (params or {}).get("dataStartDate", "")[:10]
         resp = MagicMock()
@@ -288,7 +288,7 @@ def test_fetch_observatory_dates_estimates_sparse_missing_date_from_its_own_neig
 
 
 def test_fetch_observatory_dates_drops_date_with_no_neighbor_data_either():
-    def _fake_requests_get_none(url, params=None, timeout=None):
+    def _fake_requests_get_none(url, params=None, timeout=None, **_kwargs):
         resp = MagicMock(status_code=404, text="not found")
         return resp
 
