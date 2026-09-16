@@ -236,7 +236,11 @@ def load_base_csvs(buffers: list, filenames: list | None = None) -> pd.DataFrame
     parts = [load_base_csv(buf, name) for buf, name in zip(buffers, names)]
     any_date_fallback = any(p.attrs.get("date_fallback_used", False) for p in parts)
     combined = pd.concat(parts, ignore_index=True)
-    combined = combined.sort_values("timestamp").reset_index(drop=True)
+    # Stable, so where two uploaded files share a timestamp the one
+    # uploaded first is kept every time rather than whichever an unstable
+    # sort happens to put first (see io_/drone_loader.py, where that
+    # choice put re-stamped samples into real surveys).
+    combined = combined.sort_values("timestamp", kind="stable").reset_index(drop=True)
     n_before_dedup = len(combined)
     combined = combined.drop_duplicates(subset="timestamp", keep="first").reset_index(drop=True)
     combined.attrs["n_duplicate_timestamps_removed"] = n_before_dedup - len(combined)

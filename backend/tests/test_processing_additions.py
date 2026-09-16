@@ -159,10 +159,11 @@ def test_drone_loader_removes_duplicate_timestamps_and_bad_coords():
 
     df = load_drone_csv(_drone_csv_bytes(rows))
     assert df.attrs["n_invalid_coords_removed"] == 2, df.attrs
-    # the exact in-file duplicate timestamp row survives load_drone_csv
-    # (dedup happens at the load_drone_csvs concat stage, see below) but
-    # invalid coordinate rows must already be gone.
-    assert len(df) == 21, len(df)
+    # An in-file duplicate timestamp is resolved inside load_drone_csv, in
+    # file order, before anything reorders the rows - the first-written
+    # row is the genuine sample (see load_drone_csv). Invalid coordinate
+    # rows must be gone too.
+    assert len(df) == 20, len(df)
     assert ((df["lat"] == 999.0) | ((df["lat"] == 0.0) & (df["lon"] == 0.0))).sum() == 0
 
     combined = load_drone_csvs([_drone_csv_bytes(rows)])

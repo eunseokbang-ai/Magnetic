@@ -409,7 +409,22 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         raise DroneLoadError("유효한 위치/자력 데이터가 없습니다 (좌표가 모두 비정상입니다).")
 
-    df = df.sort_values("timestamp").reset_index(drop=True)
+    # A repeated timestamp inside one file is the logger re-stamping later
+    # samples with a time it had already used, not the same sample twice.
+    # The MagArrow does this just before a ~1 s dropout: two or three rows
+    # are written with the Counter and Time of rows 0.4 s earlier, while
+    # their position and field are those of the moment they were really
+    # taken, about 8 m further along the line (HaeNam ACQU433 and ACQU451,
+    # five rows in total). The first-written occurrence is the genuine one,
+    # so duplicates are dropped here, in file order, before anything
+    # reorders the rows. Deciding it after an unstable sort - which this
+    # used to do - kept the re-stamped row for two of the five and put a
+    # sample 8 m out of place into the profile.
+    n_before_dedup = len(df)
+    df = df[~df["timestamp"].duplicated(keep="first")]
+    n_restamped_removed = n_before_dedup - len(df)
+
+    df = df.sort_values("timestamp", kind="stable").reset_index(drop=True)
 
     # GGA-only fields (Altitude, Hdop, ...) are sparse in several source
     # formats; interpolate over time so every sample has a usable value.
@@ -444,6 +459,7 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
         }
     )
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
+    out.attrs["n_restamped_removed"] = n_restamped_removed
     out.attrs["source_format"] = raw.attrs.get("source_format", "generic")
     out.attrs["mag_source_column"] = raw.attrs.get("mag_source_column", "Mag")
     return out
@@ -510,10 +526,15 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
         p["used_precompensated_mag"] = p.attrs.get("mag_source_column") == "MagComp"
 
     combined = pd.concat(parts, ignore_index=True)
-    combined = combined.sort_values("timestamp").reset_index(drop=True)
+    # Stable, so where two files share a timestamp the earlier-uploaded
+    # file's sample is the one kept, every time.
+    combined = combined.sort_values("timestamp", kind="stable").reset_index(drop=True)
     n_before_dedup = len(combined)
     combined = combined.drop_duplicates(subset="timestamp", keep="first").reset_index(drop=True)
-    n_duplicate_timestamps_removed = n_before_dedup - len(combined)
+    # Counted together with the within-file re-stamped rows (see
+    # load_drone_csv) - both are "a timestamp that was already taken".
+    n_duplicate_timestamps_removed = (n_before_dedup - len(combined)) + sum(
+        p.attrs.get("n_restamped_removed", 0) for p in parts)
 
     combined["point_id"] = np.arange(len(combined), dtype=np.int64)
     combined.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed

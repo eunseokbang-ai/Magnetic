@@ -175,11 +175,11 @@ def test_generic_falls_back_to_mag_when_no_magcomp_column():
     assert df.attrs["mag_source_column"] == "Mag"
 
 
-def _generic_text(mag_base, with_magcomp=False, comp_base=None, n=20):
+def _generic_text(mag_base, with_magcomp=False, comp_base=None, n=20, minute=0):
     header = "Date,Time,Latitude,Longitude,Mag" + (",MagComp" if with_magcomp else "")
     rows = [header]
     for i in range(n):
-        line = f"2024-01-01,00:00:{i:02d},37.{i:04d},127.{i:04d},{mag_base + i}"
+        line = f"2024-01-01,00:{minute:02d}:{i:02d},37.{i:04d},127.{i:04d},{mag_base + i}"
         if with_magcomp:
             line += f",{comp_base + i}"
         rows.append(line)
@@ -190,8 +190,13 @@ def test_load_drone_csvs_tracks_precompensated_mag_per_file():
     """A batch upload mixing a -comp.csv (has MagComp) with a plain -pre.csv
     (no MagComp) must report accurately which is which, not just whether
     *any* file had it - see store.py's drone_summary."""
+    # Two different flights, so different times. With identical timestamps
+    # the second file is a duplicate of the first and its samples are
+    # dropped whole - this used to pass only because an unstable sort let
+    # rows from both files survive, interleaving two flights sample by
+    # sample.
     buf_with = _buf(_generic_text(50000, with_magcomp=True, comp_base=49000))
-    buf_without = _buf(_generic_text(60000, with_magcomp=False))
+    buf_without = _buf(_generic_text(60000, with_magcomp=False, minute=1))
     combined = load_drone_csvs([buf_with, buf_without])
 
     assert combined.attrs["n_files_total"] == 2
