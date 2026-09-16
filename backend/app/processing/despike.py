@@ -24,7 +24,36 @@ def _local_stats(s: pd.Series, window: int) -> tuple[pd.Series, pd.Series, pd.Se
     med = s.rolling(window=window, center=True, min_periods=1).median()
     resid = s - med
     mad = resid.abs().rolling(window=window, center=True, min_periods=1).median()
-    robust_std = (mad * _MAD_TO_STD).replace(0, np.nan)
+    robust_std = mad * _MAD_TO_STD
+
+    # A local MAD of exactly zero is common and must not switch detection
+    # off. On a smooth series the centred rolling median equals the middle
+    # sample for most windows, so more than half the residuals in the
+    # window are 0 and their median is 0 too - which is precisely the case
+    # of a clean record with one bad sample in it, where a spike is both
+    # most obvious and most damaging.
+    #
+    # Leaving the scale at 0 would flag every sample with any residual at
+    # all; NaN - which this used to substitute - flags nothing, because
+    # `resid > k * NaN` is False and the spike passes through in silence.
+    # Cheongyang observatory jumped 39 nT for one minute on 2026-09-08 and
+    # went straight into a base series that way.
+    #
+    # So a degenerate local scale falls back to the record's own: the
+    # median of the local scales that are not degenerate, or failing that
+    # the spread of the residuals over the whole series.
+    usable = robust_std[robust_std > 0]
+    if len(usable):
+        fallback = float(usable.median())
+    else:
+        finite = resid.dropna().abs()
+        fallback = float(_MAD_TO_STD * finite.median()) if len(finite) else 0.0
+    if fallback > 0:
+        robust_std = robust_std.mask(~(robust_std > 0), fallback)
+    # If even that is zero, the record has no variation anywhere and a
+    # scale of zero is the right answer rather than a degenerate one:
+    # every residual is then exactly zero except the bad sample's, so
+    # `|resid| > k * 0` flags precisely it and nothing else.
     return med, resid, robust_std
 
 

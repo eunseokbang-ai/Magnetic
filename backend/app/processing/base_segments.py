@@ -60,6 +60,17 @@ DEFAULT_STEP_THRESHOLD_NT = 20.0
 # ...and it must also stand out against how much this particular log moves
 # between samples, so a noisy logger does not fragment.
 _STEP_ROBUST_K = 8.0
+
+# Floor for a jump landing exactly at 00:00 UT - see find_base_segments
+# for why a seam there is held to a different standard than one in the
+# middle of a day.
+DEFAULT_DAY_BOUNDARY_STEP_NT = 3.0
+
+# Samples either side of a break used to measure how far the record jumps
+# there. Enough to average out ordinary sample-to-sample noise, short
+# enough that the diurnal curve barely bends across it.
+_STEP_WINDOW_SAMPLES = 30
+_MIN_STEP_SAMPLES = 10
 # Above this, a level difference across a logging gap is larger than a
 # fixed station's own day-to-day range (22.9 nT measured over ten days at
 # Cheongyang) and is worth asking the operator about.
@@ -117,10 +128,47 @@ class BaseLevelingResult:
         }
 
 
+def step_across_break(
+    values: np.ndarray, k: int, window: int = _STEP_WINDOW_SAMPLES
+) -> float | None:
+    """How far the record jumps at index `k`, measured locally.
+
+    Fits a straight line to the `window` samples on each side of the break
+    and reads both at the break. The difference of two medians would
+    measure the step plus half a window of slope mismatch, and a difference
+    of whole-segment medians - which is what this module used to apply -
+    measures something else entirely: two segments covering different
+    numbers of days, or different parts of the diurnal curve, have
+    different medians for reasons that have nothing to do with the step.
+
+    That mattered. On the 2026-09 HaeNam base the discontinuity at
+    2026-09-09 00:00 UT measures -19.1 nT locally; the segment-median
+    difference was -5.2 nT, so only a fifth of it was taken out, and what
+    the correction applied (+3.96 nT) bore no relation to what it had
+    detected.
+
+    None when either side is too short to fit.
+    """
+    before = values[max(0, k - window):k]
+    after = values[k:k + window]
+    before = before[np.isfinite(before)]
+    after = after[np.isfinite(after)]
+    if len(before) < _MIN_STEP_SAMPLES or len(after) < _MIN_STEP_SAMPLES:
+        return None
+
+    def edge(v: np.ndarray, at_start: bool) -> float:
+        x = np.arange(len(v), dtype=float)
+        slope, intercept = np.polyfit(x, v, 1)
+        return float(intercept + slope * (0.0 if at_start else len(v)))
+
+    return edge(after, True) - edge(before, False)
+
+
 def find_base_segments(
     base_df: pd.DataFrame,
     gap_minutes: float = DEFAULT_GAP_MINUTES,
     step_threshold_nt: float = DEFAULT_STEP_THRESHOLD_NT,
+    day_boundary_step_threshold_nt: float = DEFAULT_DAY_BOUNDARY_STEP_NT,
 ) -> tuple[np.ndarray, list[str]]:
     """Segment id per row, plus why each new segment started."""
     base = base_df.sort_values("timestamp")
@@ -137,6 +185,26 @@ def find_base_segments(
 
     is_gap = dt_s > gap_minutes * 60.0
     is_step = np.abs(dmag) > robust_step
+
+    # A discontinuity exactly at UT midnight gets a much lower threshold.
+    # Observatory data is published one UT day at a time, so a record
+    # assembled from it carries its seams at 00:00 UT - and the field does
+    # not know about UT midnight, so a jump landing precisely there, many
+    # times the record's own sample-to-sample variability, is the join and
+    # not the field. Away from that boundary the conservative threshold
+    # stands, because a severe storm really can move the field several nT
+    # in a minute and must not be levelled away.
+    #
+    # This is not a corner case at this longitude: 00:00 UT is 09:00 in
+    # Korea, so every Korean morning flight spans it. On the 2026-09
+    # HaeNam survey four of the nine flight sessions crossed UT midnight,
+    # and the base carried a 20.9 nT seam there.
+    ts = base["timestamp"]
+    at_day_boundary = (
+        (ts.dt.hour == 0) & (ts.dt.minute == 0) & (ts.dt.second == 0)
+    ).to_numpy()[1:]
+    boundary_step = max(day_boundary_step_threshold_nt, _STEP_ROBUST_K * 1.4826 * mad)
+    is_step |= at_day_boundary & (np.abs(dmag) > boundary_step)
 
     seg = np.zeros(n, dtype=int)
     reasons: list[str] = []
@@ -156,6 +224,7 @@ def level_base_segments(
     step_threshold_nt: float = DEFAULT_STEP_THRESHOLD_NT,
     gap_suspicious_nt: float = DEFAULT_GAP_SUSPICIOUS_NT,
     min_segment_samples: int = 30,
+    day_boundary_step_threshold_nt: float = DEFAULT_DAY_BOUNDARY_STEP_NT,
 ) -> BaseLevelingResult:
     """Report the base log's deployments, and level the ones `mode` allows.
 
@@ -171,7 +240,8 @@ def level_base_segments(
     if base.empty:
         return BaseLevelingResult(base=base, mode=mode)
 
-    seg_id, reasons = find_base_segments(base, gap_minutes, step_threshold_nt)
+    seg_id, reasons = find_base_segments(
+        base, gap_minutes, step_threshold_nt, day_boundary_step_threshold_nt)
     base["_segment"] = seg_id
 
     # Fold a too-short segment into its predecessor: a handful of samples
@@ -201,20 +271,34 @@ def level_base_segments(
             return True
         return reason_by_id.get(sid) == "step"
 
-    # Anchor: the weighted level of the segments that are staying put, so
-    # levelling a step never shifts the rest of the record.
-    anchored = [sid for sid in kept_ids if not should_level(sid)]
-    if anchored:
-        common = float((levels[anchored] * sizes[anchored]).sum() / sizes[anchored].sum())
-    else:
-        common = float((levels * sizes).sum() / sizes.sum())
+    # Walk the record forwards, and at each boundary that is to be
+    # levelled, shift everything after it by the step measured at that
+    # boundary (step_across_break). The shift accumulates, so the record
+    # comes out continuous and everything before the first levelled
+    # boundary keeps the level it was recorded at.
+    #
+    # The offset used to be (weighted common level - this segment's own
+    # median), which is a different quantity from the step it was detected
+    # by: segments covering different numbers of days, or different parts
+    # of the diurnal curve, have different medians for legitimate reasons.
+    # See step_across_break for what that cost on real data.
+    values = base["mag"].to_numpy(dtype=float)
+    seg_start = {sid: int(np.flatnonzero((base["_segment"] == sid).to_numpy())[0])
+                 for sid in kept_ids}
+    cumulative = 0.0
+    offset_by_sid: dict[int, float] = {}
+    for sid in kept_ids:
+        if should_level(sid):
+            measured = step_across_break(values, seg_start[sid])
+            if measured is not None:
+                cumulative -= measured
+        offset_by_sid[sid] = cumulative
 
     segments: list[BaseSegment] = []
     for i, sid in enumerate(kept_ids):
         rows = base["_segment"] == sid
         level = float(levels[sid])
-        do_level = should_level(sid)
-        offset = (common - level) if do_level else 0.0
+        offset = offset_by_sid[sid]
         if offset:
             base.loc[rows, "mag"] = base.loc[rows, "mag"] + offset
         sub = base.loc[rows, "timestamp"]
@@ -258,5 +342,6 @@ def level_base_segments(
     base = base.drop(columns=["_segment"])
     max_offset = max((abs(s.offset_applied_nt) for s in segments), default=0.0)
     return BaseLevelingResult(base=base, mode=mode, segments=segments,
-                              common_level_nt=common, max_offset_nt=max_offset,
+                              common_level_nt=float(base["mag"].mean()),
+                              max_offset_nt=max_offset,
                               warnings=warnings)

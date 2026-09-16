@@ -188,3 +188,61 @@ def test_find_segments_returns_one_id_per_row():
     assert len(seg) == len(base)
     assert set(np.unique(seg)) == {0, 1}
     assert reasons == ["gap"]
+
+
+def _logging_base(start, hours, level, amp=20.0, seed=0):
+    """Continuous 1-minute base logging with a real diurnal curve on it."""
+    t = pd.date_range(start, periods=int(hours * 60), freq="1min")
+    h = t.hour + t.minute / 60.0
+    rng = np.random.default_rng(seed)
+    return pd.DataFrame({"timestamp": t,
+                         "mag": level + amp * np.sin(2 * np.pi * h / 24.0)
+                                + rng.normal(0, 0.1, len(t))})
+
+
+def test_the_correction_applied_is_the_step_that_was_detected():
+    """The offset used to come from the segments' own medians, which is a
+    different quantity from the step. Two segments covering different
+    stretches of the diurnal curve have different medians whatever the
+    step is - so a 10 nT jump could be "corrected" by any number at all.
+
+    The break is at 00:00 UT because that is where this actually happens:
+    observatory data is published one UT day at a time, so a record
+    assembled from it carries its seams there.
+    """
+    before = _logging_base("2026-09-08 15:00", hours=9, level=50130.0, seed=1)
+    after = _logging_base("2026-09-09 00:00", hours=3, level=50130.0, seed=2)
+    after["mag"] += 10.0                       # the step, and nothing else
+    base = pd.concat([before, after], ignore_index=True)
+
+    result = level_base_segments(base, mode="steps")
+
+    levelled = [s for s in result.segments if s.levelled]
+    assert len(levelled) == 1
+    assert abs(abs(levelled[0].offset_applied_nt) - 10.0) < 1.5, levelled[0].offset_applied_nt
+
+
+def test_a_levelled_record_comes_out_continuous_across_the_break():
+    before = _logging_base("2026-09-08 15:00", hours=9, level=50130.0, seed=3)
+    after = _logging_base("2026-09-09 00:00", hours=3, level=50130.0, seed=4)
+    after["mag"] -= 19.0
+    base = pd.concat([before, after], ignore_index=True)
+
+    out = level_base_segments(base, mode="steps").base.sort_values("timestamp")
+
+    jumps = out["mag"].diff().abs()
+    assert jumps.max() < 2.0, f"still steps {jumps.max():.2f} nT"
+
+
+def test_levelling_a_step_does_not_move_the_record_before_it():
+    """Everything ahead of the first correction keeps the level it was
+    recorded at - only what follows a break is shifted onto it."""
+    before = _logging_base("2026-09-08 15:00", hours=9, level=50130.0, seed=5)
+    after = _logging_base("2026-09-09 00:00", hours=3, level=50130.0, seed=6)
+    after["mag"] += 12.0
+    base = pd.concat([before, after], ignore_index=True)
+
+    out = level_base_segments(base, mode="steps").base.sort_values("timestamp")
+
+    head = out[out["timestamp"] < "2026-09-09 00:00"]["mag"].to_numpy()
+    assert np.allclose(head, before["mag"].to_numpy(), atol=1e-9)

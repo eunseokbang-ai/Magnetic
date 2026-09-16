@@ -33,6 +33,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from .despike import despike
+
 
 class IagaParseError(ValueError):
     pass
@@ -303,7 +305,16 @@ _MIN_HANDOVER_STEP_NT = 1.0
 # neighbours, and the fewest that makes the measurement worth trusting.
 _ANCHOR_WINDOW_MINUTES = 120
 _MIN_ANCHOR_SAMPLES = 20
-_MIN_DAY_COVERAGE = 0.5  # below this fraction of samples present, treat the whole day as missing rather than gap-interpolate it
+_MIN_DAY_COVERAGE = 0.5
+# A station needing more than this share of its days estimated is not
+# measuring the period in any useful sense - see fetch_observatory_span.
+MAX_ESTIMATED_DAY_FRACTION = 0.34
+
+# Despiking applied to each station before blending. Conservative: a
+# 1-minute observatory series is smooth, so only a sample standing far out
+# from its own neighbours is touched.
+_STATION_DESPIKE_WINDOW = 11
+_STATION_DESPIKE_K = 6.0  # below this fraction of samples present, treat the whole day as missing rather than gap-interpolate it
 
 
 def _edge_offset(
@@ -551,6 +562,74 @@ region's INTERMAGNET network; it is a default, not a hard physical
 threshold - callers can loosen or disable it (max_distance_km=None)."""
 
 
+def fetch_observatory_span(
+    iaga_code: str,
+    start_date: date,
+    end_date: date,
+    timeout_seconds: float = 15.0,
+    max_estimated_fraction: float = MAX_ESTIMATED_DAY_FRACTION,
+) -> tuple[IagaObservatoryData, list[str]] | None:
+    """One unbroken series per observatory, covering every calendar day
+    from start_date to end_date, or None if this station cannot provide
+    one.
+
+    Fetching only the survey's own flight dates is cheaper, and it is what
+    this used to do. But it leaves each station's coverage full of holes,
+    and - the part that matters - a station that fails on one date and
+    succeeds on the next *drops in and out of the blend*. The set of
+    contributing stations then changes, the per-minute weights renormalise,
+    and the blended series steps. Because observatory data is published one
+    UT day at a time, that change lands at 00:00 UT.
+
+    Which is 09:00 in Korea. Drone surveys fly mid-morning, so a UT day
+    boundary falls in the middle of a flight rather than safely between
+    them: on the 2026-09 HaeNam survey, four of the nine flight sessions
+    crossed UT midnight, including the one whose block came out stepped
+    against its neighbours on both sides.
+
+    A real base station logging continuously across midnight has no step
+    there, and a substitute for one should behave the same way. So each
+    station is made continuous over the whole project period before any
+    blending, and a station that cannot be made continuous is dropped
+    entirely rather than being allowed to come and go. With every station
+    spanning the whole period the active set cannot change, and the
+    mechanism is gone rather than corrected for afterwards.
+
+    Missing days inside the span are estimated against the whole span's
+    template and joined to the real data on both sides (fill_missing_days),
+    not against a three-day window. A station needing more than
+    `max_estimated_fraction` of its days estimated is not a measurement of
+    anything useful and is dropped.
+    """
+    days = [start_date + timedelta(days=i) for i in range((end_date - start_date).days + 1)]
+    frames = []
+    for d in days:
+        try:
+            frames.append(parse_iaga2002(
+                fetch_iaga2002_text(iaga_code, d, days=1, timeout_seconds=timeout_seconds)))
+        except (IntermagnetFetchError, IagaParseError):
+            continue
+    if not frames:
+        return None
+    header = frames[0]
+
+    combined = pd.concat([f.df for f in frames], ignore_index=True)
+    combined = (combined.dropna(subset=["mag"]).drop_duplicates(subset="timestamp")
+                .sort_values("timestamp").reset_index(drop=True))
+    if combined.empty:
+        return None
+
+    filled, estimated = fill_missing_days(combined, start_date, end_date)
+    if len(estimated) > max_estimated_fraction * len(days):
+        return None
+
+    covered = {d for d in days if _day_coverage(filled, d) >= _MIN_DAY_COVERAGE}
+    if len(covered) < len(days):
+        return None
+
+    return replace(header, df=filled), estimated
+
+
 def select_nearest_observatories(
     target_lat: float,
     target_lon: float,
@@ -637,22 +716,46 @@ def select_nearest_observatories(
 
     result_stations: list[IagaObservatoryData] = []
     estimated_dates_by_code: dict[str, list[str]] = {}
+    dropped_codes: list[str] = []
     for _, _, probe_data in selected:
         if len(dates) == 1:
-            station_data = probe_data  # already have exactly what's needed
+            station_data, estimated_dates = probe_data, []
         else:
+            # The whole project period, unbroken - not just the flight
+            # dates. See fetch_observatory_span for why a station that
+            # comes and goes is worse than one that is absent throughout.
+            span = fetch_observatory_span(
+                probe_data.iaga_code, min(dates), max(dates), timeout_seconds=timeout_seconds
+            )
+            if span is None:
+                dropped_codes.append(probe_data.iaga_code)
+                continue
+            station_data, estimated_dates = span
+        if estimated_dates:
+            estimated_dates_by_code[station_data.iaga_code] = estimated_dates
+        result_stations.append(station_data)
+
+    # Every station that got this far spans the whole period, so the set
+    # contributing to the blend cannot change and there is nothing to step
+    # at a UT day boundary. If none of them can - a short-lived station, a
+    # date the network has not published yet - fall back to the old
+    # per-date fetch rather than leaving the operator with no base at all,
+    # and say so, because that result can carry the seams this exists to
+    # avoid.
+    if not result_stations:
+        for _, _, probe_data in selected:
             try:
                 station_data, estimated_dates = fetch_observatory_dates(
                     probe_data.iaga_code, dates, timeout_seconds=timeout_seconds
                 )
             except IntermagnetFetchError:
-                # fall back to the single already-probed day rather than
-                # dropping a station that was reachable a moment ago
                 station_data, estimated_dates = probe_data, []
             if estimated_dates:
                 estimated_dates_by_code[station_data.iaga_code] = estimated_dates
-        result_stations.append(station_data)
+            result_stations.append(station_data)
 
+    if not result_stations:
+        raise IntermagnetFetchError("주변 관측소 자료를 하나도 받아오지 못했습니다.")
     return result_stations, estimated_dates_by_code
 
 
@@ -850,7 +953,21 @@ def estimate_base_from_observatories(
         series = s.df.drop_duplicates(subset="timestamp").set_index("timestamp")["mag"].reindex(grid)
         # Interpolate only small internal gaps (a station's own brief
         # dropouts) - never extrapolate past a station's real coverage.
-        series_by_station.append(series.interpolate(limit=5, limit_area="inside"))
+        series = series.interpolate(limit=5, limit_area="inside")
+        # Despike each station before it is blended, not just the blend
+        # afterwards. The nearest station carries most of the weight, so
+        # one of its spikes arrives nearly undiluted - Cheongyang jumped
+        # 39 nT for a single minute on 2026-09-08 and put a 33 nT spike in
+        # the combined series - and a spike also corrupts the levels and
+        # handover steps measured from the minutes around it.
+        values = series.to_numpy(dtype=float)
+        ok = np.isfinite(values)
+        if ok.sum() > _STATION_DESPIKE_WINDOW:
+            cleaned, _ = despike(values[ok], window_size=_STATION_DESPIKE_WINDOW,
+                                 threshold_k=_STATION_DESPIKE_K, adaptive=False)
+            values[ok] = cleaned
+            series = pd.Series(values, index=series.index)
+        series_by_station.append(series)
 
     levelled, offsets = _level_stations_onto_one_baseline(series_by_station, weights)
     common_level = float(offsets[int(np.argmax(weights))])
