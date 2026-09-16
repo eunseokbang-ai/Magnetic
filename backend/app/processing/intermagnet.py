@@ -50,6 +50,11 @@ class IntermagnetFetchError(RuntimeError):
     pass
 
 
+class IntermagnetUnavailable(IntermagnetFetchError):
+    """The service could not be reached or kept failing - says nothing
+    about whether the data exists, so it is worth asking again later."""
+
+
 @dataclass
 class IagaObservatoryData:
     station_name: str
@@ -262,12 +267,16 @@ def _gin_get(params: dict, timeout_seconds: float, stream: bool = False):
             if attempt + 1 < _FETCH_ATTEMPTS:
                 _sleep(_FETCH_BACKOFF_SECONDS[attempt])
                 continue
-            raise IntermagnetFetchError(
+            raise IntermagnetUnavailable(
                 f"INTERMAGNET 관측소 자료 요청에 실패했습니다 (네트워크 접근이 막혀 있을 수 있습니다): {exc}"
             ) from exc
-        if (resp.status_code >= 500 or resp.status_code == 429) and attempt + 1 < _FETCH_ATTEMPTS:
-            _sleep(_FETCH_BACKOFF_SECONDS[attempt])
-            continue
+        if resp.status_code >= 500 or resp.status_code == 429:
+            if attempt + 1 < _FETCH_ATTEMPTS:
+                _sleep(_FETCH_BACKOFF_SECONDS[attempt])
+                continue
+            raise IntermagnetUnavailable(
+                f"INTERMAGNET 서버가 계속 오류를 반환했습니다 (HTTP {resp.status_code}) - 잠시 후 다시 시도하세요."
+            )
         return resp
     return resp
 
@@ -420,10 +429,21 @@ def fetch_observatory_day(
                 return data
         except (OSError, IagaParseError):
             pass
+    if day_known_unpublished(code, d):
+        return None
     try:
         text = fetch_iaga2002_text(code, d, days=1, timeout_seconds=timeout_seconds)
         data = parse_iaga2002(text)
+    except IntermagnetUnavailable:
+        return None
     except (IntermagnetFetchError, IagaParseError):
+        # The service answered, and the answer was "nothing usable" - a
+        # station that does not publish to the network, or a day it has
+        # not published (a file of fill values). Remembered for a while,
+        # so the next run does not spend a slow request finding out again:
+        # on the HaeNam survey five such stations cost 242 requests and
+        # half an hour on every run before this.
+        _mark_unpublished(code, d)
         return None
     _remember_station(data)
     if _day_coverage(data.df, d) >= _MIN_DAY_COVERAGE and d <= date.today() - timedelta(days=2):
@@ -432,6 +452,33 @@ def fetch_observatory_day(
         except OSError:
             pass
     return data
+
+
+# How long a "nothing published for that day" answer is trusted before the
+# day is asked about again. Long enough to cover repeated runs while the
+# base is being built; short enough that a day published late is picked up.
+_UNPUBLISHED_TTL_SECONDS = 3 * 24 * 3600
+
+
+def _unpublished_marker(code: str, d: date) -> Path:
+    return _cache_dir() / f"{code.upper()}_{d.isoformat()}.none"
+
+
+def _mark_unpublished(code: str, d: date) -> None:
+    try:
+        _unpublished_marker(code, d).touch()
+    except OSError:
+        pass
+
+
+def day_known_unpublished(code: str, d: date) -> bool:
+    """True if the service recently said it has nothing usable for this
+    station and day (as opposed to not answering at all)."""
+    marker = _unpublished_marker(code, d)
+    try:
+        return time.time() - marker.stat().st_mtime < _UNPUBLISHED_TTL_SECONDS
+    except OSError:
+        return False
 
 
 def fetch_observatory_days(
@@ -890,11 +937,25 @@ def select_nearest_observatories(
         if not todo:
             break
         # warm the cache for every (station, date) this round needs, in parallel
-        fetch_observatory_days(
+        prefetched = fetch_observatory_days(
             [(p[2].iaga_code, d) for p in todo for d in dates], timeout_seconds=timeout_seconds
         )
         for _, _, probe_data in todo:
             code = probe_data.iaga_code
+            # A station with nothing for most flight dates is out already.
+            # Handing it to fetch_observatory_dates would go looking for
+            # the neighbouring day of every missing date, two more slow
+            # requests each, to estimate days for a station that is going
+            # to be rejected anyway.
+            absent = [d for d in dates if prefetched.get((code.upper(), d)) is None]
+            if len(absent) > MAX_ESTIMATED_DAY_FRACTION * len(dates):
+                unpublished = [d for d in absent if day_known_unpublished(code, d)]
+                rejected[code] = (
+                    f"비행일 {len(dates)}일 중 {len(unpublished)}일 자료 미게시"
+                    if len(unpublished) == len(absent)
+                    else f"비행일 {len(dates)}일 중 {len(absent)}일을 받지 못함 (네트워크)"
+                )
+                continue
             try:
                 station_data, estimated = fetch_observatory_dates(code, dates, timeout_seconds=timeout_seconds)
             except IntermagnetFetchError:

@@ -207,3 +207,44 @@ def test_a_known_station_is_not_asked_where_it_is_again():
 
     assert station is not None and station.iaga_code == "KAK"
     assert second.calls == []
+
+
+def test_a_station_with_nothing_published_is_not_asked_again_next_run():
+    """Stations that do not publish to the network answer with nothing
+    usable. That answer is remembered, so the next run does not spend a
+    slow request per day rediscovering it - on the HaeNam survey five such
+    stations cost 242 requests on every run."""
+    dead = {("CYG", d) for d in DATES[1:]}      # one day there, so its position is known
+    first = FakeGin(missing=dead)
+    report: dict = {}
+    _select(first, report)
+    assert any(c == "CYG" for c, _ in first.calls)
+    assert "미게시" in {d["iaga_code"]: d["reason"] for d in report["dropped"]}["CYG"]
+
+    second = FakeGin(missing=dead)
+    _select(second)
+
+    assert not any(c == "CYG" for c, _ in second.calls), second.calls
+
+
+def test_an_empty_station_is_rejected_without_chasing_neighbour_days():
+    dead = {("CYG", d) for d in DATES[1:]}
+    gin = FakeGin(missing=dead)
+
+    _select(gin)
+
+    asked = {d for c, d in gin.calls if c == "CYG"}
+    assert asked <= set(DATES), f"asked for neighbour days too: {sorted(asked - set(DATES))}"
+
+
+def test_a_network_failure_is_not_remembered_as_missing_data():
+    flaky = {("CYG", d): 99 for d in DATES[1:]}
+    report: dict = {}
+    _select(FakeGin(flaky=flaky), report)
+    assert "네트워크" in {d["iaga_code"]: d["reason"] for d in report["dropped"]}["CYG"]
+
+    second = FakeGin()
+    stations, _ = _select(second)
+
+    assert any(c == "CYG" for c, _ in second.calls)
+    assert "CYG" in {s.iaga_code for s in stations}
