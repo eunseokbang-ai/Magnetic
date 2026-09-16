@@ -248,3 +248,50 @@ def test_a_network_failure_is_not_remembered_as_missing_data():
 
     assert any(c == "CYG" for c, _ in second.calls)
     assert "CYG" in {s.iaga_code for s in stations}
+
+
+def test_a_station_that_never_answers_is_left_out_for_a_while():
+    """It times out on everything while the others answer - so it is the
+    station, not the line - and the next run does not wait on it again."""
+    silent = {("KAK", d): 99 for d in DATES}
+    report: dict = {}
+    with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+        intermagnet.fetch_observatory_header("KAK", DATES[0])       # position known from earlier
+    _select(FakeGin(flaky=silent), report, n=3)
+    assert "KAK" in {d["iaga_code"] for d in report["dropped"]}
+
+    second = FakeGin()
+    report2: dict = {}
+    _select(second, report2, n=3)
+
+    assert not any(c == "KAK" for c, _ in second.calls)
+    assert "응답 없음" in {d["iaga_code"]: d["reason"] for d in report2["dropped"]}["KAK"]
+
+
+def test_a_dead_line_does_not_blacklist_every_station():
+    """If nothing answered at all, that is the connection - no station is
+    marked, and the next run asks all of them again."""
+    for code in STATIONS:
+        with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+            intermagnet.fetch_observatory_header(code, DATES[0])
+    everything = {(c, d): 99 for c in STATIONS for d in DATES}
+    with pytest.raises(intermagnet.IntermagnetFetchError):
+        _select(FakeGin(flaky=everything))
+
+    second = FakeGin()
+    stations, _ = _select(second)
+
+    assert len(stations) == 2
+
+
+def test_a_dead_station_costs_only_the_first_few_dates():
+    dead = {("KAK", d) for d in DATES[1:]} | {("KAK", DATES[0])}
+    with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+        intermagnet.fetch_observatory_header("KAK", DATES[0])
+    gin = FakeGin(missing=dead)
+
+    _select(gin, n=3)
+
+    assert any(c == "KAK" for c, _ in gin.calls)
+    gate = DATES[: int(intermagnet.MAX_ESTIMATED_DAY_FRACTION * len(DATES)) + 1]
+    assert {d for c, d in gin.calls if c == "KAK"} <= set(gate)

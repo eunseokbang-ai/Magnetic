@@ -471,6 +471,38 @@ def _mark_unpublished(code: str, d: date) -> None:
         pass
 
 
+# How long a station that answered nothing at all - while others answered
+# - is left out before being tried again. Short, because unlike an
+# "unpublished" answer this is only an observation about the connection.
+_UNREACHABLE_TTL_SECONDS = 6 * 3600
+
+
+def _unreachable_marker(code: str) -> Path:
+    return _cache_dir() / f"{code.upper()}.unreachable"
+
+
+def _mark_unreachable(code: str) -> None:
+    """Every date asked of this station failed to arrive, in a run where
+    other stations did answer - so it is this station, not the line. On
+    the HaeNam survey three stations behaved like this on every run and
+    were the whole of what was left of the wait once everything useful
+    was cached."""
+    try:
+        _unreachable_marker(code).touch()
+    except OSError:
+        pass
+
+
+def _screen_out_unreachable(code: str, rejected: dict[str, str]) -> bool:
+    try:
+        recent = time.time() - _unreachable_marker(code).stat().st_mtime < _UNREACHABLE_TTL_SECONDS
+    except OSError:
+        return False
+    if recent:
+        rejected[code] = "최근 조회에서 응답 없음 (6시간 후 다시 시도)"
+    return recent
+
+
 def day_known_unpublished(code: str, d: date) -> bool:
     """True if the service recently said it has nothing usable for this
     station and day (as opposed to not answering at all)."""
@@ -937,11 +969,35 @@ def select_nearest_observatories(
         if not todo:
             break
         # warm the cache for every (station, date) this round needs, in parallel
+        todo = [p for p in todo if not _screen_out_unreachable(p[2].iaga_code, rejected)]
+        if not todo:
+            continue
+        # Ask for just enough dates to tell whether a station can possibly
+        # qualify: if every one of these is absent it has already missed
+        # more than the allowed share, and the rest need not be requested.
+        gate = dates[: int(MAX_ESTIMATED_DAY_FRACTION * len(dates)) + 1]
         prefetched = fetch_observatory_days(
-            [(p[2].iaga_code, d) for p in todo for d in dates], timeout_seconds=timeout_seconds
+            [(p[2].iaga_code, d) for p in todo for d in gate], timeout_seconds=timeout_seconds
         )
+        answered_somewhere = any(v is not None for v in prefetched.values())
+        dead = {p[2].iaga_code for p in todo
+                if all(prefetched.get((p[2].iaga_code.upper(), d)) is None for d in gate)}
+        for code in dead:
+            if answered_somewhere and not any(day_known_unpublished(code, d) for d in gate):
+                _mark_unreachable(code)
+        prefetched.update(fetch_observatory_days(
+            [(p[2].iaga_code, d) for p in todo if p[2].iaga_code not in dead for d in dates[len(gate):]],
+            timeout_seconds=timeout_seconds,
+        ))
         for _, _, probe_data in todo:
             code = probe_data.iaga_code
+            if code in dead:
+                unpublished = [d for d in gate if day_known_unpublished(code, d)]
+                rejected[code] = (
+                    "비행일 자료 미게시" if len(unpublished) == len(gate)
+                    else "응답 없음 (네트워크)"
+                )
+                continue
             # A station with nothing for most flight dates is out already.
             # Handing it to fetch_observatory_dates would go looking for
             # the neighbouring day of every missing date, two more slow
