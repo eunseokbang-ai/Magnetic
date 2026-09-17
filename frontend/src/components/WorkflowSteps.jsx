@@ -1447,7 +1447,7 @@ export default function WorkflowSteps({
             </span>
           </label>
           {transformExtraParams.derivative_presmooth && (
-            <Field label="평활 폭 (측선 간격 배수) — 0.4 권장. 키우면 줄무늬는 줄지만 실제 신호도 깎입니다">
+            <Field label="평활 폭 (측선 간격 배수) — 1.0 권장(0.4 이하는 10 m 격자에서 거의 거르지 못함). 키우면 줄무늬는 줄지만 실제 신호도 깎입니다">
               <input
                 type="number"
                 step="0.05"
