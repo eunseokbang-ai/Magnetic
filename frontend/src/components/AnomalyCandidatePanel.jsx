@@ -118,6 +118,7 @@ export default function AnomalyCandidatePanel({
   selectedIndices,
   onToggle,
   onSelectAll,
+  onSelectClean,
   onClearSelection,
   onFocusCandidate,
   onApplySelected,
@@ -207,6 +208,13 @@ export default function AnomalyCandidatePanel({
               <button style={{ ...inputStyle, cursor: "pointer", width: "auto" }} onClick={onSelectAll}>
                 전체 선택
               </button>
+              <button
+                style={{ ...inputStyle, cursor: "pointer", width: "auto", color: "#0f766e", borderColor: "#0f766e" }}
+                onClick={onSelectClean}
+                title="여러 측선에서 보이고 자료 경계에 닿지 않은 후보(지도의 청록 번호)만 선택합니다"
+              >
+                청록 후보만 선택
+              </button>
               <button style={{ ...inputStyle, cursor: "pointer", width: "auto" }} onClick={onClearSelection}>
                 선택 해제
               </button>
@@ -221,7 +229,7 @@ export default function AnomalyCandidatePanel({
                     onChange={() => onToggle(i)}
                     style={{ marginTop: 3 }}
                   />
-                  <span style={badgeStyle}>{c.rank}</span>
+                  <span style={{ ...badgeStyle, background: c.single_line || c.at_coverage_edge ? "#b45309" : "#0f766e" }}>{c.rank}</span>
                   <div
                     style={{ flex: 1, cursor: "pointer" }}
                     onClick={() => onFocusCandidate && onFocusCandidate(c)}

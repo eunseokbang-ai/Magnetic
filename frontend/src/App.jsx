@@ -2698,6 +2698,13 @@ export default function App() {
           onSelectAll={() =>
             setSelectedCandidateIndices(new Set((candidateResult?.candidates || []).map((_c, i) => i)))
           }
+          onSelectClean={() =>
+            setSelectedCandidateIndices(
+              new Set(
+                (candidateResult?.candidates || []).flatMap((c, i) => (c.single_line || c.at_coverage_edge ? [] : [i]))
+              )
+            )
+          }
           onClearSelection={() => setSelectedCandidateIndices(new Set())}
           onFocusCandidate={(c) => setFlyToTarget({ lat: c.lat, lon: c.lon, nonce: Date.now() })}
           onApplySelected={handleApplyCandidateSmoothing}

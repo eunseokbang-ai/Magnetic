@@ -436,7 +436,7 @@ def find_anomaly_candidates(
 
     candidates: list[AnomalyCandidate] = []
     for peak_rc in seed_rc[:MAX_SEEDS_EXAMINED]:
-        if len(candidates) >= n_candidates:
+        if sum(not _needs_checking(c) for c in candidates) >= n_candidates:
             break
         if not available[peak_rc]:
             continue
@@ -522,4 +522,20 @@ def find_anomaly_candidates(
         suppress = (rr - peak_rc[0]) ** 2 + (cc - peak_rc[1]) ** 2 <= suppress_cells**2
         available &= ~(suppress | region)
 
+    # Candidates the operator has to check by hand go after the ones
+    # several lines agree on. On the HaeNam block the analytic signal's
+    # boundary peaks took ranks 1-3 and a third of the list, pushing real
+    # interior structures down it. The search above still runs strongest
+    # first, so which peaks suppress which is unchanged; only the order
+    # they are offered in, and which of them fill the list, moves.
+    candidates.sort(key=_needs_checking)   # stable: strength order within each group
+    candidates = candidates[:n_candidates]
+    for rank, c in enumerate(candidates, start=1):
+        c.rank = rank
     return candidates
+
+
+def _needs_checking(c: AnomalyCandidate) -> bool:
+    """Seen on one line only, or against the edge of coverage - the two
+    cases the map marks orange."""
+    return c.single_line or c.at_coverage_edge

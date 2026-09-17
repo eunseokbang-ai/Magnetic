@@ -247,3 +247,28 @@ def test_a_candidate_offers_a_source_region_not_capped_like_the_cut():
     src = max(np.hypot(px - c.x, py - c.y) for px, py in c.source_polygon_xy)
     assert src > cut
     assert src <= 300.0 + 2 * cell
+
+
+def test_candidates_to_check_by_hand_come_after_the_clean_ones():
+    """A stronger peak against the edge of coverage must not outrank an
+    interior one: on the real block those edge peaks took ranks 1-3."""
+    anomaly, e, n, cell = _grid([(-60.0, 0.0, 300.0), (60.0, 0.0, 60.0)], span=260.0)
+    anomaly[:, : len(e) // 2 - 20] = np.nan    # the strong one now sits on the edge
+
+    found = _candidates(anomaly, e, n, cell)
+
+    # no point data here, so every candidate counts as single-line; the
+    # edge flag is what separates them
+    flags = [c.at_coverage_edge for c in found]
+    assert flags == sorted(flags)
+    assert not flags[0] and any(flags)
+    assert [c.rank for c in found] == list(range(1, len(found) + 1))
+
+
+def test_edge_peaks_do_not_use_up_the_slots_of_interior_ones():
+    anomaly, e, n, cell = _grid([(-60.0, 0.0, 300.0), (60.0, 0.0, 60.0)], span=260.0)
+    anomaly[:, : len(e) // 2 - 20] = np.nan
+
+    found = _candidates(anomaly, e, n, cell, n_candidates=1)
+
+    assert len(found) == 1 and not found[0].at_coverage_edge
