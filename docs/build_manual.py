@@ -122,6 +122,10 @@ def build_styles() -> dict:
 GLYPH_SUBSTITUTIONS = {
     "\u2212": "-",   # MINUS SIGN -> HYPHEN-MINUS (absent from Malgun Gothic)
     "\u2080": "0",   # SUBSCRIPT ZERO -> digit zero (absent from all three)
+    "\u0302": "^",   # COMBINING CIRCUMFLEX (unit-vector hat) -> F^
+    "\u1d40": "^T",  # MODIFIER LETTER CAPITAL T (transpose)
+    "\u2016": "||",  # DOUBLE VERTICAL LINE (norm)
+    "\u2248": "\u2252",  # ALMOST EQUAL TO -> APPROXIMATELY EQUAL TO, which the KS set has
 }
 
 
