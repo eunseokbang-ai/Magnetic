@@ -56,6 +56,7 @@ from .models import (
 from .processing import local_tiles, tile_cache
 from .processing.colormaps import register_custom_colormaps
 from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
+from .autosave import AutosaveManager
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -77,6 +78,25 @@ app.add_middleware(
 # JSON - at ~20MB payloads that is 1-2s of pure CPU time added to every
 # request, independent of how fast the actual endpoint logic is.
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+
+# Keeps each project's bundle on disk so closing the app - or a crash -
+# does not take the session's manual edits with it. See autosave.py.
+autosave = AutosaveManager(store)
+
+
+@app.on_event("startup")
+def _start_autosave() -> None:
+    autosave.start()
+
+
+@app.on_event("shutdown")
+def _stop_autosave() -> None:
+    # One last write on the way out, so a deliberate close loses nothing
+    # even if the interval has not elapsed.
+    for project in store.all_projects():
+        if getattr(project, "changed_at", 0.0):
+            autosave.save_project(project)
+    autosave.stop()
 
 
 def _detect_running_version() -> dict:
@@ -717,6 +737,28 @@ def export_inversion_csv(project_id: str):
     return Response(
         content=data, media_type="text/csv", headers={"Content-Disposition": "attachment; filename=inversion_result.csv"}
     )
+
+
+@app.get("/api/projects/autosaves")
+def list_autosaves():
+    """Projects this server saved by itself, newest first - what the
+    "이전 작업 이어서 하기" list shows after a restart."""
+    return {"autosaves": [s.to_dict() for s in autosave.list_saved()]}
+
+
+@app.post("/api/projects/autosaves/{project_id}/restore")
+def restore_autosave(project_id: str):
+    try:
+        project, summary = autosave.restore(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="자동 저장된 프로젝트를 찾을 수 없습니다.")
+    return {"project_id": project.id, **summary}
+
+
+@app.delete("/api/projects/autosaves/{project_id}")
+def delete_autosave(project_id: str):
+    autosave.delete(project_id)
+    return {"autosaves": [s.to_dict() for s in autosave.list_saved()]}
 
 
 @app.get("/api/projects/{project_id}/save")

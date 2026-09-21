@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import threading
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass, field, replace
@@ -418,15 +419,20 @@ class Project:
     inversion_field_intensity_nt: float | None = None
     inversion_obs_grid: GridResult | None = None
     inversion_value_field: str | None = None
+    # Wall-clock time of the last change worth saving, set by mark_changed
+    # below and read by autosave.py. 0 means "nothing to save yet".
+    changed_at: float = 0.0
     last_overlay: OverlayState | None = None
 
     def load_drone(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
+        self.mark_changed()
         return self.drone_summary()
 
     def load_base(self, buffers: list, filenames: list | None = None) -> dict:
         self.base_raw = load_base_csvs(buffers, filenames)
         self.base_source = None
+        self.mark_changed()
         return self.base_summary()
 
     def _survey_centroid(self) -> tuple[float, float] | None:
@@ -505,6 +511,7 @@ class Project:
             "lon": data.lon,
         }
         self.intermagnet_preview = None
+        self.mark_changed()
         return self.base_summary()
 
     def fetch_nearest_intermagnet_preview(
@@ -610,6 +617,7 @@ class Project:
             "lon": preview["target_lon"],
         }
         self.intermagnet_nearest_preview = None
+        self.mark_changed()
         return self.base_summary()
 
     def get_nearest_intermagnet_comparison(self) -> dict:
@@ -669,6 +677,7 @@ class Project:
         main survey) - see processing/repeatability.py. Not mixed into the
         main survey data; analysed on its own via run_repeatability_analysis."""
         self.repeatability_raw = load_drone_csvs(buffers)
+        self.mark_changed()
         return {
             "n_points": len(self.repeatability_raw),
             "time_range": [
@@ -1145,6 +1154,7 @@ class Project:
             except ProjectError as exc:
                 self.auto_boundary_info = {"failed": True, "reason": str(exc)}
 
+        self.mark_changed()
         return self.process_summary()
 
     def _check_file_level_offsets(self, df: pd.DataFrame) -> dict:
@@ -1507,6 +1517,7 @@ class Project:
             self.manual_overrides = {}
             self.grid_cache = {}
             self.transform_cache = {}
+            self.mark_changed()
             return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
         if req.mode == "lines":
@@ -1541,6 +1552,7 @@ class Project:
             self.manual_overrides[int(pid)] = forced_value
         self.grid_cache = {}
         self.transform_cache = {}
+        self.mark_changed()
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
     def _base_without_structures(self) -> pd.DataFrame:
@@ -1608,6 +1620,7 @@ class Project:
                 self.source_removals.append(removal)
                 added.append(removal.summary())
         self._rebuild_processed()
+        self.mark_changed()
         return {
             **self.process_summary(),
             "exclusion": self.get_exclusion_state(),
@@ -1660,6 +1673,7 @@ class Project:
             self.manual_smooth_point_ids |= new_ids
 
         self._rebuild_processed(base_df)
+        self.mark_changed()
         return {
             **self.process_summary(),
             "exclusion": self.get_exclusion_state(),
@@ -1684,6 +1698,7 @@ class Project:
             if not rings or any(len(ring) < 3 for ring in rings):
                 raise ProjectError("polygon은 최소 3개의 [lat, lon] 좌표가 필요합니다.")
         self.display_boundary_polygon = req.polygon
+        self.mark_changed()
         return {"display_boundary_polygon": self.display_boundary_polygon}
 
     def auto_display_boundary(self, buffer_m: float | None = None) -> dict:
@@ -3219,6 +3234,7 @@ class Project:
             raise ProjectError(f"DEM 파일을 열 수 없습니다: {exc}") from exc
         self.dem_bytes = data
         self.dem_name = name
+        self.mark_changed()
         return {"name": name, "width": width, "height": height, "bounds": list(bounds)}
 
     def clear_dem(self) -> dict:
@@ -3242,6 +3258,7 @@ class Project:
         }
         self.geology_unit_next_id += 1
         self.geology_units.append(unit)
+        self.mark_changed()
         return {"unit": unit, "units": self.geology_units}
 
     def update_geology_unit(self, unit_id: int, req: GeologyUnitUpdate) -> dict:
@@ -3251,6 +3268,7 @@ class Project:
                     unit["name"] = req.name
                 if req.susceptibility_si is not None:
                     unit["susceptibility_si"] = req.susceptibility_si
+                self.mark_changed()
                 return {"unit": unit, "units": self.geology_units}
         raise ProjectError(f"지질 블록 {unit_id}을(를) 찾을 수 없습니다.")
 
@@ -3259,6 +3277,7 @@ class Project:
         self.geology_units = [u for u in self.geology_units if u["id"] != unit_id]
         if len(self.geology_units) == before:
             raise ProjectError(f"지질 블록 {unit_id}을(를) 찾을 수 없습니다.")
+        self.mark_changed()
         return {"units": self.geology_units}
 
     def get_geology_units(self) -> dict:
@@ -3393,6 +3412,12 @@ class Project:
         result["value_nt"] = value
         result["in_bounds"] = True
         return result
+
+    def mark_changed(self) -> None:
+        """Note that this project now holds work that is not on disk.
+        autosave.py writes it out a few seconds later - see that module
+        for why the write does not happen here."""
+        self.changed_at = time.time()
 
     def save_project_bundle(self) -> bytes:
         """Zip up everything needed to resume this project later without
@@ -3533,6 +3558,7 @@ class Project:
         }
         if processed:
             result["process_summary"] = self.process_summary()
+        self.mark_changed()
         return result
 
     def run_inversion(self, params: InversionParams) -> dict:
@@ -3684,6 +3710,7 @@ class Project:
             "n_geology_units": len(self.geology_units),
         }
         self.inversion_summary_cache = summary
+        self.mark_changed()
         return summary
 
     def get_inversion_horizontal_slice(self, req: InversionSliceRequest) -> dict:
@@ -4298,6 +4325,21 @@ class ProjectStore:
         if project is None:
             raise ProjectError(f"프로젝트를 찾을 수 없습니다: {project_id}")
         return project
+
+    def get_or_create(self, project_id: str) -> Project:
+        """The project under this id, creating an empty one if this server
+        has never seen it - how a project autosaved before a restart comes
+        back under the same id (see autosave.py::restore)."""
+        with self._lock:
+            project = self._projects.get(project_id)
+            if project is None:
+                project = Project(id=project_id)
+                self._projects[project_id] = project
+        return project
+
+    def all_projects(self) -> list[Project]:
+        with self._lock:
+            return list(self._projects.values())
 
 
 store = ProjectStore()

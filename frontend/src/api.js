@@ -470,6 +470,21 @@ export async function exportReport(projectId, filename) {
   downloadBlob(blob, filename);
 }
 
+// Projects the backend saved by itself (backend/app/autosave.py), so a
+// session that ended in a crash or a closed window can be picked up
+// again instead of being re-uploaded and re-edited from scratch.
+export function listAutosaves() {
+  return request(`/projects/autosaves`);
+}
+
+export function restoreAutosave(projectId) {
+  return request(`/projects/autosaves/${projectId}/restore`, { method: "POST" });
+}
+
+export function deleteAutosave(projectId) {
+  return request(`/projects/autosaves/${projectId}`, { method: "DELETE" });
+}
+
 export function loadProject(projectId, file) {
   const form = new FormData();
   form.append("file", file);

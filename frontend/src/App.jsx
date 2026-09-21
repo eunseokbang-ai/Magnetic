@@ -4,6 +4,7 @@ import { minMax } from "./arrayUtils";
 import MapView from "./components/MapView";
 import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
+import AutosaveBanner from "./components/AutosaveBanner";
 import LineEditor from "./components/LineEditor";
 import FlightPathEditor from "./components/FlightPathEditor";
 import LayerManager from "./components/LayerManager";
@@ -784,36 +785,59 @@ export default function App() {
     }
   };
 
+  // Shared by "프로젝트 불러오기" and by restoring an autosave: both hand
+  // back the same payload and have to put the screen back into the same
+  // state, so this must not be duplicated between them.
+  const applyLoadedProject = async (id, resp) => {
+    setDroneSummary(resp.drone_summary);
+    setBaseSummary(resp.base_summary);
+    setOverlay(null);
+    setActiveTransform("none");
+    setSectionResult(null);
+    setVolumeData(null);
+    if (resp.params) setProcessParams(resp.params);
+    if (resp.processed) {
+      setProcessSummary(resp.process_summary);
+      await refreshPoints(id, valueField);
+      try {
+        const geo = await api.listGeologyUnits(id);
+        setGeologyUnits(geo.units);
+      } catch {
+        setGeologyUnits([]);
+      }
+    } else {
+      setProcessSummary(null);
+      setPoints([]);
+      setGeologyUnits([]);
+    }
+    setInversionSummary(resp.inversion_summary || null);
+  };
+
   const handleLoadProject = async (file) => {
     try {
       setError(null);
       setLoadingProject(true);
       const id = await ensureProject();
       const resp = await api.loadProject(id, file);
-      setDroneSummary(resp.drone_summary);
-      setBaseSummary(resp.base_summary);
-      setOverlay(null);
-      setActiveTransform("none");
-      setSectionResult(null);
-      setVolumeData(null);
-      if (resp.params) setProcessParams(resp.params);
-      if (resp.processed) {
-        setProcessSummary(resp.process_summary);
-        await refreshPoints(id, valueField);
-        try {
-          const geo = await api.listGeologyUnits(id);
-          setGeologyUnits(geo.units);
-        } catch {
-          setGeologyUnits([]);
-        }
-      } else {
-        setProcessSummary(null);
-        setPoints([]);
-        setGeologyUnits([]);
-      }
-      setInversionSummary(resp.inversion_summary || null);
+      await applyLoadedProject(id, resp);
     } catch (e) {
       handleError(e);
+    } finally {
+      setLoadingProject(false);
+    }
+  };
+
+  const handleRestoreAutosave = async (autosaveProjectId) => {
+    setError(null);
+    setLoadingProject(true);
+    try {
+      const resp = await api.restoreAutosave(autosaveProjectId);
+      // The backend restores under the saved project's own id, so the UI
+      // has to follow it there rather than keeping whatever empty project
+      // this session had created.
+      projectCreationRef.current = Promise.resolve(resp.project_id);
+      setProjectId(resp.project_id);
+      await applyLoadedProject(resp.project_id, resp);
     } finally {
       setLoadingProject(false);
     }
@@ -2311,6 +2335,12 @@ export default function App() {
           inversionSummary={inversionSummary}
           eulerResult={eulerResult}
           onStepClick={handleWorkflowStepClick}
+        />
+        <AutosaveBanner
+          busy={loadingProject || processing}
+          hasProject={!!droneSummary}
+          onRestore={handleRestoreAutosave}
+          onError={handleError}
         />
         <input
           type="text"
