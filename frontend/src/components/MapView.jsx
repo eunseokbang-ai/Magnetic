@@ -604,7 +604,10 @@ function AnomalyCandidateLayer({ result, selectedIndices, removalMethod }) {
           `깊이 약 ${c.depth_m.toFixed(1)} m · 반경 ${c.radius_m.toFixed(0)} m<br/>` +
           `측선 ${c.n_lines}개 · 자료점 ${c.n_points}개` +
           (c.single_line ? "<br/>단일 측선 — 프로파일 확인 필요" : "") +
-          (c.at_coverage_edge ? "<br/>자료 경계 — 가장자리 효과 주의" : ""),
+          (c.at_coverage_edge ? "<br/>자료 경계 — 가장자리 효과 주의" : "") +
+          (c.magnetization && c.magnetization.verdict !== "unclear"
+            ? `<br/>자화 ${c.magnetization.label} (현재 장에서 ${c.magnetization.angle_from_induced_deg.toFixed(0)}°)`
+            : ""),
         { sticky: true }
       );
       group.addLayer(marker);

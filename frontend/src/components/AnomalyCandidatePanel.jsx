@@ -242,6 +242,23 @@ export default function AnomalyCandidatePanel({
                     <div style={{ color: "#8a7a5c", fontSize: 11 }}>
                       측선 {c.n_lines}개 · 자료점 {c.n_points}개
                     </div>
+                    {c.magnetization && (
+                      <div
+                        style={{ fontSize: 11, color: c.magnetization.verdict === "remanent" ? "#b45309" : "#8a7a5c" }}
+                        title={
+                          "이 이상을 쌍극자 하나로 맞춰 자화 방향을 구한 값입니다. 철구조물은 제작·용접·낙뢰 등으로 " +
+                          "현재 지자기장과 다른 방향의 잔류자화를 갖는 경우가 많고, 지질체는 대개 현재 장 방향으로 유도자화됩니다. " +
+                          "각도만으로는 판단할 수 없어(약한 이상은 어느 방향이든 맞으므로) 방향을 자유롭게 풀었을 때 " +
+                          "맞춤 오차가 얼마나 줄었는지를 함께 봅니다. 증거일 뿐 확정은 아닙니다."
+                        }
+                      >
+                        자화 {c.magnetization.label}
+                        {c.magnetization.verdict !== "unclear" &&
+                          ` · 현재 장에서 ${c.magnetization.angle_from_induced_deg.toFixed(0)}°`}
+                        {c.magnetization.verdict === "remanent" &&
+                          ` (복각 ${c.magnetization.inclination_deg.toFixed(0)}°, 편각 ${c.magnetization.declination_deg.toFixed(0)}°)`}
+                      </div>
+                    )}
                     {c.single_line && (
                       <div style={warnStyle}>
                         단일 측선 — 격자만으로는 레벨링 줄무늬와 구분 불가. 측선 프로파일에서 확인 후 제거하세요.

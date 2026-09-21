@@ -903,6 +903,13 @@ class AnomalyCandidateRequest(BaseModel):
     # 0.75 line spacings, which keeps the search on ground the survey
     # actually flew instead of on the interpolator's fill between blocks.
     support_radius_m: Optional[float] = Field(None, gt=0)
+    # Fit each candidate's magnetization direction and report whether it
+    # points along the present field or somewhere else - see
+    # processing/magnetization.py. Steel carries remanence and rock
+    # usually does not, so this is evidence for the structure-or-geology
+    # call. On by default; costs one small least-squares fit per
+    # candidate.
+    estimate_magnetization: bool = True
 
 
 class MultiscaleEdgeRequest(BaseModel):

@@ -142,3 +142,28 @@ def test_add_without_polygons_is_a_clear_error():
     client, pid, _ = _processed_project()
     r = client.post(f"/api/projects/{pid}/source-removal", json={"mode": "add"})
     assert r.status_code == 400
+
+
+def test_the_candidate_scan_reports_each_source_magnetization():
+    """The structure-or-geology call the operator has to make: a source
+    magnetized along the present field is what rock does, one magnetized
+    elsewhere is what steel does."""
+    client, pid, project = _processed_project()
+    _add_structure(project)                     # induced: built from the field direction
+
+    r = client.post(f"/api/projects/{pid}/anomaly-candidates", json={"n_candidates": 3})
+    assert r.status_code == 200, r.text
+    found = [c for c in r.json()["candidates"] if c["magnetization"]]
+
+    assert found, "no candidate carried a magnetization estimate"
+    top = found[0]["magnetization"]
+    assert top["verdict"] in ("induced", "remanent", "unclear")
+    assert set(top) >= {"angle_from_induced_deg", "improvement", "model_peak_nt", "label"}
+    assert 0.0 <= top["angle_from_induced_deg"] <= 180.0
+    # Whether the verdict is right is measured on synthetic sources in
+    # tests/test_magnetization.py; this fixture's survey is too small and
+    # too coarsely lined for its candidates to be the planted structure.
+
+    off = client.post(f"/api/projects/{pid}/anomaly-candidates",
+                      json={"n_candidates": 3, "estimate_magnetization": False})
+    assert all(c["magnetization"] is None for c in off.json()["candidates"])

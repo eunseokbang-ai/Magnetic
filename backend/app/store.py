@@ -161,6 +161,7 @@ from .processing.continuation import (
 from .processing.edge_margin import apply_margin, margin_mask, margin_outline
 from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
+from .processing.magnetization import estimate_magnetization
 from .processing.grid_diagnostics import diagnose_striping
 from .processing.microlevel import apply_microleveling
 from .processing.statistical_leveling import (
@@ -3181,10 +3182,29 @@ class Project:
             ),
         )
 
+        # Magnetization direction per candidate - see
+        # processing/magnetization.py. Steel magnetized by anything other
+        # than the present field is evidence of something man-made, which
+        # is the call the operator is being asked to make here. Fitted on
+        # the samples, and only when the field direction is known.
+        point_x = df["x"].to_numpy()
+        point_y = df["y"].to_numpy()
+        point_values = df["anomaly"].to_numpy()
+
         transformer = Transformer.from_crs(f"EPSG:{self.utm_epsg}", "EPSG:4326", always_xy=True)
         out = []
         for c in candidates:
             lon, lat = transformer.transform(c.x, c.y)
+            magnetization = None
+            if self.inclination_deg is not None and req.estimate_magnetization:
+                try:
+                    estimate = estimate_magnetization(
+                        point_x, point_y, point_values, c.x, c.y, c.depth_m,
+                        self.inclination_deg, self.declination_deg, self.line_spacing_m,
+                    )
+                except Exception:
+                    estimate = None      # a diagnostic must not break the scan
+                magnetization = estimate.to_dict() if estimate is not None else None
             def to_latlon(ring):
                 if not ring:
                     return []
@@ -3212,6 +3232,7 @@ class Project:
                     "depth_resolved": c.depth_resolved,
                     "polygon": polygon,
                     "source_polygon": source_polygon,
+                    "magnetization": magnetization,
                 }
             )
 
