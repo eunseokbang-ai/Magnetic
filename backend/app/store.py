@@ -21,6 +21,8 @@ from .io_.drone_loader import load_drone_csvs
 from .models import (
     AnalyticSignalDepthRequest,
     AnomalyCandidateRequest,
+    RepeatPassApplyRequest,
+    RepeatPassRequest,
     SourceRemovalRequest,
     ContactDetectionRequest,
     DisplayBoundaryRequest,
@@ -162,6 +164,8 @@ from .processing.edge_margin import apply_margin, margin_mask, margin_outline
 from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
 from .processing.magnetization import estimate_magnetization
+from .processing.repeat_passes import find_repeat_passes, solve_offsets
+from .processing.repeat_passes import summarize as summarize_repeat_passes
 from .processing.grid_diagnostics import diagnose_striping
 from .processing.microlevel import apply_microleveling
 from .processing.statistical_leveling import (
@@ -420,6 +424,9 @@ class Project:
     inversion_field_intensity_nt: float | None = None
     inversion_obs_grid: GridResult | None = None
     inversion_value_field: str | None = None
+    # One level offset per flight, solved on the ground the survey flew
+    # twice - see processing/repeat_passes.py and _flight_levelled_base.
+    repeat_pass_offsets: dict = field(default_factory=dict)
     # Operator decisions about anomaly candidates: which were confirmed as
     # ground structures, which turned out to be geology, which are on
     # hold. Kept by position, not by rank - see set_candidate_note.
@@ -1142,6 +1149,7 @@ class Project:
         self.manual_overrides = {}
         self.manual_smooth_point_ids = set()
         self.source_removals = []
+        self.repeat_pass_offsets = {}
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
@@ -1560,9 +1568,28 @@ class Project:
         self.mark_changed()
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
-    def _base_without_structures(self) -> pd.DataFrame:
-        """processed_base with every fitted structure model subtracted."""
+    def _flight_levelled_base(self) -> pd.DataFrame:
+        """processed_base with the per-flight offsets solved on repeated
+        ground subtracted (see analyze_repeat_passes). First in the chain,
+        because it is a levelling correction: a structure model fitted on
+        unlevelled data would absorb part of the level difference."""
         base = self.processed_base
+        if not self.repeat_pass_offsets or base is None:
+            return base
+        if "source_file_index" not in base.columns:
+            return base
+        shift = base["source_file_index"].map(
+            {int(k): float(v) for k, v in self.repeat_pass_offsets.items()}
+        ).fillna(0.0).to_numpy()
+        out = base.copy()
+        for col in ("anomaly", "tmi"):
+            out[col] = out[col].to_numpy() - shift
+        return out
+
+    def _base_without_structures(self) -> pd.DataFrame:
+        """processed_base, levelled on repeated ground, with every fitted
+        structure model subtracted."""
+        base = self._flight_levelled_base()
         if not self.source_removals:
             return base
         out = base.copy()
@@ -3249,6 +3276,56 @@ class Project:
             "candidates": out,
         }
 
+    # ------------------------------------------------------------ repeat passes
+    def _repeat_pairs(self, req) -> list:
+        if self.processed is None or self.dominant_azimuth_deg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed.loc[self._active_mask()]
+        return find_repeat_passes(
+            df,
+            self.dominant_azimuth_deg,
+            self.line_spacing_m,
+            value=getattr(req, "value", "anomaly"),
+            min_overlap_m=req.min_overlap_m,
+            across_tolerance_m=req.across_tolerance_m,
+        )
+
+    def analyze_repeat_passes(self, req: RepeatPassRequest) -> dict:
+        """Where the survey flew the same ground twice, how far apart the
+        two readings are, and what one offset per flight would do about
+        it. Measures only - see apply_repeat_pass_leveling."""
+        pairs = self._repeat_pairs(req)
+        offsets = solve_offsets(pairs)
+        return {
+            "pairs": [p.to_dict() for p in pairs],
+            "offsets": {str(k): round(v, 3) for k, v in offsets.items()},
+            "applied": bool(self.repeat_pass_offsets),
+            "applied_offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
+            **summarize_repeat_passes(pairs, offsets),
+        }
+
+    def apply_repeat_pass_leveling(self, req: RepeatPassApplyRequest) -> dict:
+        """Subtract the solved per-flight offsets from the data, or put
+        them back. Sits before structure removal and point smoothing in
+        the chain, so both keep working on top of it."""
+        if req.mode == "reset":
+            self.repeat_pass_offsets = {}
+        else:
+            pairs = self._repeat_pairs(req)
+            offsets = solve_offsets(pairs)
+            if not offsets:
+                raise ProjectError(
+                    "같은 구간을 두 번 비행한 자료가 없어 비행 간 레벨을 맞출 수 없습니다."
+                )
+            self.repeat_pass_offsets = offsets
+        self._rebuild_processed()
+        self.mark_changed()
+        return {
+            "applied": bool(self.repeat_pass_offsets),
+            "offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
+            **self.process_summary(),
+        }
+
     # ------------------------------------------------------------ candidate notes
     #
     # Why a separate log instead of a flag on each candidate: a candidate
@@ -3558,6 +3635,7 @@ class Project:
             "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
             "source_removals": [r.to_dict() for r in self.source_removals],
             "candidate_notes": self.candidate_notes,
+            "repeat_pass_offsets": {str(k): float(v) for k, v in self.repeat_pass_offsets.items()},
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
@@ -3643,6 +3721,9 @@ class Project:
                     self.source_removals = [
                         SourceRemoval.from_dict(d) for d in (meta.get("source_removals") or [])
                     ]
+                    self.repeat_pass_offsets = {
+                        int(k): float(v) for k, v in (meta.get("repeat_pass_offsets") or {}).items()
+                    }
                     # The operator's structure-or-geology calls. Kept
                     # whatever the processing did - they are about what is
                     # on the ground, not about this run's settings.

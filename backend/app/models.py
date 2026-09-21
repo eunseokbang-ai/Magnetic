@@ -937,6 +937,25 @@ class CandidateNoteRequest(BaseModel):
     removed_method: Optional[str] = None
 
 
+class RepeatPassRequest(BaseModel):
+    """Find stretches flown more than once and measure how well they
+    agree - see processing/repeat_passes.py."""
+    value: ValueField = "anomaly"
+    # Shorter shared stretches are dominated by whatever single anomaly
+    # sits in them.
+    min_overlap_m: float = Field(100.0, gt=0)
+    # How far apart two tracks may be and still count as the same ground.
+    # None = a quarter of the line spacing.
+    across_tolerance_m: Optional[float] = Field(None, gt=0)
+
+
+class RepeatPassApplyRequest(BaseModel):
+    """Level the flights on their repeated ground, or undo that."""
+    mode: Literal["apply", "reset"] = "apply"
+    min_overlap_m: float = Field(100.0, gt=0)
+    across_tolerance_m: Optional[float] = Field(None, gt=0)
+
+
 class MultiscaleEdgeRequest(BaseModel):
     # Multi-scale edge detection ("worming") - see
     # processing/multiscale_edges.py. Traces THDR ridges at a series of

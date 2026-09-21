@@ -485,6 +485,16 @@ export function deleteAutosave(projectId) {
   return request(`/projects/autosaves/${projectId}`, { method: "DELETE" });
 }
 
+// Stretches the survey flew twice, and the per-flight levels solved from
+// them (backend processing/repeat_passes.py).
+export function analyzeRepeatPasses(projectId, req) {
+  return request(`/projects/${projectId}/repeat-passes`, { method: "POST", body: JSON.stringify(req || {}) });
+}
+
+export function applyRepeatPassLeveling(projectId, req) {
+  return request(`/projects/${projectId}/repeat-passes/apply`, { method: "POST", body: JSON.stringify(req || {}) });
+}
+
 // The operator's structure-or-geology calls on anomaly candidates, kept
 // by position so a re-scan does not lose them (backend store.py::
 // set_candidate_note).

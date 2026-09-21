@@ -5,6 +5,7 @@ import MapView from "./components/MapView";
 import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import AutosaveBanner from "./components/AutosaveBanner";
+import RepeatPassPanel from "./components/RepeatPassPanel";
 import LineEditor from "./components/LineEditor";
 import FlightPathEditor from "./components/FlightPathEditor";
 import LayerManager from "./components/LayerManager";
@@ -2763,6 +2764,16 @@ export default function App() {
           canExportBln={!!lastDrawnPolygon}
           showRampPoints={showRampPoints}
           onToggleShowRampPoints={setShowRampPoints}
+        />
+
+        <RepeatPassPanel
+          projectId={projectId}
+          processSummary={processSummary}
+          onApplied={async (resp) => {
+            setProcessSummary(resp);
+            await refreshPoints(projectId, valueField);
+          }}
+          onError={handleError}
         />
 
         <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7-1. 이상 후보 표시 후 수동 제거 (편집 모드)</h2>

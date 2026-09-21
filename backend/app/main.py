@@ -37,6 +37,8 @@ from .models import (
     DisplayBoundaryRequest,
     AnomalyCandidateRequest,
     CandidateNoteRequest,
+    RepeatPassApplyRequest,
+    RepeatPassRequest,
     SourceRemovalRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
@@ -551,6 +553,16 @@ def structure_scan(project_id: str, req: StructureScanRequest):
 def source_removal(project_id: str, req: SourceRemovalRequest):
     project = store.get(project_id)
     return project.set_source_removal(req)
+
+
+@app.post("/api/projects/{project_id}/repeat-passes")
+def analyze_repeat_passes(project_id: str, req: RepeatPassRequest):
+    return store.get(project_id).analyze_repeat_passes(req)
+
+
+@app.post("/api/projects/{project_id}/repeat-passes/apply")
+def apply_repeat_pass_leveling(project_id: str, req: RepeatPassApplyRequest):
+    return store.get(project_id).apply_repeat_pass_leveling(req)
 
 
 @app.get("/api/projects/{project_id}/candidate-notes")
