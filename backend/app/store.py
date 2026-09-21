@@ -420,6 +420,10 @@ class Project:
     inversion_field_intensity_nt: float | None = None
     inversion_obs_grid: GridResult | None = None
     inversion_value_field: str | None = None
+    # Operator decisions about anomaly candidates: which were confirmed as
+    # ground structures, which turned out to be geology, which are on
+    # hold. Kept by position, not by rank - see set_candidate_note.
+    candidate_notes: list = field(default_factory=list)
     # Wall-clock time of the last change worth saving, set by mark_changed
     # below and read by autosave.py. 0 means "nothing to save yet".
     changed_at: float = 0.0
@@ -3233,6 +3237,7 @@ class Project:
                     "polygon": polygon,
                     "source_polygon": source_polygon,
                     "magnetization": magnetization,
+                    "note": self._note_match(c.x, c.y, c.radius_m),
                 }
             )
 
@@ -3243,6 +3248,102 @@ class Project:
             "n_candidates": len(out),
             "candidates": out,
         }
+
+    # ------------------------------------------------------------ candidate notes
+    #
+    # Why a separate log instead of a flag on each candidate: a candidate
+    # only exists inside one scan's results. Re-running the scan with a
+    # different cell size, ranking field or candidate count renumbers
+    # everything and can drop a peak entirely, while the thing on the
+    # ground that the operator went and checked against the orthophoto is
+    # still there. So the decision is stored against its position and
+    # matched back to whatever candidate lands near it.
+    #
+    # How near: the decision is about a source, and two sources closer
+    # together than the region being removed are not separable in this
+    # data anyway. The tolerance is therefore the candidate's own region
+    # radius, floored so a small region still matches after a re-scan
+    # moves the peak by a cell or two.
+    _NOTE_MIN_TOLERANCE_M = 30.0
+
+    def _note_match(self, x: float, y: float, radius_m: float | None = None) -> dict | None:
+        tolerance = max(self._NOTE_MIN_TOLERANCE_M, float(radius_m or 0.0))
+        best, best_distance = None, tolerance
+        for note in self.candidate_notes:
+            distance = float(np.hypot(note["x"] - x, note["y"] - y))
+            if distance <= best_distance:
+                best, best_distance = note, distance
+        return best
+
+    def set_candidate_note(self, req: CandidateNoteRequest) -> dict:
+        """Record (or clear) what the operator decided about the candidate
+        at this position."""
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다 (자료 처리를 먼저 실행하세요).")
+        to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+        x, y = to_utm.transform(req.lon, req.lat)
+        existing = self._note_match(float(x), float(y), req.radius_m)
+
+        if req.verdict == "clear":
+            if existing is not None:
+                self.candidate_notes.remove(existing)
+            self.mark_changed()
+            return {"notes": self.candidate_notes, "note": None}
+
+        note = existing if existing is not None else {"x": float(x), "y": float(y)}
+        note.update(
+            {
+                "lat": float(req.lat),
+                "lon": float(req.lon),
+                "verdict": req.verdict,
+                "note": req.note or "",
+                "decided_at": time.time(),
+            }
+        )
+        for key in ("peak_anomaly_nt", "depth_m", "radius_m", "magnetization", "removed_method"):
+            value = getattr(req, key)
+            if value is not None:
+                note[key] = value
+        if existing is None:
+            self.candidate_notes.append(note)
+        self.mark_changed()
+        return {"notes": self.candidate_notes, "note": note}
+
+    def get_candidate_notes(self) -> dict:
+        return {"notes": self.candidate_notes}
+
+    def export_candidate_notes_csv(self) -> bytes:
+        """The decision log as a table, for the report: what was found,
+        what it was judged to be, and what was done about it."""
+        rows = []
+        for note in sorted(self.candidate_notes, key=lambda n: n.get("decided_at", 0.0)):
+            rows.append(
+                {
+                    "latitude": note.get("lat"),
+                    "longitude": note.get("lon"),
+                    "easting": note.get("x"),
+                    "northing": note.get("y"),
+                    "verdict": {"structure": "지상구조물", "geology": "지질", "hold": "보류"}.get(
+                        note.get("verdict"), note.get("verdict")
+                    ),
+                    "peak_anomaly_nt": note.get("peak_anomaly_nt"),
+                    "depth_m": note.get("depth_m"),
+                    "radius_m": note.get("radius_m"),
+                    "magnetization": note.get("magnetization"),
+                    "removed_method": note.get("removed_method"),
+                    "note": note.get("note"),
+                    "decided_at": (
+                        pd.to_datetime(note["decided_at"], unit="s").isoformat()
+                        if note.get("decided_at")
+                        else None
+                    ),
+                }
+            )
+        frame = pd.DataFrame(rows, columns=[
+            "latitude", "longitude", "easting", "northing", "verdict", "peak_anomaly_nt",
+            "depth_m", "radius_m", "magnetization", "removed_method", "note", "decided_at",
+        ])
+        return frame.to_csv(index=False).encode("utf-8-sig")
 
     def load_dem(self, data: bytes, name: str) -> dict:
         try:
@@ -3456,6 +3557,7 @@ class Project:
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
             "manual_smooth_point_ids": sorted(int(p) for p in self.manual_smooth_point_ids),
             "source_removals": [r.to_dict() for r in self.source_removals],
+            "candidate_notes": self.candidate_notes,
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
@@ -3541,6 +3643,10 @@ class Project:
                     self.source_removals = [
                         SourceRemoval.from_dict(d) for d in (meta.get("source_removals") or [])
                     ]
+                    # The operator's structure-or-geology calls. Kept
+                    # whatever the processing did - they are about what is
+                    # on the ground, not about this run's settings.
+                    self.candidate_notes = list(meta.get("candidate_notes") or [])
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))

@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 const sectionStyle = { border: "1px solid #e6dac0", borderRadius: 8, marginBottom: 10, background: "white" };
 const bodyStyle = { padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8, fontSize: 12 };
 const inputStyle = { width: "100%", padding: "4px 6px", fontSize: 12, borderRadius: 4, border: "1px solid #ddd0b2" };
@@ -42,6 +44,86 @@ function Field({ label, children }) {
       <span style={{ color: "#6b5c42" }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+const VERDICTS = [
+  ["structure", "지상구조물", "#b45309"],
+  ["geology", "지질", "#0f766e"],
+  ["hold", "보류", "#6b5c42"],
+];
+
+/**
+ * The operator's call on one candidate, with a note. Kept because
+ * removing a structure is a judgement made against an orthophoto, and
+ * "why is there no anomaly here?" deserves a better answer than memory -
+ * the backend stores it by position so a re-scan keeps it.
+ */
+function CandidateVerdict({ candidate, onSetNote }) {
+  const note = candidate.note;
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(note?.note || "");
+
+  const choose = (verdict) =>
+    onSetNote(candidate, verdict === note?.verdict ? "clear" : verdict, text);
+
+  return (
+    <div style={{ marginTop: 3, display: "flex", flexDirection: "column", gap: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        {VERDICTS.map(([key, label, color]) => (
+          <button
+            key={key}
+            onClick={() => choose(key)}
+            title={
+              note?.verdict === key
+                ? "다시 누르면 판정을 지웁니다"
+                : "정사영상·현장에서 확인한 결과를 기록합니다"
+            }
+            style={{
+              padding: "1px 6px",
+              fontSize: 11,
+              borderRadius: 999,
+              cursor: "pointer",
+              border: `1px solid ${note?.verdict === key ? color : "#ddd0b2"}`,
+              background: note?.verdict === key ? color : "white",
+              color: note?.verdict === key ? "white" : "#6b5c42",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+        <button
+          onClick={() => setEditing((v) => !v)}
+          style={{ border: "none", background: "none", cursor: "pointer", color: "#8a7a5c", fontSize: 11 }}
+          title="메모"
+        >
+          ✎
+        </button>
+      </div>
+      {editing && (
+        <div style={{ display: "flex", gap: 4 }}>
+          <input
+            type="text"
+            value={text}
+            placeholder="예: 정사영상에서 철골 창고 확인"
+            onChange={(e) => setText(e.target.value)}
+            style={{ flex: 1, fontSize: 11, padding: "2px 4px", borderRadius: 4, border: "1px solid #ddd0b2" }}
+          />
+          <button
+            style={{ fontSize: 11, padding: "2px 6px", borderRadius: 4, border: "1px solid #ddd0b2", cursor: "pointer" }}
+            onClick={() => {
+              onSetNote(candidate, note?.verdict || "hold", text);
+              setEditing(false);
+            }}
+          >
+            저장
+          </button>
+        </div>
+      )}
+      {!editing && note?.note && (
+        <div style={{ fontSize: 11, color: "#6b5c42" }}>메모: {note.note}</div>
+      )}
+    </div>
   );
 }
 
@@ -119,6 +201,8 @@ export default function AnomalyCandidatePanel({
   onToggle,
   onSelectAll,
   onSelectClean,
+  onSetNote,
+  onExportNotes,
   onClearSelection,
   onFocusCandidate,
   onApplySelected,
@@ -218,6 +302,15 @@ export default function AnomalyCandidatePanel({
               <button style={{ ...inputStyle, cursor: "pointer", width: "auto" }} onClick={onClearSelection}>
                 선택 해제
               </button>
+              {onExportNotes && (
+                <button
+                  style={{ ...inputStyle, cursor: "pointer", width: "auto", marginLeft: "auto" }}
+                  onClick={onExportNotes}
+                  title="후보별 판정(지상구조물/지질/보류)과 메모를 CSV로 내려받습니다 - 제거 근거 문서로 그대로 쓸 수 있습니다"
+                >
+                  판정 내보내기
+                </button>
+              )}
             </div>
 
             <div style={listStyle}>
@@ -258,6 +351,9 @@ export default function AnomalyCandidatePanel({
                         {c.magnetization.verdict === "remanent" &&
                           ` (복각 ${c.magnetization.inclination_deg.toFixed(0)}°, 편각 ${c.magnetization.declination_deg.toFixed(0)}°)`}
                       </div>
+                    )}
+                    {onSetNote && (
+                      <CandidateVerdict candidate={c} onSetNote={onSetNote} />
                     )}
                     {c.single_line && (
                       <div style={warnStyle}>

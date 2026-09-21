@@ -485,6 +485,22 @@ export function deleteAutosave(projectId) {
   return request(`/projects/autosaves/${projectId}`, { method: "DELETE" });
 }
 
+// The operator's structure-or-geology calls on anomaly candidates, kept
+// by position so a re-scan does not lose them (backend store.py::
+// set_candidate_note).
+export function listCandidateNotes(projectId) {
+  return request(`/projects/${projectId}/candidate-notes`);
+}
+
+export function setCandidateNote(projectId, note) {
+  return request(`/projects/${projectId}/candidate-notes`, { method: "POST", body: JSON.stringify(note) });
+}
+
+export async function exportCandidateNotesCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/candidate-notes/csv`);
+  downloadBlob(blob, filename);
+}
+
 export function loadProject(projectId, file) {
   const form = new FormData();
   form.append("file", file);

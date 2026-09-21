@@ -912,6 +912,31 @@ class AnomalyCandidateRequest(BaseModel):
     estimate_magnetization: bool = True
 
 
+CandidateVerdict = Literal["structure", "geology", "hold", "clear"]
+
+
+class CandidateNoteRequest(BaseModel):
+    """One operator decision about one anomaly candidate - see
+    store.py::set_candidate_note.
+
+    Kept by position rather than by rank: ranks are a property of the
+    scan, and re-running it with a different cell size or ranking field
+    renumbers everything, while the structure on the ground stays where
+    it is.
+    """
+    lat: float
+    lon: float
+    verdict: CandidateVerdict
+    note: Optional[str] = Field(None, max_length=2000)
+    # Snapshot of what was on screen when the call was made, so the log
+    # reads on its own later and in the exported table.
+    peak_anomaly_nt: Optional[float] = None
+    depth_m: Optional[float] = None
+    radius_m: Optional[float] = None
+    magnetization: Optional[str] = None
+    removed_method: Optional[str] = None
+
+
 class MultiscaleEdgeRequest(BaseModel):
     # Multi-scale edge detection ("worming") - see
     # processing/multiscale_edges.py. Traces THDR ridges at a series of

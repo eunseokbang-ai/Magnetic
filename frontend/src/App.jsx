@@ -1836,6 +1836,37 @@ export default function App() {
     }
   };
 
+  // Records what the operator decided about one candidate and refreshes
+  // the list in place, so the decision is visible on the row it was made
+  // on rather than only after the next scan.
+  const handleSetCandidateNote = async (candidate, verdict, note) => {
+    try {
+      setError(null);
+      const resp = await api.setCandidateNote(projectId, {
+        lat: candidate.lat,
+        lon: candidate.lon,
+        verdict,
+        note,
+        peak_anomaly_nt: candidate.peak_anomaly_nt,
+        depth_m: candidate.depth_m,
+        radius_m: candidate.radius_m,
+        magnetization: candidate.magnetization ? candidate.magnetization.verdict : null,
+      });
+      setCandidateResult((prev) =>
+        prev
+          ? {
+              ...prev,
+              candidates: prev.candidates.map((c) =>
+                c.lat === candidate.lat && c.lon === candidate.lon ? { ...c, note: resp.note } : c
+              ),
+            }
+          : prev
+      );
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
   const handleToggleCandidate = (i) => {
     setSelectedCandidateIndices((prev) => {
       const next = new Set(prev);
@@ -1877,8 +1908,10 @@ export default function App() {
       setCandidateApplying(true);
       const polygons = [];
       const depthHints = [];
+      const applied = [];
       for (const i of selectedCandidateIndices) {
         const c = candidateResult.candidates[i];
+        applied.push(c);
         // a model needs room for the whole source, a cut only the reach
         // of its field - see AnomalyCandidate.source_polygon_xy
         const ring = removalMethod === "model" ? c?.source_polygon : c?.polygon;
@@ -1896,6 +1929,26 @@ export default function App() {
           setSmoothHistory((prev) => [...prev, summary.manual_smooth_point_ids]);
         }
         await _afterSmoothingApplied(summary);
+      }
+      // Removing a candidate is itself a decision about it, so it goes
+      // into the log without the operator having to record it twice. An
+      // existing verdict is kept - only the method is added.
+      for (const c of applied) {
+        try {
+          await api.setCandidateNote(projectId, {
+            lat: c.lat,
+            lon: c.lon,
+            verdict: c.note?.verdict && c.note.verdict !== "clear" ? c.note.verdict : "structure",
+            note: c.note?.note || null,
+            peak_anomaly_nt: c.peak_anomaly_nt,
+            depth_m: c.depth_m,
+            radius_m: c.radius_m,
+            magnetization: c.magnetization ? c.magnetization.verdict : null,
+            removed_method: removalMethod,
+          });
+        } catch {
+          // the removal itself succeeded; a failed log entry must not undo it
+        }
       }
       // the field has changed underneath them, so the old ranking no
       // longer describes it - rerun to see what is left
@@ -2736,6 +2789,10 @@ export default function App() {
             )
           }
           onClearSelection={() => setSelectedCandidateIndices(new Set())}
+          onSetNote={handleSetCandidateNote}
+          onExportNotes={() =>
+            api.exportCandidateNotesCsv(projectId, `${saveFilename || "project"}_candidate_decisions.csv`).catch(handleError)
+          }
           onFocusCandidate={(c) => setFlyToTarget({ lat: c.lat, lon: c.lon, nonce: Date.now() })}
           onApplySelected={handleApplyCandidateSmoothing}
           applying={candidateApplying}

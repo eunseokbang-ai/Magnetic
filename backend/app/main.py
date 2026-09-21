@@ -36,6 +36,7 @@ from .models import (
     AutoBoundaryRequest,
     DisplayBoundaryRequest,
     AnomalyCandidateRequest,
+    CandidateNoteRequest,
     SourceRemovalRequest,
     ManualSmoothRequest,
     MultiscaleEdgeRequest,
@@ -550,6 +551,25 @@ def structure_scan(project_id: str, req: StructureScanRequest):
 def source_removal(project_id: str, req: SourceRemovalRequest):
     project = store.get(project_id)
     return project.set_source_removal(req)
+
+
+@app.get("/api/projects/{project_id}/candidate-notes")
+def list_candidate_notes(project_id: str):
+    return store.get(project_id).get_candidate_notes()
+
+
+@app.post("/api/projects/{project_id}/candidate-notes")
+def set_candidate_note(project_id: str, req: CandidateNoteRequest):
+    return store.get(project_id).set_candidate_note(req)
+
+
+@app.get("/api/projects/{project_id}/candidate-notes/csv")
+def export_candidate_notes_csv(project_id: str):
+    data = store.get(project_id).export_candidate_notes_csv()
+    return Response(
+        content=data, media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=candidate_decisions.csv"},
+    )
 
 
 @app.post("/api/projects/{project_id}/anomaly-candidates")
