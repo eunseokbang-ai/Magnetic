@@ -48,7 +48,7 @@ def data_dir() -> Path:
     when installed, so the program works without administrator rights and
     two accounts on one machine do not share a cache."""
     if is_frozen():
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "MagneticSurvey"
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "DroneMagStudio"
     else:
         base = _BACKEND_DIR / ".data"
     base.mkdir(parents=True, exist_ok=True)

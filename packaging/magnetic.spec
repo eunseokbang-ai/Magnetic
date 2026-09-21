@@ -6,7 +6,7 @@ repository root:
 
     backend\\venv\\Scripts\\python.exe -m PyInstaller packaging\\magnetic.spec --noconfirm
 
-Produces packaging/dist/Magnetic/ - a self-contained folder that needs
+Produces packaging/dist/DroneMagStudio/ - a self-contained folder that needs
 neither Python nor Node on the target machine. packaging/installer.iss
 then wraps that folder into a single setup executable.
 
@@ -74,7 +74,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Magnetic",
+    name="DroneMagStudio",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -94,5 +94,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="Magnetic",
+    name="DroneMagStudio",
 )

@@ -2340,7 +2340,8 @@ export default function App() {
         className={`app-sidebar-left${leftSidebarOpen ? " open" : ""}`}
         style={{ width: 320, borderRight: "1px solid #e6dac0", overflowY: "auto", padding: 12, background: "#faf6ec" }}
       >
-        <h1 style={{ fontSize: 16, margin: "4px 0 2px 0" }}>드론 자력탐사 자료 처리</h1>
+        <h1 style={{ fontSize: 16, margin: "4px 0 0 0" }}>DroneMag Studio</h1>
+        <div style={{ fontSize: 11, color: "#8a7a5c", margin: "0 0 2px 0" }}>드론 자력탐사 자료처리</div>
         <div
           style={{ fontSize: 10, color: "#ab9a78", margin: "0 0 12px 0" }}
           title="이 화면이 백엔드 서버로부터 실제로 받은 버전 정보입니다 - '분명히 고쳐달라고 한 문제가 그대로'라면 run.bat을 다시 실행해 이 커밋 해시가 바뀌는지부터 확인하세요"

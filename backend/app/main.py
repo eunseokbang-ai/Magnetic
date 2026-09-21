@@ -66,7 +66,7 @@ register_custom_colormaps()
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="드론 자력탐사 자료 처리 API")
+app = FastAPI(title="DroneMag Studio API")
 
 app.add_middleware(
     CORSMiddleware,

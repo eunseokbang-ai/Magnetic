@@ -26,6 +26,10 @@ import uvicorn
 
 from app.main import app
 
+# One place for the product name, so the console banner, the API title
+# and the browser tab cannot drift apart.
+APP_NAME = "DroneMag Studio"
+
 HOST = "127.0.0.1"
 PREFERRED_PORT = 8000
 
@@ -62,7 +66,7 @@ def main() -> int:
     url = f"http://{HOST}:{port}/"
 
     print("=" * 62)
-    print("  드론 자력탐사 자료처리 프로그램")
+    print(f"  {APP_NAME} - 드론 자력탐사 자료처리")
     print("=" * 62)
     print(f"  주소: {url}")
     print("  브라우저가 자동으로 열립니다. 이 창을 닫으면 프로그램이 종료됩니다.")
