@@ -528,6 +528,8 @@ export default function App() {
   const [candidateParams, setCandidateParams] = useState(DEFAULT_ANOMALY_CANDIDATE_PARAMS);
   const [candidateRunning, setCandidateRunning] = useState(false);
   const [candidateResult, setCandidateResult] = useState(null);
+  // Opacity of the KIGAM geology overlays (MapView.GEOLOGY_LAYERS).
+  const [geologyOpacity, setGeologyOpacity] = useState(0.6);
   const [candidateError, setCandidateError] = useState(null);
   const [candidateShow, setCandidateShow] = useState(true);
   const [candidateApplying, setCandidateApplying] = useState(false);
@@ -2482,6 +2484,8 @@ export default function App() {
           {exportingReport ? "생성 중..." : "📄 처리 보고서 다운로드 (.md)"}
         </button>
         <WorkflowSteps
+          geologyOpacity={geologyOpacity}
+          setGeologyOpacity={setGeologyOpacity}
           onUploadDrone={handleUploadDrone}
           droneSummary={droneSummary}
           droneUploadProgress={droneUploadProgress}
@@ -2605,6 +2609,7 @@ export default function App() {
           </button>
         </div>
         <MapView
+          geologyOpacity={geologyOpacity}
           points={editablePoints}
           colorRange={legendRange}
           cmapName={cmapName}

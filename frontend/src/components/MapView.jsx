@@ -895,6 +895,18 @@ function BoundsWatcher({ onBoundsChange }) {
   return null;
 }
 
+// KIGAM geology sheets offered as map overlays. The scales are separate
+// layers rather than one auto-switching layer, because which one to trust
+// is the geologist's call: 1:50k is the detailed mapping but does not
+// cover every island (measured: it returns an empty sheet over Dokdo),
+// while 1:250k and 1:1M are complete.
+const GEOLOGY_LAYERS = [
+  { source: "kigam_50k", name: "KIGAM 지질도 1:5만", minZoom: 9, zIndex: 300 },
+  { source: "kigam_250k", name: "KIGAM 지질도 1:25만", minZoom: 7, zIndex: 299 },
+  { source: "kigam_1m", name: "KIGAM 지질도 1:100만", minZoom: 5, zIndex: 298 },
+  { source: "kigam_fault_50k", name: "KIGAM 단층 1:5만", minZoom: 9, zIndex: 310 },
+];
+
 export default function MapView({
   points,
   colorRange,
@@ -936,6 +948,7 @@ export default function MapView({
   boundaryPolygon,
   onBoundaryDrawn,
   flyToTarget,
+  geologyOpacity,
 }) {
   const center = useMemo(() => [36.3, 127.8], []);
   const pointsVisible = !overlay || showPointsOverGrid;
@@ -968,6 +981,26 @@ export default function MapView({
         <LayersControl.BaseLayer name="Esri 위성 (오프라인 캐시)">
           <TileLayer attribution="Tiles &copy; Esri (오프라인 캐시)" url="/api/tiles/esri/{z}/{x}/{y}" />
         </LayersControl.BaseLayer>
+
+        {/* KIGAM geology, drawn through this app's own tile endpoint: the
+            service is WMS, and the backend turns each tile into the
+            GetMap request that covers it (processing/tile_cache.py). That
+            also means these cache and work offline like any basemap, and
+            that the browser never talks to the service directly - it sits
+            behind a filter that refuses anything not shaped like a
+            browser. minZoom keeps a 1:50k sheet from being asked to draw
+            the whole country into one tile. */}
+        {GEOLOGY_LAYERS.map((layer) => (
+          <LayersControl.Overlay key={layer.source} name={layer.name}>
+            <TileLayer
+              url={`/api/tiles/${layer.source}/{z}/{x}/{y}`}
+              attribution="지질도 &copy; KIGAM 지오빅데이터 오픈플랫폼"
+              minZoom={layer.minZoom}
+              opacity={geologyOpacity ?? 0.6}
+              zIndex={layer.zIndex}
+            />
+          </LayersControl.Overlay>
+        ))}
       </LayersControl>
 
       <FitBounds points={points} />

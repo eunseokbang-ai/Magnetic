@@ -65,6 +65,10 @@ export default function OfflineMapPanel({ mapBounds, onEstimate, onDownload, onR
         <select style={inputStyle} value={source} onChange={(e) => setSource(e.target.value)}>
           <option value="osm">OpenStreetMap</option>
           <option value="esri">Esri 위성 영상</option>
+          <option value="kigam_50k">KIGAM 지질도 1:5만</option>
+          <option value="kigam_250k">KIGAM 지질도 1:25만</option>
+          <option value="kigam_1m">KIGAM 지질도 1:100만</option>
+          <option value="kigam_fault_50k">KIGAM 단층 1:5만</option>
         </select>
       </label>
 
