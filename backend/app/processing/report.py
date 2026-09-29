@@ -149,6 +149,23 @@ def generate_report_markdown(
     elif cl:
         lines.append(f"- 타이라인 보정: 미적용 ({cl.get('reason') or '해당 없음'})")
 
+    hn = process_summary.get("height_normalization") or {}
+    if hn.get("applied"):
+        alt = hn.get("altitude") or {}
+        corr = hn.get("correction") or {}
+        lines.append(
+            f"- **비행 고도 정규화**: 측점 고도 {_fmt(alt.get('min'))}~{_fmt(alt.get('max'))} m "
+            f"(표준편차 {_fmt(alt.get('std'))} m) → 기준 고도 {_fmt(hn.get('z_ref_m'))} m. "
+            f"등가층 {hn.get('n_sources')}개 소스, 측점 아래 {_fmt(hn.get('layer_depth_below_min_m'), 0)} m, "
+            f"맞춤 오차 {_fmt(hn.get('fit_rms_nt'), 2)} nT (자료 변동 {_fmt(hn.get('data_rms_nt'), 1)} nT), "
+            f"보정량 중앙값 {_fmt(corr.get('median_abs_nt'), 2)} nT, 최대 {_fmt(corr.get('max_abs_nt'), 1)} nT"
+            + (f", 테두리 테이퍼 {corr.get('n_points_edge_tapered')}점" if corr.get("n_points_edge_tapered") else "")
+        )
+        for w in hn.get("warnings") or []:
+            lines.append(f"  - ⚠ {w}")
+    else:
+        lines.append("- 비행 고도 정규화: 미적용")
+
     nq = process_summary.get("noise_qc")
     if nq and nq.get("available"):
         lines.append(

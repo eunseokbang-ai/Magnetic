@@ -506,6 +506,16 @@ export function applyRepeatPassLeveling(projectId, req) {
   return request(`/projects/${projectId}/repeat-passes/apply`, { method: "POST", body: JSON.stringify(req || {}) });
 }
 
+// The flight's height statistics, and the readings brought to one height
+// with an equivalent source layer (backend processing/height_normalization.py).
+export function analyzeHeightNormalization(projectId) {
+  return request(`/projects/${projectId}/height-normalization`, { method: "POST" });
+}
+
+export function applyHeightNormalization(projectId, req) {
+  return request(`/projects/${projectId}/height-normalization/apply`, { method: "POST", body: JSON.stringify(req || {}) });
+}
+
 // The operator's structure-or-geology calls on anomaly candidates, kept
 // by position so a re-scan does not lose them (backend store.py::
 // set_candidate_note).

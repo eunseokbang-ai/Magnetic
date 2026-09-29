@@ -956,6 +956,19 @@ class RepeatPassApplyRequest(BaseModel):
     across_tolerance_m: Optional[float] = Field(None, gt=0)
 
 
+class HeightNormalizationApplyRequest(BaseModel):
+    """Bring every reading to one flight height with an equivalent source
+    layer fitted at the readings' true 3D positions, or undo that - see
+    processing/height_normalization.py."""
+    mode: Literal["apply", "reset"] = "apply"
+    # Height (ellipsoidal, m) of the surface the readings are brought to.
+    # None = the median reading height, which moves the least data by the
+    # least amount. Readings above it are continued downward, which
+    # amplifies short-wavelength error; a survey whose targets sit under
+    # its high ground does better with a higher reference.
+    z_ref_m: Optional[float] = None
+
+
 class GeologyStatsRequest(BaseModel):
     """Join the readings to the national geology map and summarise the
     field per rock unit - see processing/geology_stats.py."""

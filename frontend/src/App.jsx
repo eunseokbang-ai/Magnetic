@@ -6,6 +6,7 @@ import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import AutosaveBanner from "./components/AutosaveBanner";
 import RepeatPassPanel from "./components/RepeatPassPanel";
+import HeightNormalizationPanel from "./components/HeightNormalizationPanel";
 import LineEditor from "./components/LineEditor";
 import FlightPathEditor from "./components/FlightPathEditor";
 import LayerManager from "./components/LayerManager";
@@ -2734,7 +2735,18 @@ export default function App() {
         className={`app-sidebar-right${rightSidebarOpen ? " open" : ""}`}
         style={{ width: 280, borderLeft: "1px solid #e6dac0", overflowY: "auto", padding: 12, background: "#faf6ec" }}
       >
-        <h2 style={{ fontSize: 13, margin: "4px 0 10px 0" }}>7. 수동 측선 편집</h2>
+        <h2 style={{ fontSize: 13, margin: "4px 0 10px 0" }}>5-1. 비행 고도 정규화</h2>
+        <HeightNormalizationPanel
+          projectId={projectId}
+          processSummary={processSummary}
+          onApplied={async (resp) => {
+            setProcessSummary(resp);
+            await refreshPoints(projectId, valueField);
+          }}
+          onError={handleError}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>7. 수동 측선 편집</h2>
         <LineEditor
           lines={processSummary?.lines}
           onToggleLines={handleToggleLines}

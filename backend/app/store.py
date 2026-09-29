@@ -13,6 +13,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
 import rasterio
+import rasterio.warp
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
 from scipy.interpolate import RegularGridInterpolator
@@ -26,6 +27,7 @@ from .models import (
     GeologyStatsRequest,
     RepeatPassApplyRequest,
     RepeatPassRequest,
+    HeightNormalizationApplyRequest,
     SourceRemovalRequest,
     ContactDetectionRequest,
     DisplayBoundaryRequest,
@@ -56,6 +58,7 @@ from .processing.base_qc import process_base_station
 from .processing.base_segments import level_base_segments
 from .processing.manual_smooth import apply_manual_smoothing
 from .processing.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
+from .processing.height_normalization import HeightNormalization, altitude_summary, fit_height_normalization
 from .processing.intermagnet import (
     DEFAULT_MAX_STATION_DISTANCE_KM,
     IagaParseError,
@@ -439,6 +442,11 @@ class Project:
     # One level offset per flight, solved on the ground the survey flew
     # twice - see processing/repeat_passes.py and _flight_levelled_base.
     repeat_pass_offsets: dict = field(default_factory=dict)
+    # The readings brought to one flight height - the fitted source layer
+    # and the per-reading correction it gives, or None. Applied after the
+    # flight levelling and before the structure models, see
+    # _height_normalized_base and processing/height_normalization.py.
+    height_normalization: HeightNormalization | None = None
     # Operator decisions about anomaly candidates: which were confirmed as
     # ground structures, which turned out to be geology, which are on
     # hold. Kept by position, not by rank - see set_candidate_note.
@@ -1178,6 +1186,7 @@ class Project:
         self.manual_smooth_point_ids = set()
         self.source_removals = []
         self.repeat_pass_offsets = {}
+        self.height_normalization = None
         self.grid_cache = {}
         self.transform_cache = {}
         self.last_params = params
@@ -1410,6 +1419,9 @@ class Project:
                 "applied": bool(self.repeat_pass_offsets),
                 "offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
             },
+            "height_normalization": (
+                self.height_normalization.summary() if self.height_normalization is not None else {"applied": False}
+            ),
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "utm_epsg": self.utm_epsg,
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
@@ -1625,10 +1637,38 @@ class Project:
             out[col] = out[col].to_numpy() - shift
         return out
 
-    def _base_without_structures(self) -> pd.DataFrame:
-        """processed_base, levelled on repeated ground, with every fitted
-        structure model subtracted."""
+    def _height_normalized_base(self) -> pd.DataFrame:
+        """The flight-levelled base with every reading brought to the
+        reference height (see apply_height_normalization). After the
+        levelling, because the layer is fitted to levelled readings, and
+        before the structure models, which are then fitted to readings
+        that are all at one height."""
         base = self._flight_levelled_base()
+        hn = self.height_normalization
+        if hn is None or base is None:
+            return base
+        correction = self._height_correction_for(base)
+        if correction is None:
+            return base
+        out = base.copy()
+        for col in ("anomaly", "tmi"):
+            out[col] = out[col].to_numpy() + correction
+        return out
+
+    def _height_correction_for(self, base: pd.DataFrame) -> np.ndarray | None:
+        """The stored per-reading correction lined up with `base`'s rows.
+        It was computed on processed_base in row order; a base with a
+        different length (which cannot happen unless the pipeline was
+        re-run, which clears the normalization) gets none."""
+        hn = self.height_normalization
+        if hn is None or len(hn.correction_nt) != len(base):
+            return None
+        return hn.correction_nt
+
+    def _base_without_structures(self) -> pd.DataFrame:
+        """processed_base, levelled on repeated ground and brought to one
+        height, with every fitted structure model subtracted."""
+        base = self._height_normalized_base()
         if not self.source_removals:
             return base
         out = base.copy()
@@ -3379,6 +3419,125 @@ class Project:
             **self.process_summary(),
         }
 
+    # ------------------------------------------------------------ flight height
+    def analyze_height_normalization(self) -> dict:
+        """How level the flight was, and what normalizing it would be
+        working with. Measures only - see apply_height_normalization."""
+        if self.processed_base is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed_base
+        active = self._active_mask().to_numpy()
+        z = df["altitude_ellipsoidal_m"].to_numpy(dtype=float)
+        altitude = altitude_summary(z[active])
+        available = altitude["n"] > 0 and self.line_spacing_m is not None and self.inclination_deg is not None
+        reason = None
+        if altitude["n"] == 0:
+            reason = "측점 고도가 없어 비행 고도 정규화를 할 수 없습니다."
+        elif self.line_spacing_m is None:
+            reason = "측선 간격을 알 수 없어 등가층의 크기를 정할 수 없습니다."
+        elif self.inclination_deg is None:
+            reason = "IGRF 복각·편각이 없어 유도자화 방향을 정할 수 없습니다."
+        return {
+            "available": bool(available),
+            "reason": reason,
+            "altitude": altitude,
+            "agl": self._agl_summary(df, active),
+            "suggested_z_ref_m": altitude["median"],
+            "line_spacing_m": self.line_spacing_m,
+            "n_points_active": int(active.sum()),
+            **({"applied": True, **self.height_normalization.summary()}
+               if self.height_normalization is not None else {"applied": False}),
+        }
+
+    def _agl_summary(self, df: pd.DataFrame, active: np.ndarray) -> dict | None:
+        """Height above the DEM, when one is loaded, from a sample of the
+        readings. The DEM is taken as orthometric, so the reading's MSL
+        altitude is used where the file had one and the ellipsoidal
+        altitude otherwise - in which case the datum difference (tens of
+        metres) is in the numbers, and said so."""
+        if self.dem_bytes is None or self.utm_epsg is None:
+            return None
+        idx = np.flatnonzero(active)
+        if len(idx) == 0:
+            return None
+        stride = max(1, len(idx) // 20000)
+        idx = idx[::stride]
+        msl = df["altitude_msl_m"].to_numpy(dtype=float)[idx] if "altitude_msl_m" in df.columns else np.full(len(idx), np.nan)
+        ell = df["altitude_ellipsoidal_m"].to_numpy(dtype=float)[idx]
+        use_msl = np.isfinite(msl).sum() > 0.5 * len(idx)
+        alt = msl if use_msl else ell
+        try:
+            with rasterio.open(io.BytesIO(self.dem_bytes)) as src:
+                xs, ys = rasterio.warp.transform(
+                    f"EPSG:{self.utm_epsg}", src.crs, df["x"].to_numpy(dtype=float)[idx].tolist(),
+                    df["y"].to_numpy(dtype=float)[idx].tolist(),
+                )
+                cols, rows = (~src.transform) * (np.asarray(xs), np.asarray(ys))
+                rows = np.floor(rows).astype(int)
+                cols = np.floor(cols).astype(int)
+                inside = (rows >= 0) & (rows < src.height) & (cols >= 0) & (cols < src.width)
+                if not inside.any():
+                    return None
+                band = src.read(1).astype(float)
+                if src.nodata is not None:
+                    band[band == src.nodata] = np.nan
+        except (rasterio.errors.RasterioIOError, ValueError):
+            return None
+        ground = np.full(len(idx), np.nan)
+        ground[inside] = band[rows[inside], cols[inside]]
+        agl = alt - ground
+        stats = altitude_summary(agl)
+        stats["datum"] = "msl" if use_msl else "ellipsoidal"
+        stats["note"] = (
+            "DEM(정표고)과 측점 MSL 고도의 차이입니다."
+            if use_msl else
+            "측점에 MSL 고도가 없어 타원체고에서 DEM을 뺀 값입니다 - 지오이드 높이(수십 m)만큼 치우쳐 있습니다."
+        )
+        return stats
+
+    def apply_height_normalization(self, req: HeightNormalizationApplyRequest) -> dict:
+        with self._edit_lock:
+            return self._apply_height_normalization_unlocked(req)
+
+    def _apply_height_normalization_unlocked(self, req: HeightNormalizationApplyRequest) -> dict:
+        """Bring every reading to one flight height, or put them back.
+        The layer is fitted to the active readings of the flight-levelled
+        base, and the correction is kept per reading so the chain below
+        (structure models, point smoothing) re-derives from it and undo is
+        exact."""
+        if self.processed_base is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        if req.mode == "reset":
+            self.height_normalization = None
+        else:
+            if self.line_spacing_m is None:
+                raise ProjectError("측선 간격을 알 수 없어 등가층의 크기를 정할 수 없습니다.")
+            if self.inclination_deg is None or self.declination_deg is None:
+                raise ProjectError("IGRF 복각·편각이 없어 유도자화 방향을 정할 수 없습니다.")
+            base = self._flight_levelled_base()
+            active = self._active_mask().to_numpy()
+            try:
+                self.height_normalization = fit_height_normalization(
+                    base["x"].to_numpy(dtype=float),
+                    base["y"].to_numpy(dtype=float),
+                    base["altitude_ellipsoidal_m"].to_numpy(dtype=float),
+                    base["anomaly"].to_numpy(dtype=float),
+                    base["line_id"].to_numpy(),
+                    self.line_spacing_m,
+                    self.inclination_deg,
+                    self.declination_deg,
+                    z_ref_m=req.z_ref_m,
+                    fit_mask=active,
+                )
+            except ValueError as exc:
+                raise ProjectError(f"비행 고도 정규화를 할 수 없습니다: {exc}") from exc
+        self._rebuild_processed()
+        self.mark_changed()
+        return {
+            **self.process_summary(),
+            "exclusion": self.get_exclusion_state(),
+        }
+
     # ------------------------------------------------------------ geology
     def compute_geology_stats(self, req: GeologyStatsRequest) -> dict:
         """Per-rock-unit statistics of the readings against the national
@@ -3747,7 +3906,12 @@ class Project:
             meta = self._bundle_meta()
             dem_bytes = self.dem_bytes
             inversion_npz = self.export_inversion_npz() if self.inversion_result is not None else None
-        return _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz)
+            height_npz = None
+            if self.height_normalization is not None:
+                buf = io.BytesIO()
+                np.savez_compressed(buf, **self.height_normalization.to_arrays())
+                height_npz = buf.getvalue()
+        return _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz, height_npz)
 
     def _bundle_meta(self) -> dict:
         meta = {
@@ -3757,6 +3921,11 @@ class Project:
             "source_removals": [r.to_dict() for r in self.source_removals],
             "candidate_notes": self.candidate_notes,
             "repeat_pass_offsets": {str(k): float(v) for k, v in self.repeat_pass_offsets.items()},
+            # Scalars only; the layer and the per-reading correction go in
+            # height_normalization.npz next to it.
+            "height_normalization": (
+                self.height_normalization.to_meta() if self.height_normalization is not None else None
+            ),
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
@@ -3822,6 +3991,15 @@ class Project:
                     self.repeat_pass_offsets = {
                         int(k): float(v) for k, v in (meta.get("repeat_pass_offsets") or {}).items()
                     }
+                    # Restored, not refitted, like the structure models:
+                    # the readings come back exactly as they were saved.
+                    self.height_normalization = None
+                    hn_meta = meta.get("height_normalization")
+                    if hn_meta and "height_normalization.npz" in names:
+                        with np.load(io.BytesIO(zf.read("height_normalization.npz"))) as arrays:
+                            restored = HeightNormalization.from_saved(hn_meta, {k: arrays[k] for k in arrays.files})
+                        if len(restored.correction_nt) == len(self.processed_base):
+                            self.height_normalization = restored
                     # The operator's structure-or-geology calls. Kept
                     # whatever the processing did - they are about what is
                     # on the ground, not about this run's settings.
@@ -3829,7 +4007,7 @@ class Project:
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
-                    elif self.source_removals:
+                    elif self.source_removals or self.repeat_pass_offsets or self.height_normalization is not None:
                         self._rebuild_processed()
                     # Restore the saved boundary state exactly, including
                     # "none". The run_pipeline replay above regenerates an
@@ -4613,7 +4791,7 @@ def _statistical_leveling_summary(result: "StatisticalLevelingResult | None") ->
     }
 
 
-def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz) -> bytes:
+def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz, height_npz=None) -> bytes:
     """The project as one zip. The readings go in as pickled frames, not
     CSV: measured on the 74-file HaeNam block (965k rows), CSV took 6.9 s
     to write and the bundle 13.9 s, and the autosave ran that every two
@@ -4632,6 +4810,8 @@ def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversi
             zf.writestr("dem.tif", dem_bytes)
         if inversion_npz is not None:
             zf.writestr("inversion.npz", inversion_npz)
+        if height_npz is not None:
+            zf.writestr("height_normalization.npz", height_npz)
     return buf.getvalue()
 
 
