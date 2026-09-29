@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import pickle
 import threading
 import time
 import uuid
@@ -21,6 +22,8 @@ from .io_.drone_loader import load_drone_csvs
 from .models import (
     AnalyticSignalDepthRequest,
     AnomalyCandidateRequest,
+    DEFAULT_GRID_METHOD,
+    GeologyStatsRequest,
     RepeatPassApplyRequest,
     RepeatPassRequest,
     SourceRemovalRequest,
@@ -163,6 +166,13 @@ from .processing.continuation import (
 from .processing.edge_margin import apply_margin, margin_mask, margin_outline
 from .processing.line_resolution import assess_line_resolution
 from .processing.lineaments import extract_lineaments
+from .processing.geology_stats import (
+    GeologyServiceError,
+    fetch_lithology,
+    stats_to_csv as geology_stats_to_csv,
+    summarize_by_unit,
+    units_geojson,
+)
 from .processing.magnetization import estimate_magnetization
 from .processing.repeat_passes import find_repeat_passes, solve_offsets
 from .processing.repeat_passes import summarize as summarize_repeat_passes
@@ -407,6 +417,8 @@ class Project:
     euler_summary_cache: dict | None = None
     target_summary_cache: dict | None = None
     qc_certificate_cache: dict | None = None
+    repeat_pass_summary_cache: dict | None = None
+    geology_stats_cache: dict | None = None
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
@@ -434,14 +446,26 @@ class Project:
     # Wall-clock time of the last change worth saving, set by mark_changed
     # below and read by autosave.py. 0 means "nothing to save yet".
     changed_at: float = 0.0
+    # Taken by the bundle writer while it reads the project's frames and
+    # edits together, and by the methods that replace them, so an autosave
+    # on its own thread never captures half of an edit.
+    _edit_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     last_overlay: OverlayState | None = None
 
     def load_drone(self, buffers: list) -> dict:
+        with self._edit_lock:
+            return self._load_drone_unlocked(buffers)
+
+    def _load_drone_unlocked(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
         self.mark_changed()
         return self.drone_summary()
 
     def load_base(self, buffers: list, filenames: list | None = None) -> dict:
+        with self._edit_lock:
+            return self._load_base_unlocked(buffers, filenames)
+
+    def _load_base_unlocked(self, buffers: list, filenames: list | None = None) -> dict:
         self.base_raw = load_base_csvs(buffers, filenames)
         self.base_source = None
         self.mark_changed()
@@ -804,6 +828,10 @@ class Project:
         return out
 
     def run_pipeline(self, params: ProcessParams) -> dict:
+        with self._edit_lock:
+            return self._run_pipeline_unlocked(params)
+
+    def _run_pipeline_unlocked(self, params: ProcessParams) -> dict:
         if self.drone_raw is None:
             raise ProjectError("드론 자료를 먼저 업로드하세요.")
         if self.base_raw is None and params.diurnal_params.mode != "assume_constant":
@@ -1378,6 +1406,10 @@ class Project:
             "n_excluded_auto": int((df["line_id"] < 0).sum()),
             "n_manual_included": sum(1 for v in self.manual_overrides.values() if v),
             "source_removals": [r.summary() for r in self.source_removals],
+            "repeat_pass_leveling": {
+                "applied": bool(self.repeat_pass_offsets),
+                "offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
+            },
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "utm_epsg": self.utm_epsg,
             "dominant_azimuth_deg": self.dominant_azimuth_deg,
@@ -1423,6 +1455,9 @@ class Project:
             repeatability_summary=self.repeatability_summary_cache,
             multiscale_edges_summary=self.multiscale_edges_summary_cache,
             qc_certificate=self.qc_certificate_cache,
+            candidate_notes=self.candidate_notes,
+            repeat_pass_summary=self.repeat_pass_summary_cache,
+            geology_stats=self.geology_stats_cache,
         )
 
     def _active_mask(self) -> pd.Series:
@@ -1522,6 +1557,10 @@ class Project:
         return {"point_id": df["point_id"].tolist(), "excluded": (~active).tolist()}
 
     def set_manual_exclude(self, req: ManualExcludeRequest) -> dict:
+        with self._edit_lock:
+            return self._set_manual_exclude_unlocked(req)
+
+    def _set_manual_exclude_unlocked(self, req: ManualExcludeRequest) -> dict:
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         df = self.processed
@@ -1606,6 +1645,10 @@ class Project:
         self.transform_cache = {}
 
     def set_source_removal(self, req: SourceRemovalRequest) -> dict:
+        with self._edit_lock:
+            return self._set_source_removal_unlocked(req)
+
+    def _set_source_removal_unlocked(self, req: SourceRemovalRequest) -> dict:
         """Remove ground-structure anomalies by fitting each marked region
         as a patch of dipoles and subtracting the fitted field - see
         processing/source_removal.py for why this, rather than cutting the
@@ -1662,6 +1705,10 @@ class Project:
         }
 
     def set_manual_smoothing(self, req: ManualSmoothRequest) -> dict:
+        with self._edit_lock:
+            return self._set_manual_smoothing_unlocked(req)
+
+    def _set_manual_smoothing_unlocked(self, req: ManualSmoothRequest) -> dict:
         """Remove a user-identified ground-structure distortion (a house,
         building etc. visibly perturbing the signal) from a stretch of a
         line, by linearly interpolating anomaly/tmi across it - see
@@ -2643,6 +2690,7 @@ class Project:
         result = evaluate_qc_certificate(
             self.process_summary(),
             self.repeatability_summary_cache,
+            repeat_pass_summary=self.repeat_pass_summary_cache,
             noise_threshold_multiplier=req.noise_threshold_multiplier,
             max_repeatability_1sigma_nt=req.max_repeatability_1sigma_nt,
             max_sampling_gap_pct=req.max_sampling_gap_pct,
@@ -3296,6 +3344,7 @@ class Project:
         it. Measures only - see apply_repeat_pass_leveling."""
         pairs = self._repeat_pairs(req)
         offsets = solve_offsets(pairs)
+        self.repeat_pass_summary_cache = summarize_repeat_passes(pairs, offsets)
         return {
             "pairs": [p.to_dict() for p in pairs],
             "offsets": {str(k): round(v, 3) for k, v in offsets.items()},
@@ -3305,6 +3354,10 @@ class Project:
         }
 
     def apply_repeat_pass_leveling(self, req: RepeatPassApplyRequest) -> dict:
+        with self._edit_lock:
+            return self._apply_repeat_pass_leveling_unlocked(req)
+
+    def _apply_repeat_pass_leveling_unlocked(self, req: RepeatPassApplyRequest) -> dict:
         """Subtract the solved per-flight offsets from the data, or put
         them back. Sits before structure removal and point smoothing in
         the chain, so both keep working on top of it."""
@@ -3325,6 +3378,62 @@ class Project:
             "offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
             **self.process_summary(),
         }
+
+    # ------------------------------------------------------------ geology
+    def compute_geology_stats(self, req: GeologyStatsRequest) -> dict:
+        """Per-rock-unit statistics of the readings against the national
+        geology map - see processing/geology_stats.py."""
+        if self.processed is None or self.utm_epsg is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed.loc[self._active_mask()]
+        if df.empty:
+            raise ProjectError("유효한 측선 포인트가 없습니다.")
+        lat = df["lat"].to_numpy(dtype=float)
+        lon = df["lon"].to_numpy(dtype=float)
+        pad = 0.002
+        try:
+            collection = fetch_lithology(
+                float(lat.min()) - pad, float(lon.min()) - pad, float(lat.max()) + pad, float(lon.max()) + pad,
+                scale=req.scale, use_cache=req.use_cache,
+            )
+        except GeologyServiceError as exc:
+            raise ProjectError(str(exc)) from exc
+
+        signal_at_points = None
+        if req.cell_size_m:
+            grid = self._grid_for("anomaly", req.cell_size_m, DEFAULT_GRID_METHOD, None)
+            signal = analytic_signal(grid.values, grid.cell_size_m)
+            col = np.clip(np.round((df["x"].to_numpy() - grid.easting[0]) / grid.cell_size_m).astype(int), 0, len(grid.easting) - 1)
+            row = np.clip(np.round((df["y"].to_numpy() - grid.northing[0]) / grid.cell_size_m).astype(int), 0, len(grid.northing) - 1)
+            signal_at_points = signal[row, col]
+
+        units, report = summarize_by_unit(
+            lon, lat, df[req.value].to_numpy(dtype=float), df["line_id"].to_numpy(),
+            collection, signal=signal_at_points,
+        )
+        result = {
+            "scale": req.scale,
+            "value": req.value,
+            "units": [u.to_dict() for u in units],
+            "report": report,
+            "geojson": units_geojson(collection),
+            "attribution": "지질도 © KIGAM 지오빅데이터 오픈플랫폼",
+        }
+        self.geology_stats_cache = {k: v for k, v in result.items() if k != "geojson"}
+        return result
+
+    def export_geology_stats_csv(self) -> bytes:
+        if not self.geology_stats_cache:
+            raise ProjectError("지질 단위별 통계를 먼저 계산하세요.")
+        from .processing.geology_stats import UnitStats
+
+        units = [UnitStats(**{
+            "symbol": u["symbol"], "name": u["name"], "age": u.get("age"), "n_points": u["n_points"],
+            "n_lines": u["n_lines"], "mean_nt": u["mean_nt"], "std_nt": u["std_nt"], "median_nt": u["median_nt"],
+            "p10_nt": u["p10_nt"], "p90_nt": u["p90_nt"], "mean_signal": u.get("mean_signal"),
+            "area_share_pct": u["share_pct"],
+        }) for u in self.geology_stats_cache["units"]]
+        return geology_stats_to_csv(units)
 
     # ------------------------------------------------------------ candidate notes
     #
@@ -3629,6 +3738,18 @@ class Project:
         if self.drone_raw is None:
             raise ProjectError("저장할 자료가 없습니다 (드론 자료를 먼저 업로드하세요).")
 
+        # Everything the bundle describes is read at one moment, under the
+        # same lock the mutating methods take.
+        with self._edit_lock:
+            drone_raw = self.drone_raw
+            base_raw = self.base_raw
+            calibration_raw = self.calibration_raw
+            meta = self._bundle_meta()
+            dem_bytes = self.dem_bytes
+            inversion_npz = self.export_inversion_npz() if self.inversion_result is not None else None
+        return _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz)
+
+    def _bundle_meta(self) -> dict:
         meta = {
             "last_params": self.last_params.model_dump() if self.last_params is not None else None,
             "manual_overrides": {str(k): v for k, v in self.manual_overrides.items()},
@@ -3642,48 +3763,25 @@ class Project:
             "geology_units": self.geology_units,
             "geology_unit_next_id": self.geology_unit_next_id,
         }
-
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("drone_raw.csv", self.drone_raw.to_csv(index=False))
-            if self.base_raw is not None:
-                zf.writestr("base_raw.csv", self.base_raw.to_csv(index=False))
-            if self.calibration_raw is not None:
-                zf.writestr("calibration_raw.csv", self.calibration_raw.to_csv(index=False))
-            zf.writestr("meta.json", json.dumps(meta))
-            if self.dem_bytes is not None:
-                zf.writestr("dem.tif", self.dem_bytes)
-            if self.inversion_result is not None:
-                zf.writestr("inversion.npz", self.export_inversion_npz())
-        return buf.getvalue()
+        return meta
 
     def load_project_bundle(self, data: bytes) -> dict:
+        with self._edit_lock:
+            return self._load_project_bundle_unlocked(data)
+
+    def _load_project_bundle_unlocked(self, data: bytes) -> dict:
         """Restore a project saved by save_project_bundle. Returns the
         same shape as process_summary() (plus a couple of extra flags) so
         the frontend can jump straight back to where the user left off."""
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 names = set(zf.namelist())
-                if "drone_raw.csv" not in names or "meta.json" not in names:
+                if "meta.json" not in names or not ({"drone_raw.pkl", "drone_raw.csv"} & names):
                     raise ProjectError("올바른 프로젝트 저장 파일이 아닙니다.")
 
-                drone_df = pd.read_csv(io.BytesIO(zf.read("drone_raw.csv")))
-                drone_df["timestamp"] = pd.to_datetime(drone_df["timestamp"])
-                self.drone_raw = drone_df
-
-                if "base_raw.csv" in names:
-                    base_df = pd.read_csv(io.BytesIO(zf.read("base_raw.csv")))
-                    base_df["timestamp"] = pd.to_datetime(base_df["timestamp"])
-                    self.base_raw = base_df
-                else:
-                    self.base_raw = None
-
-                if "calibration_raw.csv" in names:
-                    cal_df = pd.read_csv(io.BytesIO(zf.read("calibration_raw.csv")))
-                    cal_df["timestamp"] = pd.to_datetime(cal_df["timestamp"])
-                    self.calibration_raw = cal_df
-                else:
-                    self.calibration_raw = None
+                self.drone_raw = _read_frame(zf, names, "drone_raw")
+                self.base_raw = _read_frame(zf, names, "base_raw")
+                self.calibration_raw = _read_frame(zf, names, "calibration_raw")
 
                 meta = json.loads(zf.read("meta.json").decode("utf-8"))
 
@@ -4513,6 +4611,40 @@ def _statistical_leveling_summary(result: "StatisticalLevelingResult | None") ->
         "roughness_after_nt": result.roughness_after_nt,
         "warnings": result.warnings,
     }
+
+
+def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz) -> bytes:
+    """The project as one zip. The readings go in as pickled frames, not
+    CSV: measured on the 74-file HaeNam block (965k rows), CSV took 6.9 s
+    to write and the bundle 13.9 s, and the autosave ran that every two
+    minutes with the GIL held, so the screen stalled with it. A pickle of
+    the same frame writes in 0.1 s. Bundles written as CSV by earlier
+    versions are still read (_read_frame)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+        zf.writestr("drone_raw.pkl", pickle.dumps(drone_raw, protocol=pickle.HIGHEST_PROTOCOL))
+        if base_raw is not None:
+            zf.writestr("base_raw.pkl", pickle.dumps(base_raw, protocol=pickle.HIGHEST_PROTOCOL))
+        if calibration_raw is not None:
+            zf.writestr("calibration_raw.pkl", pickle.dumps(calibration_raw, protocol=pickle.HIGHEST_PROTOCOL))
+        zf.writestr("meta.json", json.dumps(meta))
+        if dem_bytes is not None:
+            zf.writestr("dem.tif", dem_bytes)
+        if inversion_npz is not None:
+            zf.writestr("inversion.npz", inversion_npz)
+    return buf.getvalue()
+
+
+def _read_frame(zf: zipfile.ZipFile, names: set, stem: str) -> pd.DataFrame | None:
+    """A frame from a bundle, whichever way it was written: pickled by this
+    version, or CSV by the versions before it."""
+    if f"{stem}.pkl" in names:
+        return pickle.loads(zf.read(f"{stem}.pkl"))
+    if f"{stem}.csv" in names:
+        frame = pd.read_csv(io.BytesIO(zf.read(f"{stem}.csv")))
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+        return frame
+    return None
 
 
 class ProjectStore:

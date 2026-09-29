@@ -695,6 +695,47 @@ function DepthEstimationLayer({ points, color }) {
 // continued height) scale, distinct from LineamentLayer's strike-hue
 // coloring since a contact has no single strike, only a persistence
 // confidence.
+// Geology unit polygons from the KIGAM WFS (processing/geology_stats
+// .py), drawn as outlines with the unit symbol on hover - filled they
+// would hide the anomaly map the operator is comparing them against.
+function GeologyUnitLayer({ geojson }) {
+  const map = useMap();
+  const layerRef = useRef(null);
+
+  useEffect(() => {
+    if (layerRef.current) {
+      layerRef.current.remove();
+      layerRef.current = null;
+    }
+    if (!geojson || !geojson.features?.length) return undefined;
+    const layer = L.geoJSON(geojson, {
+      style: (f) => ({
+        color: `hsl(${(hashCode(f.properties?.symbol || "") % 360 + 360) % 360}, 55%, 40%)`,
+        weight: 1.5,
+        opacity: 0.9,
+        fillOpacity: 0.0,
+      }),
+      onEachFeature: (f, l) => {
+        const p = f.properties || {};
+        l.bindTooltip(`<b>${p.symbol || "?"}</b> ${p.name || ""}${p.age ? `<br/>${p.age}` : ""}`, { sticky: true });
+      },
+    }).addTo(map);
+    layerRef.current = layer;
+    return () => {
+      layer.remove();
+      if (layerRef.current === layer) layerRef.current = null;
+    };
+  }, [map, geojson]);
+
+  return null;
+}
+
+function hashCode(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h;
+}
+
 function ContactLayer({ contacts }) {
   const map = useMap();
   const groupRef = useRef(null);
@@ -929,6 +970,7 @@ export default function MapView({
   tiltDepthPoints,
   analyticSignalDepthPoints,
   contacts,
+  geologyUnits,
   prospectivityTargets,
   prospectivityOverlay,
   onBoundsChange,
@@ -1081,6 +1123,7 @@ export default function MapView({
       {tiltDepthPoints && <DepthEstimationLayer points={tiltDepthPoints} color="#8a4f18" />}
       {analyticSignalDepthPoints && <DepthEstimationLayer points={analyticSignalDepthPoints} color="#7c3aed" />}
       {contacts && <ContactLayer contacts={contacts} />}
+      <GeologyUnitLayer geojson={geologyUnits} />
       {prospectivityOverlay &&
         (prospectivityOverlay.topleft && prospectivityOverlay.topright && prospectivityOverlay.bottomleft ? (
           <RotatedImageOverlay

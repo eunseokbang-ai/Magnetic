@@ -33,6 +33,7 @@ def _criterion(name: str, unit: str, value, threshold, detail: str) -> dict:
 def evaluate_qc_certificate(
     process_summary: dict,
     repeatability_summary: dict | None,
+    repeat_pass_summary: dict | None = None,
     noise_threshold_multiplier: float = 2.0,
     max_repeatability_1sigma_nt: float = 5.0,
     max_sampling_gap_pct: float = 5.0,
@@ -73,9 +74,24 @@ def evaluate_qc_certificate(
                 f"같은 구간을 반복 비행한 {repeatability_summary.get('n_groups', 0)}개 그룹의 평균 1-sigma 재현오차",
             )
         )
+    elif repeat_pass_summary and repeat_pass_summary.get("n_pairs"):
+        # No test flight, but the survey itself flew some ground twice:
+        # what is left after one level per flight is the same
+        # repeatability figure, measured on the production data.
+        criteria.append(
+            _criterion(
+                "반복측선 재현성 (1-sigma)",
+                "nT",
+                repeat_pass_summary.get("median_residual_rms_nt"),
+                max_repeatability_1sigma_nt,
+                f"탐사 중 재비행된 {repeat_pass_summary.get('n_pairs')}개 구간"
+                f"(총 {repeat_pass_summary.get('total_overlap_m', 0) / 1000:.1f} km)에서 비행별 레벨 보정 후 남는 차이의 중앙값",
+            )
+        )
     else:
         criteria.append(
-            _criterion("반복측선 재현성 (1-sigma)", "nT", None, None, "반복측선 분석을 아직 실행하지 않았거나 반복 구간이 없습니다.")
+            _criterion("반복측선 재현성 (1-sigma)", "nT", None, None,
+                       "반복측선 분석을 아직 실행하지 않았거나 반복 구간이 없습니다. 재비행 구간 비교를 실행하면 자동 반영됩니다.")
         )
 
     hec = process_summary.get("heading_effect_calibration") or {}

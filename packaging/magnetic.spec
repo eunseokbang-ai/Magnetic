@@ -25,6 +25,34 @@ REPO = Path(SPECPATH).resolve().parent
 BACKEND = REPO / "backend"
 
 datas = [(str(REPO / "frontend" / "dist"), "frontend_dist")]
+
+# What this build was made from, for the version line the screen shows.
+# The installed program has no git checkout to ask, so the answer is
+# written here at build time and read by main.py::_detect_running_version.
+import json
+import re
+import subprocess
+
+
+def _git(*args):
+    try:
+        return subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
+                              timeout=10, check=True).stdout.strip()
+    except Exception:
+        return None
+
+
+_iss = (Path(SPECPATH) / "installer.iss").read_text(encoding="utf-8")
+_version = re.search(r'#define AppVersion "([^"]+)"', _iss)
+_build_info = Path(SPECPATH) / "build" / "build_info.json"
+_build_info.parent.mkdir(parents=True, exist_ok=True)
+_build_info.write_text(json.dumps({
+    "version": _version.group(1) if _version else None,
+    "commit": _git("rev-parse", "--short", "HEAD"),
+    "commit_date": _git("log", "-1", "--format=%cd", "--date=format:%Y-%m-%d %H:%M"),
+    "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
+}), encoding="utf-8")
+datas.append((str(_build_info), "."))
 binaries = []
 hiddenimports = []
 
@@ -62,7 +90,10 @@ a = Analysis(
     # unused at runtime: the test suite's own dependencies, and the GUI
     # toolkits matplotlib would otherwise drag in (it renders to PNG here,
     # never to a window).
-    excludes=["pytest", "tkinter", "PyQt5", "PyQt6", "PySide2", "PySide6",
+    # tkinter stays in: the "타일 폴더 선택" dialog (processing/local_tiles
+    # .py) is the one place the program opens a native file chooser, and
+    # without it the installed copy could only take a typed path.
+    excludes=["pytest", "PyQt5", "PyQt6", "PySide2", "PySide6",
               "IPython", "notebook", "sphinx"],
     noarchive=False,
 )

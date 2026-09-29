@@ -956,6 +956,17 @@ class RepeatPassApplyRequest(BaseModel):
     across_tolerance_m: Optional[float] = Field(None, gt=0)
 
 
+class GeologyStatsRequest(BaseModel):
+    """Join the readings to the national geology map and summarise the
+    field per rock unit - see processing/geology_stats.py."""
+    scale: Literal["50k", "250k", "1m"] = "50k"
+    value: ValueField = "anomaly"
+    # Cell size of the grid the analytic signal is sampled from. None
+    # skips the signal column.
+    cell_size_m: Optional[float] = Field(10.0, gt=0)
+    use_cache: bool = True
+
+
 class MultiscaleEdgeRequest(BaseModel):
     # Multi-scale edge detection ("worming") - see
     # processing/multiscale_edges.py. Traces THDR ridges at a series of

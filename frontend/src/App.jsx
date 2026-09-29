@@ -36,6 +36,7 @@ import StructureDistortionPanel from "./components/StructureDistortionPanel";
 import AnomalyCandidatePanel from "./components/AnomalyCandidatePanel";
 import ContactPanel from "./components/ContactPanel";
 import ProspectivityPanel from "./components/ProspectivityPanel";
+import GeologyStatsPanel from "./components/GeologyStatsPanel";
 
 const toggleButtonStyle = {
   width: 36,
@@ -515,6 +516,11 @@ export default function App() {
   const [prospectivityParams, setProspectivityParams] = useState(DEFAULT_PROSPECTIVITY_PARAMS);
   const [prospectivityRunning, setProspectivityRunning] = useState(false);
   const [prospectivityResult, setProspectivityResult] = useState(null);
+  const [geologyStatsParams, setGeologyStatsParams] = useState({ scale: "50k", value: "anomaly", cell_size_m: 10.0, use_cache: true });
+  const [geologyStatsResult, setGeologyStatsResult] = useState(null);
+  const [geologyStatsRunning, setGeologyStatsRunning] = useState(false);
+  const [geologyStatsError, setGeologyStatsError] = useState(null);
+  const [showGeologyUnits, setShowGeologyUnits] = useState(true);
   const [prospectivityError, setProspectivityError] = useState(null);
   const [showProspectivityTargets, setShowProspectivityTargets] = useState(true);
   const [showProspectivityOverlay, setShowProspectivityOverlay] = useState(false);
@@ -1761,6 +1767,18 @@ export default function App() {
     }
   };
 
+  const handleRunGeologyStats = async () => {
+    try {
+      setGeologyStatsError(null);
+      setGeologyStatsRunning(true);
+      setGeologyStatsResult(await api.runGeologyStats(projectId, geologyStatsParams));
+    } catch (e) {
+      setGeologyStatsError(e.message || String(e));
+    } finally {
+      setGeologyStatsRunning(false);
+    }
+  };
+
   const handleRunProspectivity = async () => {
     try {
       setProspectivityError(null);
@@ -2631,6 +2649,7 @@ export default function App() {
           tiltDepthPoints={showTiltDepth ? tiltDepthResult?.points : null}
           analyticSignalDepthPoints={showAsDepth ? asDepthResult?.points : null}
           contacts={showContacts ? contactResult?.contacts : null}
+          geologyUnits={showGeologyUnits ? geologyStatsResult?.geojson : null}
           prospectivityTargets={showProspectivityTargets ? prospectivityResult?.targets : null}
           prospectivityOverlay={showProspectivityOverlay ? prospectivityOverlay : null}
           onBoundsChange={handleMapBoundsChange}
@@ -3012,6 +3031,22 @@ export default function App() {
           setShowTargetsOnMap={setShowProspectivityTargets}
           showOverlay={showProspectivityOverlay}
           setShowOverlay={setShowProspectivityOverlay}
+        />
+
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>14-7. 지질 단위별 자력이상 통계 (KIGAM 지질도 교차 집계)</h2>
+        <GeologyStatsPanel
+          ready={!!processSummary}
+          params={geologyStatsParams}
+          setParams={setGeologyStatsParams}
+          onRun={handleRunGeologyStats}
+          running={geologyStatsRunning}
+          result={geologyStatsResult}
+          error={geologyStatsError}
+          showOnMap={showGeologyUnits}
+          setShowOnMap={setShowGeologyUnits}
+          onExportCsv={() =>
+            api.exportGeologyStatsCsv(projectId, `${saveFilename || "project"}_geology_units.csv`).catch(handleError)
+          }
         />
 
         <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>

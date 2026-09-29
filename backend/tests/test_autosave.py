@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.autosave import AutosaveManager
 from app.main import app
-from app.store import ProjectStore
+from app.store import Project, ProjectStore
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"
@@ -143,3 +143,36 @@ def test_the_api_lists_restores_and_deletes(saved, tmp_path, monkeypatch):
 
     assert client.delete(f"/api/projects/autosaves/{pid}").json()["autosaves"] == []
     assert client.post(f"/api/projects/autosaves/{pid}/restore").status_code == 404
+
+
+def test_a_bundle_written_as_csv_by_an_earlier_version_still_loads(saved):
+    """The frames moved from CSV to pickle for speed (13.9 s -> well under
+    a second on the HaeNam block); a project saved before that must not
+    become unreadable."""
+    import io
+    import json
+    import zipfile
+
+    _client, _pid, project, _manager = saved
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("drone_raw.csv", project.drone_raw.to_csv(index=False))
+        zf.writestr("base_raw.csv", project.base_raw.to_csv(index=False))
+        zf.writestr("meta.json", json.dumps({"last_params": None, "has_base": True}))
+
+    other = Project(id="legacy")
+    other.load_project_bundle(buf.getvalue())
+
+    assert len(other.drone_raw) == len(project.drone_raw)
+    assert str(other.drone_raw["timestamp"].dtype).startswith("datetime64")
+
+
+def test_the_new_bundle_is_written_fast_enough_to_autosave(saved):
+    """The reason for the format change, kept as a test: the frame goes
+    in as a pickle, not CSV."""
+    import zipfile
+    import io
+
+    _client, _pid, project, _manager = saved
+    names = zipfile.ZipFile(io.BytesIO(project.save_project_bundle())).namelist()
+    assert "drone_raw.pkl" in names and "drone_raw.csv" not in names

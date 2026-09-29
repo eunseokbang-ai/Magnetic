@@ -28,6 +28,9 @@ def generate_report_markdown(
     repeatability_summary: dict | None = None,
     multiscale_edges_summary: dict | None = None,
     qc_certificate: dict | None = None,
+    candidate_notes: list | None = None,
+    repeat_pass_summary: dict | None = None,
+    geology_stats: dict | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("# 드론 자력탐사 자료 처리 보고서")
@@ -194,6 +197,82 @@ def generate_report_markdown(
         if stats:
             lines.append(f"- **{label}**: min {_fmt(stats.get('min'))}, max {_fmt(stats.get('max'))}, mean {_fmt(stats.get('mean'))}, std {_fmt(stats.get('std'))}")
     lines.append("")
+
+    # ------------------------------------------------ what the operator did
+    # to the data by hand, and what the survey's own repeats say. These
+    # are the parts of a delivery a reviewer asks about first, because
+    # they are the parts that were decided rather than computed.
+    removals = process_summary.get("source_removals") or []
+    rp = process_summary.get("repeat_pass_leveling") or {}
+    if removals or candidate_notes or repeat_pass_summary or rp.get("applied"):
+        lines.append("## 5-1. 편집 및 레벨링 이력")
+        lines.append("")
+        if repeat_pass_summary:
+            n_pairs = repeat_pass_summary.get("n_pairs", 0)
+            if n_pairs:
+                lines.append(
+                    f"- **재비행 구간 비교**: {n_pairs}쌍, 총 {repeat_pass_summary.get('total_overlap_m', 0) / 1000:.2f} km. "
+                    f"레벨 차이 중앙값 {_fmt(repeat_pass_summary.get('median_offset_nt'))} nT"
+                    + (f" → 보정 후 {_fmt(repeat_pass_summary.get('median_offset_after_nt'))} nT" if repeat_pass_summary.get('median_offset_after_nt') is not None else "")
+                    + f", 상수 보정 후 잔차(반복도) {_fmt(repeat_pass_summary.get('median_residual_rms_nt'))} nT rms"
+                )
+            else:
+                lines.append("- 재비행 구간 비교: 같은 구간을 두 번 비행한 자료 없음")
+        if rp.get("applied"):
+            offsets = rp.get("offsets") or {}
+            lines.append(
+                "- **비행 간 레벨 보정 적용**: "
+                + ", ".join(f"비행 {k} {float(v):+.2f} nT" for k, v in offsets.items())
+            )
+        if removals:
+            lines.append(f"- **지상 구조물 모델 차감**: {len(removals)}건")
+            lines.append("")
+            lines.append("| # | 쌍극자 수 | 깊이(m) | 맞춤 오차(nT) | 자료 변동(nT) | 최대 차감(nT) | 경고 |")
+            lines.append("|---|---|---|---|---|---|---|")
+            for i, r in enumerate(removals, start=1):
+                warn = "; ".join(r.get("warnings") or []) or "-"
+                lines.append(
+                    f"| {i} | {r.get('n_sources')} | {_fmt(r.get('depth_m'), 1)} | {_fmt(r.get('fit_rms_nt'), 1)} | "
+                    f"{_fmt(r.get('data_rms_nt'), 0)} | {_fmt(r.get('peak_model_nt'), 0)} | {warn} |"
+                )
+            lines.append("")
+        n_smoothed = process_summary.get("n_manual_smoothed")
+        if n_smoothed:
+            lines.append(f"- 측선방향 보간으로 대체한 측점: {n_smoothed}개")
+        if candidate_notes:
+            labels = {"structure": "지상구조물", "geology": "지질", "hold": "보류"}
+            lines.append(f"- **이상 후보 판정 이력**: {len(candidate_notes)}건")
+            lines.append("")
+            lines.append("| 위도 | 경도 | 판정 | 첨두(nT) | 깊이(m) | 자화 | 제거 방식 | 메모 |")
+            lines.append("|---|---|---|---|---|---|---|---|")
+            for n in sorted(candidate_notes, key=lambda n: n.get("decided_at", 0.0)):
+                mag = {"induced": "유도", "remanent": "잔류", "unclear": "보류"}.get(n.get("magnetization"), "-")
+                method = {"model": "모델 차감", "interpolate": "보간"}.get(n.get("removed_method"), "-")
+                lines.append(
+                    f"| {_fmt(n.get('lat'), 5)} | {_fmt(n.get('lon'), 5)} | {labels.get(n.get('verdict'), n.get('verdict'))} | "
+                    f"{_fmt(n.get('peak_anomaly_nt'), 0)} | {_fmt(n.get('depth_m'), 0)} | {mag} | {method} | {n.get('note') or ''} |"
+                )
+            lines.append("")
+        lines.append("")
+
+    if geology_stats and geology_stats.get("units"):
+        lines.append("## 5-2. 지질 단위별 자력이상 통계")
+        lines.append("")
+        rep = geology_stats.get("report") or {}
+        lines.append(
+            f"- 출처: KIGAM 지오빅데이터 오픈플랫폼 지질도 1:{geology_stats.get('scale', '50k').replace('k', '000').replace('m', ',000,000')}"
+            f" (도폭: {', '.join(rep.get('sheets') or []) or '-'}), 측점 {rep.get('n_points')}개 중 지질도 밖 {rep.get('n_outside')}개"
+        )
+        lines.append("")
+        lines.append("| 기호 | 암상 | 시대 | 측점 | 측선 | 평균(nT) | 표준편차(nT) | 중앙값(nT) | P10~P90(nT) | 해석신호 |")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
+        for u in geology_stats["units"]:
+            lines.append(
+                f"| {u['symbol']} | {u['name']} | {u.get('age') or '-'} | {u['n_points']} | {u['n_lines']} | "
+                f"{_fmt(u['mean_nt'], 1)} | {_fmt(u['std_nt'], 1)} | {_fmt(u['median_nt'], 1)} | "
+                f"{_fmt(u['p10_nt'], 0)}~{_fmt(u['p90_nt'], 0)} | {_fmt(u.get('mean_signal'), 3) if u.get('mean_signal') is not None else '-'} |"
+            )
+        lines.append("")
 
     line_rows = process_summary.get("lines") or []
     if line_rows:

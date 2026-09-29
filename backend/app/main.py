@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import logging
+import json
 import pathlib
+from contextlib import asynccontextmanager
 import subprocess
 from datetime import date, timedelta
 
@@ -37,6 +39,7 @@ from .models import (
     DisplayBoundaryRequest,
     AnomalyCandidateRequest,
     CandidateNoteRequest,
+    GeologyStatsRequest,
     RepeatPassApplyRequest,
     RepeatPassRequest,
     SourceRemovalRequest,
@@ -68,9 +71,15 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DroneMag Studio API")
 
+# Only pages served from this machine may call the API. This is a local
+# program, but the browser it runs in also has other tabs open, and with
+# allow_origins=["*"] any web page the user visited could have read their
+# survey data from 127.0.0.1 or deleted their autosaves - CORS is what
+# stops a page on one origin reading responses from another. The vite dev
+# server (5173) and the packaged app (any local port) are the only callers.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -87,19 +96,21 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 autosave = AutosaveManager(store)
 
 
-@app.on_event("startup")
-def _start_autosave() -> None:
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
     autosave.start()
+    try:
+        yield
+    finally:
+        # One last write on the way out, so a deliberate close loses
+        # nothing even if the interval has not elapsed.
+        for project in store.all_projects():
+            if getattr(project, "changed_at", 0.0):
+                autosave.save_project(project)
+        autosave.stop()
 
 
-@app.on_event("shutdown")
-def _stop_autosave() -> None:
-    # One last write on the way out, so a deliberate close loses nothing
-    # even if the interval has not elapsed.
-    for project in store.all_projects():
-        if getattr(project, "changed_at", 0.0):
-            autosave.save_project(project)
-    autosave.stop()
+app.router.lifespan_context = _lifespan
 
 
 def _detect_running_version() -> dict:
@@ -127,6 +138,20 @@ def _detect_running_version() -> dict:
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
         return {"commit": commit, "commit_date": commit_date, "branch": branch}
+    except Exception:
+        pass
+    # The packaged build has no git checkout to ask; the build wrote what
+    # it was built from next to the program instead (see
+    # packaging/magnetic.spec), so the installed copy can still say which
+    # version it is.
+    try:
+        info = json.loads((paths.resource_dir() / "build_info.json").read_text(encoding="utf-8"))
+        return {
+            "commit": info.get("commit"),
+            "commit_date": info.get("commit_date"),
+            "branch": info.get("branch"),
+            "version": info.get("version"),
+        }
     except Exception:
         return {"commit": None, "commit_date": None, "branch": None}
 
@@ -563,6 +588,18 @@ def analyze_repeat_passes(project_id: str, req: RepeatPassRequest):
 @app.post("/api/projects/{project_id}/repeat-passes/apply")
 def apply_repeat_pass_leveling(project_id: str, req: RepeatPassApplyRequest):
     return store.get(project_id).apply_repeat_pass_leveling(req)
+
+
+@app.post("/api/projects/{project_id}/geology-stats")
+def compute_geology_stats(project_id: str, req: GeologyStatsRequest):
+    return store.get(project_id).compute_geology_stats(req)
+
+
+@app.get("/api/projects/{project_id}/geology-stats/csv")
+def export_geology_stats_csv(project_id: str):
+    data = store.get(project_id).export_geology_stats_csv()
+    return Response(content=data, media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=geology_unit_stats.csv"})
 
 
 @app.get("/api/projects/{project_id}/candidate-notes")

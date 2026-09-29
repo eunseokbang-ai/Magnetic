@@ -175,6 +175,17 @@ export function runContactDetection(projectId, req) {
   return request(`/projects/${projectId}/contacts`, { method: "POST", body: JSON.stringify(req) });
 }
 
+// The readings joined to the national geology map, per rock unit
+// (backend processing/geology_stats.py).
+export function runGeologyStats(projectId, req) {
+  return request(`/projects/${projectId}/geology-stats`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export async function exportGeologyStatsCsv(projectId, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/geology-stats/csv`);
+  downloadBlob(blob, filename);
+}
+
 export function runProspectivity(projectId, req) {
   return request(`/projects/${projectId}/prospectivity`, { method: "POST", body: JSON.stringify(req) });
 }
