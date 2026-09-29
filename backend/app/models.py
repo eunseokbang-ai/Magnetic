@@ -956,6 +956,21 @@ class RepeatPassApplyRequest(BaseModel):
     across_tolerance_m: Optional[float] = Field(None, gt=0)
 
 
+class HeightNormalizationApplyRequest(BaseModel):
+    """Restate every reading at one altitude with equivalent layers fitted
+    at the readings' true 3D positions, or undo that - see
+    processing/height_normalization.py."""
+    mode: Literal["apply", "reset"] = "apply"
+    # Reference altitude, ellipsoidal metres. None = the median altitude of
+    # the readings in use.
+    z_ref_m: Optional[float] = None
+    # Cell the readings are block-averaged to before the fit.
+    cell_size_m: float = Field(10.0, gt=0)
+    # Conjugate-gradient iterations per layer. 30 reaches the noise floor
+    # on the synthetic; more buys under 1%.
+    max_iter: int = Field(30, ge=1, le=500)
+
+
 class GeologyStatsRequest(BaseModel):
     """Join the readings to the national geology map and summarise the
     field per rock unit - see processing/geology_stats.py."""

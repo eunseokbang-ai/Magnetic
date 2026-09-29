@@ -40,6 +40,7 @@ from .models import (
     AnomalyCandidateRequest,
     CandidateNoteRequest,
     GeologyStatsRequest,
+    HeightNormalizationApplyRequest,
     RepeatPassApplyRequest,
     RepeatPassRequest,
     SourceRemovalRequest,
@@ -588,6 +589,16 @@ def analyze_repeat_passes(project_id: str, req: RepeatPassRequest):
 @app.post("/api/projects/{project_id}/repeat-passes/apply")
 def apply_repeat_pass_leveling(project_id: str, req: RepeatPassApplyRequest):
     return store.get(project_id).apply_repeat_pass_leveling(req)
+
+
+@app.get("/api/projects/{project_id}/height-normalization")
+def height_normalization_status(project_id: str):
+    return store.get(project_id).height_normalization_status()
+
+
+@app.post("/api/projects/{project_id}/height-normalization/apply")
+def apply_height_normalization(project_id: str, req: HeightNormalizationApplyRequest):
+    return store.get(project_id).apply_height_normalization(req)
 
 
 @app.post("/api/projects/{project_id}/geology-stats")

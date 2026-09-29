@@ -149,6 +149,23 @@ def generate_report_markdown(
     elif cl:
         lines.append(f"- 타이라인 보정: 미적용 ({cl.get('reason') or '해당 없음'})")
 
+    hn = process_summary.get("height_normalization")
+    if hn and hn.get("applied"):
+        alt = hn.get("altitude") or {}
+        cs = hn.get("correction_stats") or {}
+        ratio = hn.get("misfit_ratio")
+        lines.append(
+            f"- **비행 고도 정규화**: 측점 고도 {_fmt(alt.get('min_m'), 1)}~{_fmt(alt.get('max_m'), 1)} m"
+            f"(표준편차 {_fmt(alt.get('std_m'), 1)} m)의 값을 기준 고도 {_fmt(hn.get('z_ref_m'), 1)} m로 통일. "
+            f"등가층 쌍극자 {hn.get('n_sources')}개, 맞춤 오차 {_fmt(hn.get('fit_rms_nt'))} nT rms"
+            + (f" (자료 변동의 {_fmt(100 * ratio, 0)}%)" if ratio is not None else "")
+            + f", 보정량 중앙값 {_fmt(cs.get('median_abs_nt'))} nT, 최대 {_fmt(cs.get('max_abs_nt'))} nT"
+        )
+        for warning in hn.get("warnings") or []:
+            lines.append(f"  - ⚠ {warning}")
+    else:
+        lines.append("- 비행 고도 정규화: 미적용")
+
     nq = process_summary.get("noise_qc")
     if nq and nq.get("available"):
         lines.append(

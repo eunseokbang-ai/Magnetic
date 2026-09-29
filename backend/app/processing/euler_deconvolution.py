@@ -28,6 +28,9 @@ term dTdz itself is still computed assuming a single flat plane, since
 correcting that too would need the full sensitivity-matrix machinery the
 3D inversion already provides - see processing/inversion.py; this is the
 standard first-order draped-survey correction, not a complete one).
+The complete answer is upstream: the flight-height normalisation
+(processing/height_normalization.py) restates every reading at one
+altitude before gridding, after which the flat-plane assumption holds.
 """
 from __future__ import annotations
 
