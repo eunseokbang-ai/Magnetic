@@ -2366,7 +2366,9 @@ export default function App() {
           style={{ fontSize: 10, color: "#ab9a78", margin: "0 0 12px 0" }}
           title="이 화면이 백엔드 서버로부터 실제로 받은 버전 정보입니다 - '분명히 고쳐달라고 한 문제가 그대로'라면 run.bat을 다시 실행해 이 커밋 해시가 바뀌는지부터 확인하세요"
         >
-          {backendVersion?.commit ? `버전: ${backendVersion.commit} (${backendVersion.commit_date})` : ""}
+          {backendVersion?.commit
+            ? `버전: ${backendVersion.version ? `v${backendVersion.version} · ` : ""}${backendVersion.commit} (${backendVersion.commit_date})`
+            : ""}
         </div>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
           <button

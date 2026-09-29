@@ -15,7 +15,7 @@
 #define AppName "DroneMag Studio"
 #define AppNameKo "DroneMag Studio - 드론 자력탐사 자료처리"
 #define AppShortName "DroneMagStudio"
-#define AppVersion "1.1"
+#define AppVersion "1.2"
 #define AppPublisher "DroneMag Studio"
 
 [Setup]
