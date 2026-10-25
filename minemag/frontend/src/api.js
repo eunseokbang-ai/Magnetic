@@ -30,11 +30,32 @@ export function uploadFiles(projectId, files) {
 }
 
 export const getSummary = (projectId) => request(`/projects/${projectId}/summary`);
-export const getPoints = (projectId, sensor, maxPoints = 8000) =>
-  request(`/projects/${projectId}/points?max_points=${maxPoints}${sensor ? `&sensor=${sensor}` : ""}`);
+export const getPoints = (projectId, sensor, maxPoints = 8000, processed = false) =>
+  request(`/projects/${projectId}/points?max_points=${maxPoints}${sensor ? `&sensor=${sensor}` : ""}${processed ? "&processed=true" : ""}`);
 
 export const runQc = (projectId, req) => post(`/projects/${projectId}/qc`, req);
+export const runPreprocess = (projectId, req) => post(`/projects/${projectId}/preprocess`, req);
+export const resetPreprocess = (projectId) => request(`/projects/${projectId}/preprocess`, { method: "DELETE" });
 export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
 export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
 export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targets`, req);
 export const targetsCsvUrl = (projectId) => `${BASE}/projects/${projectId}/targets.csv`;
+export const targetsGeojsonUrl = (projectId) => `${BASE}/projects/${projectId}/targets.geojson`;
+
+/** Grid exports are POSTs (the grid parameters travel in the body); the
+ * browser is handed the file as a download. */
+export async function downloadGrid(projectId, req, fmt) {
+  const res = await fetch(`${BASE}/projects/${projectId}/grid/export?fmt=${fmt}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req || {}),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `minemag_${req.kind || "anomaly"}.${fmt}`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

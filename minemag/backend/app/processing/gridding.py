@@ -41,8 +41,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from magcore.gridding import GridResult, grid_points
+from magcore.trend import remove_regional_trend
 
-DEFAULT_CELL_SIZE_M = 0.1
+DEFAULT_CELL_SIZE_M = 0.125        # the paper's grid
+DEFAULT_METHOD = "minimum_curvature"
+DEFAULT_DETREND_ORDER = 1
 DEFAULT_MAX_DISTANCE_M = 0.6
 # Cell of the run-to-run comparison: about half the track spacing of a
 # walking survey, so each cell holds readings of both runs.
@@ -78,13 +81,31 @@ def grid_survey(
     file_index: int | None = None,
     max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
     level: str = "median",
+    method: str = DEFAULT_METHOD,
+    detrend_order: int = DEFAULT_DETREND_ORDER,
 ) -> tuple[GridResult, dict]:
+    """`method`: "minimum_curvature" (the paper's continuous-curvature
+    gridding, magcore's Briggs relaxation, no overshoot between lines)
+    or "linear". `detrend_order`: 0 keeps the grid as gridded, 1 removes
+    a plane, 2 a quadratic - the paper's regional background removal,
+    done on the grid so the residual anomaly is what the derivatives see.
+    Only the survey lines (line_id >= 0) are gridded when the frame has
+    been pre-processed; turns and waits stay out."""
     sub = _select(df, sensors, file_index)
+    if "line_id" in sub.columns:
+        on_line = sub[sub["line_id"] >= 0]
+        if len(on_line) >= 10:
+            sub = on_line
     values = _levelled(sub, level)
     grid = grid_points(
         sub["x"].to_numpy(dtype=float), sub["y"].to_numpy(dtype=float), values,
-        cell_size_m, method="linear", max_distance_m=max_distance_m,
+        cell_size_m, method=method, max_distance_m=max_distance_m,
     )
+    trend_removed = None
+    if detrend_order and detrend_order > 0 and np.isfinite(grid.values).sum() > 10:
+        residual, trend = remove_regional_trend(grid.values, grid.easting, grid.northing, order=int(detrend_order))
+        trend_removed = round(float(np.nanstd(trend)), 2)
+        grid.values = residual
     finite = np.isfinite(grid.values)
     stats = {
         "n_points": int(len(sub)),
@@ -99,6 +120,9 @@ def grid_survey(
         "sensors": sorted(int(s) for s in sub["sensor"].unique()),
         "file_index": file_index,
         "level": level,
+        "method": method,
+        "detrend_order": int(detrend_order or 0),
+        "trend_std_nt": trend_removed,
     }
     return grid, stats
 

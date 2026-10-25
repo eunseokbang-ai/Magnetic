@@ -64,9 +64,9 @@ def _survey(n_runs=2):
     return df
 
 
-def test_the_three_dipoles_are_picked_with_position_depth_and_moment():
+def test_the_three_dipoles_are_picked_with_position_depth_and_moment_by_amplitude():
     df = _survey(1)
-    picks, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0)
+    picks, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0, method="amplitude")
     assert info["threshold_nt"] == 20.0                       # 5 x 3 nT is below the 20 nT floor
     assert len(picks) == 3
     for sx, sy, d, m in TRUTH:
@@ -77,13 +77,34 @@ def test_the_three_dipoles_are_picked_with_position_depth_and_moment():
         assert near["fit_quality"] > 0.6
 
 
+def test_the_three_dipoles_are_picked_by_thd_peaks_with_their_k_and_type():
+    """The paper's locator: THD prominence peaks (K x MAD), the dipole
+    fit then giving depth and moment at each."""
+    df = _survey(1)
+    picks, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0)
+    assert info["method"] == "thd" and info["peak_k"] == 20.0 and info["mad"] > 0
+    assert len(picks) == 3
+    for sx, sy, d, m in TRUTH:
+        near = min(picks, key=lambda p: np.hypot(p["x"] - sx, p["y"] - sy))
+        assert np.hypot(near["x"] - sx, near["y"] - sy) < 0.2      # THD position, one cell off at most here
+        assert abs(near["depth_below_probe_m"] - (PROBE_H + d)) < 0.15
+        assert 0.7 < near["moment_am2"] / m < 1.4
+        assert near["fit_quality"] > 0.6
+        assert near["k_needed"] > 20.0
+        assert near["type_class"] in ("대전차지뢰급", "대인지뢰급", "소형 금속/미상")
+    assert max(p["p2p_nt"] for p in picks) > 500            # the 4 A m^2 dipole reads anti-tank class at this height
+
+
 def test_repeated_runs_are_matched_and_graded():
     df = _survey(2)
     r = pick_targets(df, INC, DEC, 32652, noise_by_file={0: 3.0, 1: 3.0}, sensor_height_m=PROBE_H)
     # a wrong height for run 1 shifts the burial depth by half of it (mean over the two runs)
     shifted = pick_targets(df, INC, DEC, 32652, noise_by_file={0: 3.0, 1: 3.0}, sensor_height_m=PROBE_H,
                            sensor_heights_by_file={1: PROBE_H + 0.2})
-    for a, b in zip(r["targets"], shifted["targets"]):
+    for a in r["targets"]:
+        if a["runs_seen"] != [0, 1]:
+            continue
+        b = min(shifted["targets"], key=lambda t: np.hypot(t["x"] - a["x"], t["y"] - a["y"]))
         assert abs((a["burial_depth_m"] - b["burial_depth_m"]) - 0.1) < 0.02
     assert r["n_runs"] == 2 and r["n_targets"] == 3
     for t in r["targets"]:
@@ -96,6 +117,24 @@ def test_repeated_runs_are_matched_and_graded():
     csv = targets_to_csv(r, 32652)
     assert csv.splitlines()[0].startswith("id,grade,lat,lon,x_epsg32652")
     assert len(csv.splitlines()) == 4
+
+
+def test_the_denominator_is_the_runs_that_covered_the_spot():
+    """Run 1 walks only the southern half: a target in the north is seen
+    1 of 1 covering runs and can be A; one in the south seen by run 0
+    only is 1 of 2 and cannot."""
+    df = _survey(2)
+    half = df[(df["file_index"] == 0) | (df["y"] <= 5.0)].reset_index(drop=True)
+    half.attrs["files"] = df.attrs["files"]
+    r = pick_targets(half, INC, DEC, 32652, noise_by_file={0: 3.0, 1: 3.0}, sensor_height_m=PROBE_H)
+    north = [t for t in r["targets"] if t["y"] > 5.5]
+    assert north and all(t["n_runs_covering"] == 1 and t["runs_seen"] == [0] and t["grade"] == "A" for t in north)
+    south = [t for t in r["targets"] if t["y"] < 5.0 and not t["at_edge"]]
+    assert south and all(t["n_runs_covering"] == 2 for t in south)
+    assert all(t["runs_seen"] == [0, 1] and t["grade"] == "A" for t in south)
+    # the dipole at y = 6 is cut by run 1's edge at y = 5: its edge peak is flagged
+    edge = [t for t in r["targets"] if t["at_edge"]]
+    assert edge and all(t["runs_seen"] == [1] for t in edge)
 
 
 def test_a_pick_seen_in_one_run_only_cannot_be_grade_a():
@@ -112,12 +151,20 @@ def test_a_pick_seen_in_one_run_only_cannot_be_grade_a():
     assert _grade(2, 2, 3.0, 0.9) == "C"
 
 
-def test_the_noise_sets_the_threshold_so_a_noisy_run_picks_fewer():
+def test_the_noise_sets_the_amplitude_threshold_so_a_noisy_run_picks_fewer():
     df = _survey(1)
-    quiet, _ = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0)
-    noisy, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=40.0)
+    quiet, _ = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0, method="amplitude")
+    noisy, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=40.0, method="amplitude")
     assert info["threshold_nt"] == 200.0
     assert len(noisy) < len(quiet)
+
+
+def test_k_sets_the_thd_threshold():
+    df = _survey(1)
+    loose, _ = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0, peak_k=5.0)
+    strict, info = pick_targets_in_run(df, INC, DEC, noise_rms_nt=3.0, peak_k=100.0)
+    assert info["prominence_threshold"] > 0
+    assert len(strict) < 3 <= len(loose)
 
 
 def test_the_api_picks_on_the_real_fixture_and_exports_csv():
@@ -129,9 +176,16 @@ def test_the_api_picks_on_the_real_fixture_and_exports_csv():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["n_runs"] == 1 and "0" in body["runs"]
-    assert body["runs"]["0"]["threshold_nt"] >= 20.0
+    assert body["runs"]["0"]["method"] == "thd" and body["runs"]["0"]["mad"] > 0
     for t in body["targets"]:
-        assert t["grade"] in ("A", "B", "C") and t["burial_depth_m"] == round(t["depth_below_probe_m"] - 0.3, 2)
+        assert t["grade"] in ("A", "B", "C")
+        if t["depth_below_probe_m"] is not None:
+            assert abs(t["burial_depth_m"] - (t["depth_below_probe_m"] - 0.3)) < 0.011
     csv = client.get(f"/api/projects/{pid}/targets.csv")
     assert csv.status_code == 200
     assert csv.text.lstrip("﻿").startswith("id,grade,lat,lon")   # BOM so Excel reads the Korean size class
+    gj = client.get(f"/api/projects/{pid}/targets.geojson").json()
+    assert gj["type"] == "FeatureCollection" and len(gj["features"]) == body["n_targets"]
+    # the amplitude method still works through the API
+    r2 = client.post(f"/api/projects/{pid}/targets", json={"method": "amplitude", "sensor_height_m": 0.3})
+    assert r2.status_code == 200 and r2.json()["runs"]["0"]["method"] == "amplitude"

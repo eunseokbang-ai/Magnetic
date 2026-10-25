@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from magcore.colormaps import register_custom_colormaps
 
 from . import paths
-from .models import GridRequest, QcRequest, RepeatRequest, TargetRequest
+from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -83,10 +83,20 @@ def summary(project_id: str):
 
 
 @app.get("/api/projects/{project_id}/points")
-def points(project_id: str, sensor: int | None = None, max_points: int = 20000):
+def points(project_id: str, sensor: int | None = None, max_points: int = 20000, processed: bool = False):
     if max_points < 100 or max_points > 200000:
         raise HTTPException(status_code=422, detail="max_points는 100~200000 사이여야 합니다.")
-    return store.get(project_id).points(sensor=sensor, max_points=max_points)
+    return store.get(project_id).points(sensor=sensor, max_points=max_points, processed=processed)
+
+
+@app.post("/api/projects/{project_id}/preprocess")
+def run_preprocess(project_id: str, req: PreprocessRequest):
+    return store.get(project_id).run_preprocess(req)
+
+
+@app.delete("/api/projects/{project_id}/preprocess")
+def reset_preprocess(project_id: str):
+    return store.get(project_id).reset_preprocess()
 
 
 @app.post("/api/projects/{project_id}/qc")
@@ -99,6 +109,14 @@ def grid(project_id: str, req: GridRequest):
     return store.get(project_id).grid(req)
 
 
+@app.post("/api/projects/{project_id}/grid/export")
+def grid_export(project_id: str, req: GridRequest, fmt: str = "grd"):
+    data = store.get(project_id).grid_export(req, fmt)
+    media = "application/octet-stream" if fmt == "grd" else "image/tiff"
+    return Response(content=data, media_type=media,
+                    headers={"Content-Disposition": f"attachment; filename=minemag_{req.kind}.{fmt}"})
+
+
 @app.post("/api/projects/{project_id}/repeat")
 def repeat(project_id: str, req: RepeatRequest):
     return store.get(project_id).repeat(req)
@@ -107,6 +125,11 @@ def repeat(project_id: str, req: RepeatRequest):
 @app.post("/api/projects/{project_id}/targets")
 def targets(project_id: str, req: TargetRequest):
     return store.get(project_id).targets(req)
+
+
+@app.get("/api/projects/{project_id}/targets.geojson")
+def targets_geojson(project_id: str):
+    return store.get(project_id).targets_geojson()
 
 
 @app.get("/api/projects/{project_id}/targets.csv")
