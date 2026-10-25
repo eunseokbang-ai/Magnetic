@@ -33,6 +33,8 @@ import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks, welch
 
+from .sensor_pair import sensor_pair_report
+
 DEFAULT_QUIET_THRESHOLD_NT = 60.0
 # Below this, the probe difference does not remove the noise.
 GRADIENT_CANCELS_ABOVE_CORR = 0.9
@@ -206,6 +208,10 @@ def platform_qc(df: pd.DataFrame, quiet_threshold_nt: float = DEFAULT_QUIET_THRE
     infos = {i: f for i, f in enumerate(df.attrs.get("files") or [])}
     for fi, sub in df.groupby("file_index"):
         r = _file_qc(sub, quiet_threshold_nt)
+        try:
+            r["sensor_pair"] = sensor_pair_report(sub)
+        except Exception as exc:                     # noqa: BLE001 - a diagnostic must not break the QC
+            r["sensor_pair"] = {"error": str(exc)}
         r["file_index"] = int(fi)
         r["filename"] = infos.get(int(fi), {}).get("filename")
         files.append(r)

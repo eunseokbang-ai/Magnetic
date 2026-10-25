@@ -31,7 +31,8 @@ class GridRequest(BaseModel):
     sensors: Optional[list[int]] = None
     # None = every file together.
     file_index: Optional[int] = None
-    max_distance_m: float = Field(0.6, gt=0.05, le=20.0)
+    # None = 0.75 x the line spacing, 0.6-5 m (gridding.auto_max_distance).
+    max_distance_m: Optional[float] = Field(None, gt=0.05, le=20.0)
     level: Literal["median", "none"] = "median"
     cmap: str = "RdBu_r"
 

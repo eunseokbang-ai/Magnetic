@@ -230,7 +230,7 @@ export default function App() {
   const [headingOn, setHeadingOn] = useState(true);
 
   const [cell, setCell] = useState(0.125);
-  const [maxDist, setMaxDist] = useState(0.6);
+  const [maxDist, setMaxDist] = useState("");          // "" = auto from the line spacing
   const [gridMethod, setGridMethod] = useState("minimum_curvature");
   const [detrend, setDetrend] = useState(1);
   const [kind, setKind] = useState("anomaly");
@@ -326,7 +326,7 @@ export default function App() {
   const files = summary?.files || [];
   const gridReq = () => ({
     cell_size_m: Number(cell),
-    max_distance_m: Number(maxDist),
+    max_distance_m: maxDist === "" ? null : Number(maxDist),
     method: gridMethod,
     detrend_order: Number(detrend),
     kind,
@@ -610,6 +610,22 @@ export default function App() {
                     )}
                     <div style={{ marginTop: 6 }}><Spectrum spectrum={f.spectrum} gaitBand={qc.gait_band_hz} /></div>
                     {f.verdict.map((line, i) => <div key={i} style={{ ...warn, marginTop: 4 }}>• {line}</div>)}
+                    {f.sensor_pair && !f.sensor_pair.error && (
+                      <div style={{ marginTop: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 12 }}>센서 쌍 진단 (센서 {f.sensor_pair.sensors.join(" · ")})</div>
+                        <div style={row}><span>오프셋 / 차의 산포 (정지 / 비행)</span><b>{fmt(f.sensor_pair.offset_nt, 1)} / {fmt(f.sensor_pair.difference_std_still_nt)} / {fmt(f.sensor_pair.difference_std_flight_nt)} nT</b></div>
+                        {f.sensor_pair.direction && (
+                          <div style={row}><span>방향 반전 효과 (왕복 평균 차)</span><b>{Object.entries(f.sensor_pair.direction.forward_minus_backward_nt).map(([s, v]) => `센서 ${s} ${v >= 0 ? "+" : ""}${fmt(v, 1)}`).join(" · ")} nT</b></div>
+                        )}
+                        {f.sensor_pair.background_std_nt && (
+                          <div style={row}><span>배경 산포 (표적 제외)</span><b>{Object.entries(f.sensor_pair.background_std_nt).map(([s, v]) => `센서 ${s} ${fmt(v)}`).join(" · ")} nT</b></div>
+                        )}
+                        {f.sensor_pair.attitude && (
+                          <div style={row}><span>자세 회귀 뒤 배경 산포</span><b>{Object.entries(f.sensor_pair.attitude.per_sensor).map(([s, p]) => `센서 ${s} ${fmt(p.std_before_nt)}→${fmt(p.std_after_nt)}`).join(" · ")} nT</b></div>
+                        )}
+                        {f.sensor_pair.verdict.map((line, i) => <div key={`sp${i}`} style={{ ...note, marginTop: 3 }}>• {line}</div>)}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -640,7 +656,9 @@ export default function App() {
                 <div style={row}><span>측선 / 제외 비율</span><b>{f.n_lines} / {fmt(100 * f.turn_fraction, 0)}%</b></div>
                 <div style={row}>
                   <span>헤딩 보정</span>
-                  <b>{f.heading_correction.applied ? `적용 ${fmt(f.heading_correction.offset_nt)} nT` : `미적용${f.heading_correction.offset_nt !== null && f.heading_correction.offset_nt !== undefined ? ` (측정 ${fmt(f.heading_correction.offset_nt)} ± ${fmt(f.heading_correction.offset_spread_nt)} nT)` : ""}`}</b>
+                  <b>{f.heading_correction.per_sensor && Object.keys(f.heading_correction.per_sensor).length
+                    ? Object.entries(f.heading_correction.per_sensor).map(([s, e]) => `센서 ${s}: ${e.applied ? `적용 ${fmt(e.offset_nt)} nT` : `미적용${e.offset_nt !== null && e.offset_nt !== undefined ? ` (${fmt(e.offset_nt)} ± ${fmt(e.offset_spread_nt)})` : ""}`}`).join(" · ")
+                    : f.heading_correction.applied ? `적용 ${fmt(f.heading_correction.offset_nt)} nT` : `미적용${f.heading_correction.offset_nt !== null && f.heading_correction.offset_nt !== undefined ? ` (측정 ${fmt(f.heading_correction.offset_nt)} ± ${fmt(f.heading_correction.offset_spread_nt)} nT)` : ""}`}</b>
                 </div>
                 {f.heading_correction.reason && <div style={warn}>• {f.heading_correction.reason}</div>}
               </div>
@@ -653,7 +671,7 @@ export default function App() {
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
               <label>셀(m) <input type="number" step="0.025" min="0.02" value={cell} onChange={(e) => setCell(e.target.value)} style={inputW(60)} /></label>
-              <label>최대 거리(m) <input type="number" step="0.1" min="0.1" value={maxDist} onChange={(e) => setMaxDist(e.target.value)} style={inputW(55)} /></label>
+              <label title="비워 두면 측선 간격의 0.75배(0.6~5 m)로 자동">최대 거리(m) <input type="number" step="0.1" min="0.1" placeholder="자동" value={maxDist} onChange={(e) => setMaxDist(e.target.value)} style={inputW(55)} /></label>
               <select value={gridMethod} onChange={(e) => setGridMethod(e.target.value)}>
                 <option value="minimum_curvature">최소곡률(장력)</option>
                 <option value="linear">선형</option>
@@ -685,6 +703,7 @@ export default function App() {
               <div style={{ marginTop: 6 }}>
                 <div style={row}><span>자료 / 방법</span><b>{grid.stats.processed ? "전처리됨" : "원 자료"} / {grid.stats.method === "minimum_curvature" ? "최소곡률" : "선형"}{grid.stats.detrend_order ? `, ${grid.stats.detrend_order}차 추세 제거(σ ${fmt(grid.stats.trend_std_nt)} nT)` : ""}</b></div>
                 <div style={row}><span>덮임 / 셀 수</span><b>{fmt(grid.stats.coverage_pct)}% / {grid.stats.n_cells.toLocaleString()}</b></div>
+                <div style={row}><span>최대 거리</span><b>{fmt(grid.stats.max_distance_m)} m{grid.stats.max_distance_auto ? ` (자동${grid.stats.line_spacing_m ? `, 측선 간격 ${fmt(grid.stats.line_spacing_m)} m` : ""})` : ""}</b></div>
                 <div style={row}><span>{({ anomaly: "이상", rtp: "RTP", thd: "THD", asa: "ASA", tilt: "틸트각", vd1: "1차 수직미분" })[grid.stats.kind]} 범위 / rms</span><b>{fmt(grid.stats.min, 1)} ~ {fmt(grid.stats.max, 1)} / {fmt(grid.stats.rms, 1)} {({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]}</b></div>
                 <div style={row}><span>색 범위</span><b>{["anomaly", "rtp", "tilt", "vd1"].includes(grid.stats.kind) ? `±${fmt(grid.overlay.vmax, 0)}` : `0 ~ ${fmt(grid.overlay.vmax, 0)}`}</b></div>
                 <Legend overlay={grid.overlay} unit={({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]} />

@@ -27,8 +27,12 @@ What was measured on the two files of case8 (격자비행):
 - No track numbers: the drone flies with its nose fixed (Yaw constant
   -16 deg) and sweeps parallel lines, so tracks are made here from the
   path - straight, moving stretches of 5 m or more (segment_tracks).
-  The grid flight gives 16 segments of heading 163 deg, 54-76 m long
-  (two lines split by a slow patch), 1.5-3 m apart.
+  The grid flight gives 14 tracks of heading 163 deg, 54-76 m long,
+  1.5-3 m apart. The speed bound matters: at 0.8 m/s the pilot's
+  slow-downs mid-line cut two lines in two and dropped 35% of the
+  samples; at 0.3 m/s (the pre-processing's own bound) 28% is off-track,
+  which is the turns (24%) and the line ends. Samples the pre-processing
+  then leaves out are a further 0.2%.
 - MagField is the total field, not an anomaly: tfa = field - IGRF at the
   reading's position and date, minus the file's median of that difference
   (-180 nT on the grid flight: regional field, model error and sensor
@@ -58,8 +62,8 @@ _SENSOR_RE = re.compile(r"MagField_(J\d+)", re.IGNORECASE)
 
 # segment_tracks defaults, from the case8 grid flight (see module docstring)
 TRACK_SMOOTH_S = 0.5            # half-width of the position smoothing window
-TRACK_MIN_SPEED_M_S = 0.8       # slower is a hover, a turn-around or the ground
-TRACK_MAX_TURN_DEG = 20.0       # heading change over 1 s that still counts as straight
+TRACK_MIN_SPEED_M_S = 0.3       # slower is a hover, a turn-around or the ground (same bound as the pre-processing)
+TRACK_MAX_TURN_DEG = 30.0       # heading change over 1 s that still counts as straight
 TRACK_MIN_LENGTH_M = 5.0        # shorter straight stretches are not lines
 
 

@@ -5,9 +5,13 @@ Cells are 0.1 m by default - a mine's anomaly at 0.3-0.5 m probe height
 is about a metre wide and the two probes' lines are 0.5 m apart. The
 interpolation is magcore's linear gridder (block mean, then Delaunay
 linear), the same engine as the mineral program, with one difference in
-how far it may reach: `max_distance_m` from the nearest reading (default
-0.6 m, a little over the half-spacing of a 0.5 m track pattern), beyond
-which a cell is left empty. A walking robot does not hold its line, so
+how far it may reach: `max_distance_m` from the nearest reading, beyond
+which a cell is left empty. Left unset it follows the line spacing:
+0.75 x the median spacing of the survey lines, never below 0.6 m (a
+little over the half-spacing of the robot's 0.5 m tracks, the proven
+value there) nor above 5 m - so a drone flown at 2-3 m spacing (Gongju
+2026-10-19: 1.5-3 m, coverage 31% at 0.6 m, 53% at 1.5 m) fills between
+its lines without being asked, and a 0.5 m pattern keeps its honest gaps. A walking robot does not hold its line, so
 the gaps are real and the coverage map says where nothing was measured.
 
 Repeated runs are compared cell by cell on block means (no interpolation,
@@ -41,6 +45,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from magcore.gridding import GridResult, grid_points
+from magcore.lines import cross_track_coordinate
 from magcore.trend import remove_regional_trend
 
 DEFAULT_CELL_SIZE_M = 0.125        # the paper's grid
@@ -74,12 +79,56 @@ def _levelled(sub: pd.DataFrame, level: str) -> np.ndarray:
     return v
 
 
+AUTO_MAX_DISTANCE_FACTOR = 0.75     # of the line spacing
+AUTO_MAX_DISTANCE_MIN_M = DEFAULT_MAX_DISTANCE_M
+AUTO_MAX_DISTANCE_MAX_M = 5.0
+
+
+def line_spacing_m(lines: pd.DataFrame, dominant_azimuth_deg: float, id_col: str = "line_id") -> float | None:
+    """Median cross-track distance between neighbouring line centres
+    (magcore's azimuth convention: atan2(dy, dx), 0 = east, 90 = north)."""
+    across = cross_track_coordinate(lines["x"].to_numpy(), lines["y"].to_numpy(), dominant_azimuth_deg)
+    centres = pd.Series(across).groupby(lines[id_col].to_numpy()).median().sort_values().to_numpy()
+    d = np.diff(centres)
+    d = d[d > 0.05]
+    return float(np.median(d)) if len(d) else None
+
+
+def dominant_azimuth_deg(lines: pd.DataFrame, id_col: str = "line_id") -> float:
+    """Axis (0-180 deg, atan2(dy, dx) like magcore.lines) of the survey
+    lines from their end points, as a doubled-angle mean: a plain median
+    of the azimuths puts a mix of 2 deg and 178 deg lines at 90 deg."""
+    ends = lines.groupby(id_col)[["x", "y"]].agg(["first", "last"])
+    az = np.arctan2(ends[("y", "last")] - ends[("y", "first")], ends[("x", "last")] - ends[("x", "first")]).to_numpy()
+    return float(np.degrees(0.5 * np.arctan2(np.mean(np.sin(2 * az)), np.mean(np.cos(2 * az)))) % 180.0)
+
+
+def estimate_line_spacing(sub: pd.DataFrame) -> tuple[float | None, float | None]:
+    """(spacing m, dominant azimuth deg) of the survey lines in `sub`,
+    from line_id when pre-processed, else from the loader's tracks;
+    (None, None) with fewer than two lines."""
+    col = "line_id" if "line_id" in sub.columns else "track" if "track" in sub.columns else None
+    if col is None:
+        return None, None
+    lines = sub[sub[col] >= 0]
+    if lines[col].nunique() < 2:
+        return None, None
+    dominant = dominant_azimuth_deg(lines, col)
+    return line_spacing_m(lines, dominant, col), dominant
+
+
+def auto_max_distance(spacing_m: float | None) -> float:
+    if spacing_m is None or not np.isfinite(spacing_m):
+        return DEFAULT_MAX_DISTANCE_M
+    return float(min(AUTO_MAX_DISTANCE_MAX_M, max(AUTO_MAX_DISTANCE_MIN_M, AUTO_MAX_DISTANCE_FACTOR * spacing_m)))
+
+
 def grid_survey(
     df: pd.DataFrame,
     cell_size_m: float = DEFAULT_CELL_SIZE_M,
     sensors=None,
     file_index: int | None = None,
-    max_distance_m: float = DEFAULT_MAX_DISTANCE_M,
+    max_distance_m: float | None = None,
     level: str = "median",
     method: str = DEFAULT_METHOD,
     detrend_order: int = DEFAULT_DETREND_ORDER,
@@ -96,6 +145,10 @@ def grid_survey(
         on_line = sub[sub["line_id"] >= 0]
         if len(on_line) >= 10:
             sub = on_line
+    spacing, _dominant = estimate_line_spacing(sub)
+    auto = max_distance_m is None
+    if auto:
+        max_distance_m = auto_max_distance(spacing)
     values = _levelled(sub, level)
     grid = grid_points(
         sub["x"].to_numpy(dtype=float), sub["y"].to_numpy(dtype=float), values,
@@ -115,7 +168,9 @@ def grid_survey(
         "min_nt": round(float(np.nanmin(grid.values)), 1) if finite.any() else None,
         "max_nt": round(float(np.nanmax(grid.values)), 1) if finite.any() else None,
         "cell_size_m": cell_size_m,
-        "max_distance_m": max_distance_m,
+        "max_distance_m": round(float(max_distance_m), 2),
+        "max_distance_auto": auto,
+        "line_spacing_m": round(spacing, 2) if spacing is not None else None,
         "extent_m": {"x": round(float(np.ptp(grid.easting)) + cell_size_m, 1), "y": round(float(np.ptp(grid.northing)) + cell_size_m, 1)},
         "sensors": sorted(int(s) for s in sub["sensor"].unique()),
         "file_index": file_index,

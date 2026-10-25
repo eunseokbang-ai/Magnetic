@@ -52,6 +52,8 @@ from scipy.ndimage import gaussian_filter1d
 from magcore.despike import despike
 from magcore.leveling import apply_heading_correction, compute_heading_correction
 
+from .gridding import dominant_azimuth_deg, line_spacing_m
+
 DEFAULT_SAMPLES_PER_M = 10.0
 DEFAULT_HAMPEL_K = 3.0
 DEFAULT_HAMPEL_WINDOW = 11
@@ -199,31 +201,45 @@ def preprocess(df: pd.DataFrame, params: PreprocessParams | None = None) -> tupl
         pf["timestamp"] = pd.Timestamp(sub["timestamp"].min().normalize()) + pd.to_timedelta(pf["t_s"], unit="s")
         pf["t_ms"] = pf["t_s"] * 1000.0
 
-        heading = {"enabled": params.heading_correction, "applied": False, "offset_nt": None, "reason": None}
+        # Heading correction per sensor: two sensors on one carrier have
+        # their own orientation effects (Gongju J1 -2 nT, J2 +9 nT between
+        # the two flight directions), so one offset for the pair would
+        # under-correct one and over-correct the other.
+        heading = {"enabled": params.heading_correction, "applied": False, "offset_nt": None, "reason": None, "per_sensor": {}}
+        lines = pf[pf["line_id"] >= 0]
+        spacing = None
+        if lines["line_id"].nunique() >= 2:
+            dominant = dominant_azimuth_deg(lines)
+            spacing = line_spacing_m(lines, dominant)
         if params.heading_correction:
-            lines = pf[pf["line_id"] >= 0]
             if lines["line_id"].nunique() >= 3:
-                tr0 = lines.groupby("line_id")[["x", "y"]].agg(["first", "last"])
-                az = np.degrees(np.arctan2(tr0[("x", "last")] - tr0[("x", "first")], tr0[("y", "last")] - tr0[("y", "first")])) % 180.0
-                dominant = float(np.median(az))
-                spacing = _line_spacing(lines, dominant)
-                res = compute_heading_correction(pf, "tfa_proc", dominant, spacing)
-                offset = float(res.offset_nt) if res.offset_nt is not None else None
-                spread = float(res.offset_spread_nt) if res.offset_spread_nt is not None else None
-                # Trusted only when the step is larger than its own spread
-                # over the neighbourhoods - otherwise it is line noise, not
-                # a heading effect (the mineral program's rule).
-                trusted = res.applied and offset is not None and (spread is None or spread < abs(offset))
-                heading.update({
-                    "offset_nt": round(offset, 2) if offset is not None else None,
-                    "offset_spread_nt": round(spread, 2) if spread is not None else None,
-                    "reason": res.reason if not res.applied else (
-                        None if trusted else "구역별 오프셋의 산포가 오프셋보다 커서 헤딩 효과로 볼 수 없어 적용하지 않았습니다."
-                    ),
-                })
-                if trusted:
-                    pf["tfa_proc"] = apply_heading_correction(pf, "tfa_proc", res)
-                    heading["applied"] = True
+                for s in sorted(pf["sensor"].unique()):
+                    ps = pf[pf["sensor"] == s]
+                    res = compute_heading_correction(ps, "tfa_proc", dominant, spacing or 0.5)
+                    offset = float(res.offset_nt) if res.offset_nt is not None else None
+                    spread = float(res.offset_spread_nt) if res.offset_spread_nt is not None else None
+                    # Trusted only when the step is larger than its own spread
+                    # over the neighbourhoods - otherwise it is line noise, not
+                    # a heading effect (the mineral program's rule).
+                    trusted = res.applied and offset is not None and (spread is None or spread < abs(offset))
+                    entry = {
+                        "applied": bool(trusted),
+                        "offset_nt": round(offset, 2) if offset is not None else None,
+                        "offset_spread_nt": round(spread, 2) if spread is not None else None,
+                        "reason": res.reason if not res.applied else (
+                            None if trusted else "구역별 오프셋의 산포가 오프셋보다 커서 헤딩 효과로 볼 수 없어 적용하지 않았습니다."
+                        ),
+                    }
+                    if trusted:
+                        pf.loc[ps.index, "tfa_proc"] = apply_heading_correction(ps, "tfa_proc", res)
+                    heading["per_sensor"][str(int(s))] = entry
+                applied = [e for e in heading["per_sensor"].values() if e["applied"]]
+                heading["applied"] = bool(applied)
+                first = heading["per_sensor"].get(str(int(sorted(pf["sensor"].unique())[0])), {})
+                heading["offset_nt"] = first.get("offset_nt")
+                heading["offset_spread_nt"] = first.get("offset_spread_nt")
+                if not applied:
+                    heading["reason"] = next((e["reason"] for e in heading["per_sensor"].values() if e["reason"]), None)
             else:
                 heading["reason"] = "측선이 3개 미만이라 헤딩 보정을 계산하지 않았습니다."
 
@@ -240,6 +256,7 @@ def preprocess(df: pd.DataFrame, params: PreprocessParams | None = None) -> tupl
             "noise_after_nt": round(float(np.nanmean(noise_after)), 3),
             "n_lines": int(pf.loc[pf["line_id"] >= 0, "line_id"].nunique()),
             "turn_fraction": round(float((pf["line_id"] < 0).mean()), 3),
+            "line_spacing_m": round(spacing, 2) if spacing is not None else None,
             "heading_correction": heading,
         })
         out_frames.append(pf)
@@ -252,12 +269,3 @@ def preprocess(df: pd.DataFrame, params: PreprocessParams | None = None) -> tupl
     proc.attrs["files"] = df.attrs.get("files")
     proc.attrs["preprocess"] = {"params": params.__dict__ | {"lpf_hz_by_file": dict(params.lpf_hz_by_file)}, "files": reports}
     return proc, proc.attrs["preprocess"]
-
-
-def _line_spacing(lines: pd.DataFrame, dominant_azimuth_deg: float) -> float:
-    a = np.radians(dominant_azimuth_deg)
-    across = lines["x"].to_numpy() * np.cos(a) - lines["y"].to_numpy() * np.sin(a)
-    centres = pd.Series(across).groupby(lines["line_id"].to_numpy()).median().sort_values().to_numpy()
-    d = np.diff(centres)
-    d = d[d > 0.05]
-    return float(np.median(d)) if len(d) else 0.5
