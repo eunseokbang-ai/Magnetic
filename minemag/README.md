@@ -25,6 +25,12 @@ minemag/
 
 ## 실행
 
+저장소 루트의 `run_minemag.bat`을 더블클릭한다. 가상환경(`backend\venv`, DroneMag Studio와 공유)과
+프런트 빌드가 없거나 커밋이 바뀌었으면 설치·빌드를 먼저 하고, 8100번부터 빈 포트를 골라 서버를 띄운 뒤
+브라우저를 연다. 코드를 고치고 커밋 없이 바로 보려면 `.last_build_commit_minemag`을 지우고 다시 실행한다.
+
+개발 중 수동 실행:
+
 ```bat
 cd minemag\backend && python -m pytest tests -q
 cd minemag\frontend && npm install && npm run build
