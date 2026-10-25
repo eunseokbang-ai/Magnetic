@@ -402,6 +402,46 @@ export default function App() {
       setError(e.message);
     }
   };
+  /** The area as a GeoJSON Polygon (WGS84, [lon, lat]) so the same
+   * boundary can be reloaded next time and opened in QGIS. */
+  const saveArea = () => {
+    if (!area || !area.polygon) return;
+    const ring = area.polygon.map(([la, lo]) => [lo, la]);
+    ring.push(ring[0]);
+    const gj = {
+      type: "Feature",
+      properties: { name: "MineMag 영역", saved: new Date().toISOString(), files: summary ? summary.files.map((f) => f.filename) : [], n_inside: area.n_inside, n_total: area.n_total },
+      geometry: { type: "Polygon", coordinates: [ring] },
+    };
+    const blob = new Blob([JSON.stringify(gj, null, 2)], { type: "application/geo+json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const stem = summary && summary.files.length ? summary.files[0].filename.replace(/\.[^.]+$/, "") : "minemag";
+    a.download = `${stem}_영역.geojson`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  /** Accepts the file saveArea wrote, any GeoJSON Feature / FeatureCollection /
+   * Polygon in WGS84 (first ring of the first polygon), or {"polygon": [[lat, lon], ...]}. */
+  const loadAreaFile = async (file) => {
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      let geom = obj;
+      if (obj.type === "FeatureCollection") geom = obj.features && obj.features[0] && obj.features[0].geometry;
+      else if (obj.type === "Feature") geom = obj.geometry;
+      let polygon;
+      if (Array.isArray(obj.polygon)) polygon = obj.polygon;
+      else if (geom && geom.type === "Polygon") polygon = geom.coordinates[0].map(([lo, la]) => [la, lo]);
+      else if (geom && geom.type === "MultiPolygon") polygon = geom.coordinates[0][0].map(([lo, la]) => [la, lo]);
+      if (!polygon || polygon.length < 3) throw new Error("다각형을 찾지 못했습니다 (GeoJSON Polygon 또는 {polygon: [[lat, lon], ...]} 형식).");
+      if (polygon.length > 3 && polygon[0][0] === polygon[polygon.length - 1][0] && polygon[0][1] === polygon[polygon.length - 1][1]) polygon = polygon.slice(0, -1);
+      if (!polygon.every(([la, lo]) => Math.abs(la) <= 90 && Math.abs(lo) <= 180)) throw new Error("위경도(WGS84) 좌표가 아닙니다. QGIS에서 EPSG:4326으로 저장하세요.");
+      await applyArea(polygon);
+    } catch (e) {
+      setError(`영역 파일: ${e.message}`);
+    }
+  };
   const dropArea = async () => {
     try {
       await api.clearArea(projectId);
@@ -537,6 +577,10 @@ export default function App() {
               {drawMode === "polygon" && <button style={button} disabled={drawPts.length < 3} onClick={() => applyArea(drawPts)}>완료 ({drawPts.length}점)</button>}
               {drawMode && <button style={ghost} onClick={() => { setDrawMode(null); setDrawPts([]); }}>취소</button>}
               {area && <button style={ghost} onClick={dropArea}>영역 지우기</button>}
+              {area && <button style={ghost} onClick={saveArea} title="GeoJSON(WGS84)으로 저장 - 다음 해석 때 불러오거나 QGIS에서 엽니다">영역 저장</button>}
+              <label style={{ ...ghost, display: "inline-block" }} title="저장해 둔 영역 GeoJSON을 불러와 같은 영역으로 해석합니다">
+                영역 불러오기<input type="file" accept=".geojson,.json" style={{ display: "none" }} disabled={!projectId || !summary} onChange={(e) => { loadAreaFile(e.target.files[0]); e.target.value = ""; }} />
+              </label>
             </div>
             {drawMode && <div style={warn}>지도를 클릭해 {drawMode === "rect" ? "모서리 두 점을" : "꼭짓점을"} 찍으세요.</div>}
             {area && (
