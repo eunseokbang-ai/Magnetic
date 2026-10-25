@@ -15,9 +15,11 @@ import pandas as pd
 from magcore.lines import project_to_local_xy
 from magcore.overlay_image import load_geotiff_overlay
 from magcore.render import grid_to_geotiff_bytes, grid_to_png_overlay, grid_to_surfer_grd_bytes
+from pyproj import Transformer
+from scipy.spatial import cKDTree
 
 from .io_.magdrone_r3 import MagDroneLoadError, load_magdrone_r3_files, summarize
-from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
+from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
 from .processing.gridding import grid_survey, repeat_comparison
 from .processing.platform_qc import platform_qc
 from .processing.peaks import SIGNED_KINDS, derivative_grid
@@ -44,6 +46,7 @@ class Project:
     target_cache: dict | None = None
     field_direction: tuple | None = None   # (inclination, declination) from IGRF at the site
     basemaps: list = field(default_factory=list)   # GeoTIFF overlays: {name, image_data_url, bounds, ...}
+    last_grid: tuple | None = None                 # (values, easting, northing, kind) of the grid last shown
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def _require(self) -> pd.DataFrame:
@@ -204,6 +207,8 @@ class Project:
                         values, grid.easting, grid.northing, self.utm_epsg,
                         cmap_name="viridis", symmetric=False, vmin=0.0, vmax=vmax, cell_size_m=req.cell_size_m,
                     )
+                overlay["colorbar_data_url"] = _colorbar_png(overlay["cmap"])
+                self.last_grid = (values, grid.easting, grid.northing, req.kind)
                 kind_stats = {
                     **stats, "kind": req.kind, "processed": self.proc is not None,
                     "min": round(float(np.nanmin(values)), 2) if len(finite) else None,
@@ -212,6 +217,68 @@ class Project:
                 }
                 self.grid_cache[key] = {"stats": kind_stats, "overlay": overlay}
             return self.grid_cache[key]
+
+    def sample(self, req: SampleRequest) -> dict:
+        """Value of the last shown grid at a clicked point (nearest cell, to
+        match the pixel's colour exactly), and the nearest reading."""
+        df = self._working()
+        if self.utm_epsg is None:
+            raise ProjectError("좌표계 정보가 없습니다.")
+        x, y = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True).transform(req.lon, req.lat)
+        out = {"lat": req.lat, "lon": req.lon, "x": round(float(x), 3), "y": round(float(y), 3),
+               "grid_value": None, "grid_kind": None, "in_grid": False, "nearest": None}
+        if self.last_grid is not None:
+            values, easting, northing, kind = self.last_grid
+            half_e = (easting[1] - easting[0]) / 2.0 if len(easting) > 1 else 0.0
+            half_n = (northing[1] - northing[0]) / 2.0 if len(northing) > 1 else 0.0
+            out["grid_kind"] = kind
+            if easting[0] - half_e <= x <= easting[-1] + half_e and northing[0] - half_n <= y <= northing[-1] + half_n:
+                col = int(np.argmin(np.abs(easting - x)))
+                row = int(np.argmin(np.abs(northing - y)))
+                v = float(values[row, col])
+                out["in_grid"] = True
+                out["grid_value"] = round(v, 3) if np.isfinite(v) else None
+        on_line = df[df["line_id"] >= 0] if "line_id" in df else df
+        if len(on_line):
+            tree = cKDTree(np.column_stack([on_line["x"].to_numpy(), on_line["y"].to_numpy()]))
+            d, i = tree.query([x, y], k=1)
+            r = on_line.iloc[int(i)]
+            out["nearest"] = {
+                "distance_m": round(float(d), 2), "file_index": int(r["file_index"]), "sensor": int(r["sensor"]),
+                "track": int(r["track"]), "line_id": int(r["line_id"]) if "line_id" in r else None,
+                "tfa_nt": round(float(r["tfa"]), 2),
+                "tfa_raw_nt": round(float(r["tfa_raw"]), 2) if "tfa_raw" in r and np.isfinite(r["tfa_raw"]) else None,
+                "timestamp": str(r["timestamp"]),
+            }
+        return out
+
+    def line_profile(self, file_index: int, line_id: int, sensor: int | None = None) -> dict:
+        """Readings along one survey line (one DataTool track), raw and
+        processed, against distance along the line - for seeing what the
+        filter did and what an anomaly looks like in the row."""
+        df = self._working()
+        sub = df[(df["file_index"] == file_index) & (df["track"] == line_id)]
+        if sensor is not None:
+            sub = sub[sub["sensor"] == sensor]
+        if sub.empty:
+            raise ProjectError(f"파일 {file_index}의 측선 {line_id}에 자료가 없습니다.")
+        series = []
+        for s, g in sub.groupby("sensor"):
+            g = g.sort_values("timestamp")
+            x, y = g["x"].to_numpy(dtype=float), g["y"].to_numpy(dtype=float)
+            dist = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
+            series.append({
+                "sensor": int(s),
+                "distance_m": np.round(dist, 3).tolist(),
+                "value": np.round(g["tfa"].to_numpy(dtype=float), 2).tolist(),
+                "raw_value": np.round(g["tfa_raw"].to_numpy(dtype=float), 2).tolist() if "tfa_raw" in g else None,
+                "excluded": (g["line_id"] < 0).tolist() if "line_id" in g else None,
+                "lat": np.round(g["lat"].to_numpy(dtype=float), 7).tolist(),
+                "lon": np.round(g["lon"].to_numpy(dtype=float), 7).tolist(),
+            })
+        tracks = sorted(int(v) for v in df.loc[df["file_index"] == file_index, "track"].unique())
+        return {"file_index": file_index, "line_id": line_id, "processed": self.proc is not None,
+                "tracks": tracks, "series": series}
 
     def grid_export(self, req: GridRequest, fmt: str) -> bytes:
         values, easting, northing, cell = self.grid_values(req)
@@ -267,6 +334,7 @@ class Project:
                     cell_size_m=req.cell_size_m, threshold_k=req.threshold_k, threshold_nt=req.threshold_nt,
                     fit_window_m=req.fit_window_m, max_depth_m=req.max_depth_m, min_fit_quality=req.min_fit_quality,
                     method=req.method, peak_k=req.peak_k, derivative=req.derivative,
+                    magnetization=req.estimate_magnetization,
                     min_separation_m=req.min_separation_m, grid_method=req.grid_method, detrend_order=req.detrend_order,
                 )
             except ValueError as exc:
@@ -288,6 +356,21 @@ class Project:
         if self.target_cache is None:
             raise ProjectError("표적 피킹을 먼저 실행하세요.")
         return targets_to_geojson(self.target_cache)
+
+
+def _colorbar_png(cmap_name: str) -> str:
+    """A 256 x 1 strip of the colormap, for the legend bar."""
+    import base64
+    from io import BytesIO
+
+    import matplotlib
+    from PIL import Image
+
+    cmap = matplotlib.colormaps.get_cmap(cmap_name)
+    rgba = (cmap(np.linspace(0, 1, 256))[None, :, :] * 255).astype(np.uint8)
+    buf = BytesIO()
+    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 class ProjectStore:

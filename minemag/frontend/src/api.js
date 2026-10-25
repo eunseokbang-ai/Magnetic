@@ -39,6 +39,9 @@ export const resetPreprocess = (projectId) => request(`/projects/${projectId}/pr
 export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
 export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
 export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targets`, req);
+export const sampleAt = (projectId, lat, lon) => post(`/projects/${projectId}/sample`, { lat, lon });
+export const lineProfile = (projectId, fileIndex, lineId, sensor) =>
+  request(`/projects/${projectId}/line-profile?file_index=${fileIndex}&line_id=${lineId}${sensor ? `&sensor=${sensor}` : ""}`);
 export const targetsCsvUrl = (projectId) => `${BASE}/projects/${projectId}/targets.csv`;
 export const targetsGeojsonUrl = (projectId) => `${BASE}/projects/${projectId}/targets.geojson`;
 

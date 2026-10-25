@@ -23,7 +23,7 @@ from magcore.local_tiles import LocalTileError
 from magcore.overlay_image import OverlayImageError
 
 from . import paths
-from .models import GridRequest, LocalTileFolderRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
+from .models import GridRequest, LocalTileFolderRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -120,6 +120,16 @@ def platform_qc(project_id: str, req: QcRequest):
 @app.post("/api/projects/{project_id}/grid")
 def grid(project_id: str, req: GridRequest):
     return store.get(project_id).grid(req)
+
+
+@app.post("/api/projects/{project_id}/sample")
+def sample(project_id: str, req: SampleRequest):
+    return store.get(project_id).sample(req)
+
+
+@app.get("/api/projects/{project_id}/line-profile")
+def line_profile(project_id: str, file_index: int, line_id: int, sensor: int | None = None):
+    return store.get(project_id).line_profile(file_index, line_id, sensor)
 
 
 @app.post("/api/projects/{project_id}/grid/export")

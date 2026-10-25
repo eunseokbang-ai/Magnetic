@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, ImageOverlay, CircleMarker, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, ImageOverlay, CircleMarker, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet-imageoverlay-rotated";
 import * as api from "./api";
@@ -46,6 +46,54 @@ function GridOverlay({ overlay, opacity }) {
     return () => layer.remove();
   }, [overlay, opacity, map]);
   return null;
+}
+
+/** Map clicks go to the backend: value of the shown grid there and the nearest reading. */
+function ClickInspector({ onClick }) {
+  useMapEvents({ click: (e) => onClick(e.latlng.lat, e.latlng.lng) });
+  return null;
+}
+
+/** Colour bar of the shown grid with the backend's tick values. */
+function Legend({ overlay, unit }) {
+  if (!overlay) return null;
+  const ticks = Array.isArray(overlay.legend_ticks) && overlay.legend_ticks.length >= 2 ? overlay.legend_ticks : [overlay.vmin, overlay.vmax];
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ height: 12, borderRadius: 3, border: "1px solid #c9d3c4", backgroundImage: `url(${overlay.colorbar_data_url})`, backgroundSize: "100% 100%" }} />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#4f5e4a" }}>
+        {ticks.map((v, i) => <span key={i}>{fmt(v, Math.abs(v) < 10 ? 1 : 0)}</span>)}
+      </div>
+      <div style={{ ...note, textAlign: "right" }}>{unit}</div>
+    </div>
+  );
+}
+
+/** Readings along one line, raw and processed, against distance. */
+function Profile({ data, onClose }) {
+  if (!data) return null;
+  const W = 820, H = 220, padL = 50, padR = 10, padT = 10, padB = 26;
+  const all = data.series.flatMap((s) => [...s.value, ...(s.raw_value || [])]).filter(Number.isFinite);
+  const dmax = Math.max(...data.series.flatMap((s) => s.distance_m), 1);
+  const lo = Math.min(...all), hi = Math.max(...all);
+  const X = (d) => padL + ((W - padL - padR) * d) / dmax;
+  const Y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / Math.max(1e-9, hi - lo));
+  const path = (ds, vs) => ds.map((d, i) => (Number.isFinite(vs[i]) ? `${i ? "L" : "M"}${X(d).toFixed(1)},${Y(vs[i]).toFixed(1)}` : "")).join(" ");
+  const colors = { 1: "#2f5a22", 2: "#1d4ed8" };
+  return (
+    <div style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 1000, background: "white", border: "1px solid #c9d3c4", borderRadius: 8, padding: 8, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+        <span>측선 프로파일 — 파일 [{data.file_index}] 트랙 {data.line_id}{data.processed ? " (회색: 전처리 전, 색: 전처리 후)" : " (원 자료)"} · 탐침 {data.series.map((s) => s.sensor).join(", ")}</span>
+        <button style={{ ...ghost, padding: "1px 8px" }} onClick={onClose}>닫기</button>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        {data.series.map((s) => s.raw_value && <path key={`r${s.sensor}`} d={path(s.distance_m, s.raw_value)} fill="none" stroke="#bbb" strokeWidth={0.8} />)}
+        {data.series.map((s) => <path key={`v${s.sensor}`} d={path(s.distance_m, s.value)} fill="none" stroke={colors[s.sensor] || "#b42318"} strokeWidth={1.2} />)}
+        {[lo, (lo + hi) / 2, hi].map((v, i) => <text key={i} x={padL - 4} y={Y(v) + 3} fontSize={10} textAnchor="end" fill="#4f5e4a">{fmt(v, 0)}</text>)}
+        {[0, 0.25, 0.5, 0.75, 1].map((f) => <text key={f} x={X(f * dmax)} y={H - 8} fontSize={10} textAnchor="middle" fill="#4f5e4a">{fmt(f * dmax, 0)} m</text>)}
+      </svg>
+    </div>
+  );
 }
 
 /** A small inline amplitude spectrum: log amplitude vs frequency. */
@@ -124,6 +172,11 @@ export default function App() {
   const [targets, setTargets] = useState(null);
   const [targetsBusy, setTargetsBusy] = useState(false);
   const [maxTargets, setMaxTargets] = useState("");
+
+  const [sample, setSample] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [profileFile, setProfileFile] = useState(0);
+  const [profileLine, setProfileLine] = useState("");
 
   const [basemaps, setBasemaps] = useState([]);        // GeoTIFF overlays with image_data_url
   const [basemapOpacity, setBasemapOpacity] = useState(1);
@@ -244,6 +297,31 @@ export default function App() {
     await api.unregisterLocalTiles(id);
     setTileLayers((prev) => prev.filter((l) => l.id !== id));
   });
+
+  const inspect = async (lat, lon) => {
+    if (!projectId || !summary) return;
+    try {
+      setSample(await api.sampleAt(projectId, lat, lon));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const showProfile = async (fileIndex, lineId) => {
+    if (!projectId || lineId === "" || lineId === null || lineId === undefined) return;
+    try {
+      setProfile(await api.lineProfile(projectId, Number(fileIndex), Number(lineId)));
+      setProfileFile(Number(fileIndex));
+      setProfileLine(Number(lineId));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const stepProfile = (dir) => {
+    if (!profile) return;
+    const i = profile.tracks.indexOf(profile.line_id);
+    const next = profile.tracks[i + dir];
+    if (next !== undefined) showProfile(profile.file_index, next);
+  };
 
   const runTargets = () => guard(setTargetsBusy, async () => {
     const byFile = {};
@@ -412,6 +490,7 @@ export default function App() {
                 <div style={row}><span>덮임 / 셀 수</span><b>{fmt(grid.stats.coverage_pct)}% / {grid.stats.n_cells.toLocaleString()}</b></div>
                 <div style={row}><span>{({ anomaly: "이상", rtp: "RTP", thd: "THD", asa: "ASA", tilt: "틸트각", vd1: "1차 수직미분" })[grid.stats.kind]} 범위 / rms</span><b>{fmt(grid.stats.min, 1)} ~ {fmt(grid.stats.max, 1)} / {fmt(grid.stats.rms, 1)} {({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]}</b></div>
                 <div style={row}><span>색 범위</span><b>{["anomaly", "rtp", "tilt", "vd1"].includes(grid.stats.kind) ? `±${fmt(grid.overlay.vmax, 0)}` : `0 ~ ${fmt(grid.overlay.vmax, 0)}`}</b></div>
+                <Legend overlay={grid.overlay} unit={({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]} />
                 <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4, fontSize: 12, flexWrap: "wrap" }}>
                   <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> 격자</label>
                   <label><input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} /> 측점</label>
@@ -491,7 +570,7 @@ export default function App() {
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}>
                     <thead>
                       <tr style={{ background: "#eef3ea" }}>
-                        {["#", "등급", "p2p(nT)", "K", "유형", "폭(m)", "매설(m)", "모멘트", "맞춤", "보임"].map((h) => <th key={h} style={{ padding: "3px 4px", textAlign: "right" }}>{h}</th>)}
+                        {["#", "등급", "p2p(nT)", "K", "유형", "폭(m)", "매설(m)", "모멘트", "맞춤", "자화", "보임"].map((h) => <th key={h} style={{ padding: "3px 4px", textAlign: "right" }}>{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
@@ -506,6 +585,9 @@ export default function App() {
                           <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.burial_depth_m, 2)}</td>
                           <td style={{ padding: "2px 4px", textAlign: "right" }} title={t.size_class || ""}>{t.moment_am2 !== null ? fmt(t.moment_am2, 2) : "-"}</td>
                           <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.fit_quality, 2)}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }} title={t.magnetization ? `유도 방향과 ${fmt(t.magnetization.angle_from_induced_deg, 0)}°, 자유 방향의 개선도 ${fmt(t.magnetization.improvement, 2)}` : ""}>
+                            {t.magnetization ? ({ induced: "유도", remanent: "잔류", unclear: "보류" })[t.magnetization.verdict] : "-"}
+                          </td>
                           <td style={{ padding: "2px 4px", textAlign: "right" }} title={t.at_edge ? "덮임 가장자리의 봉우리: 이상이 잘렸을 수 있음" : ""}>{t.runs_seen.length}/{t.n_runs_covering ?? t.n_runs}{t.at_edge ? " ⚠" : ""}</td>
                         </tr>
                       ))}
@@ -517,10 +599,38 @@ export default function App() {
                   {targets.n_targets > 0 && <a href={api.targetsGeojsonUrl(projectId)} download="minemag_targets.geojson">GeoJSON</a>}
                 </div>
                 <div style={{ ...note, marginTop: 4 }}>
-                  유형은 탐침 0.5 m 기준 피크-투-피크 진폭의 참고 구분이고, 모멘트 크기는 자릿수 분류일 뿐입니다. 자력만으로는 지뢰와 같은 금속량의 파편을 구분하지 못하며, 금속이 거의 없는 지뢰는 이상이 없을 수 있습니다.
+                  유형은 탐침 0.5 m 기준 피크-투-피크 진폭의 참고 구분이고, 모멘트 크기는 자릿수 분류일 뿐입니다. "자화"는 자유 방향 쌍극자가 유도 방향 쌍극자보다 얼마나 더 잘 맞는지로 판정한 것으로,
+                  강철 지뢰는 유도자화에 가깝고 잔류자화가 강한 물체(현무암, 소성된 철물)는 다르게 나옵니다 — 증거일 뿐 단독 판별 기준은 아닙니다. 자력만으로는 지뢰와 같은 금속량의 파편을 구분하지 못합니다.
                 </div>
               </div>
             )}
+
+            <h2 style={h2}>지점값 확인</h2>
+            <div style={note}>지도를 클릭하면 그 자리의 격자 값(마지막에 만든 격자)과 가장 가까운 측점의 값을 보여 줍니다.</div>
+            {sample && (
+              <div style={{ ...box, marginTop: 6 }}>
+                <div style={row}><span>위치</span><b>{fmt(sample.lat, 6)}, {fmt(sample.lon, 6)}</b></div>
+                <div style={row}><span>격자 값{sample.grid_kind ? ` (${({ anomaly: "잔차 이상", rtp: "RTP", thd: "THD", asa: "ASA", tilt: "틸트각", vd1: "1VD" })[sample.grid_kind]})` : ""}</span><b>{sample.in_grid ? fmt(sample.grid_value, 2) : "격자 밖"}</b></div>
+                {sample.nearest && (
+                  <>
+                    <div style={row}><span>가장 가까운 측점</span><b>{fmt(sample.nearest.distance_m, 2)} m · 파일 [{sample.nearest.file_index}] 트랙 {sample.nearest.track} 탐침 {sample.nearest.sensor}</b></div>
+                    <div style={row}><span>측점 값{sample.nearest.tfa_raw_nt !== null ? " (전처리 후 / 전)" : ""}</span><b>{fmt(sample.nearest.tfa_nt, 1)}{sample.nearest.tfa_raw_nt !== null ? ` / ${fmt(sample.nearest.tfa_raw_nt, 1)}` : ""} nT</b></div>
+                    <button style={{ ...ghost, marginTop: 4 }} onClick={() => showProfile(sample.nearest.file_index, sample.nearest.track)}>이 측선 프로파일 보기</button>
+                  </>
+                )}
+              </div>
+            )}
+
+            <h2 style={h2}>측선 프로파일</h2>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <select value={profileFile} onChange={(e) => setProfileFile(Number(e.target.value))}>
+                {files.map((f, i) => <option key={i} value={i}>[{i}] {f.filename.slice(0, 24)}</option>)}
+              </select>
+              <input type="number" placeholder="트랙 번호" value={profileLine} onChange={(e) => setProfileLine(e.target.value)} style={inputW(80)} />
+              <button style={button} onClick={() => showProfile(profileFile, profileLine)}>보기</button>
+              {profile && <button style={ghost} onClick={() => stepProfile(-1)}>◀ 이전</button>}
+              {profile && <button style={ghost} onClick={() => stepProfile(1)}>다음 ▶</button>}
+            </div>
 
             <h2 style={h2}>지도 표시</h2>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -534,8 +644,11 @@ export default function App() {
           </>
         )}
       </div>
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, position: "relative" }}>
+        <Profile data={profile} onClose={() => setProfile(null)} />
         <MapContainer center={[36.3789, 127.361]} zoom={18} maxZoom={24} preferCanvas style={{ height: "100%" }}>
+          <ClickInspector onClick={inspect} />
+          {sample && <CircleMarker center={[sample.lat, sample.lon]} radius={6} weight={2} pathOptions={{ color: "#111", fillOpacity: 0 }} />}
           {showOsm && <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />}
           {tileLayers.map((l) => (
             <TileLayer key={l.id} url={api.localTileUrl(l.id)} minNativeZoom={l.min_zoom} maxNativeZoom={l.max_zoom} maxZoom={24} bounds={l.bounds} />

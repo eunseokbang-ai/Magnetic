@@ -36,6 +36,7 @@ import pandas as pd
 from pyproj import Transformer
 
 from magcore.dipole_fit import _fit_dipole, classify_moment, detect_targets, field_direction_enu
+from magcore.magnetization import estimate_magnetization
 from scipy.spatial import cKDTree
 
 from .gridding import DEFAULT_MAX_DISTANCE_M, grid_survey
@@ -97,6 +98,7 @@ def pick_targets_in_run(
     grid_method: str = "minimum_curvature",
     detrend_order: int = 1,
     inclination_declination=None,
+    magnetization: bool = True,
 ) -> tuple[list[dict], dict]:
     """Picks of one run (one file), on its own grid and its own noise."""
     grid, _stats = grid_survey(sub, cell_size_m=cell_size_m, method=grid_method, detrend_order=detrend_order)
@@ -104,10 +106,13 @@ def pick_targets_in_run(
     noise = max(noise, 1e-3)
     values = _levelled(sub)
     if method == "thd":
-        return _pick_by_derivative(
+        picks, info = _pick_by_derivative(
             sub, values, grid, noise, inclination_deg, declination_deg, peak_k, derivative,
             min_separation_m, fit_window_m, max_depth_m,
         )
+        if magnetization:
+            _add_magnetization(picks, sub, values, inclination_deg, declination_deg)
+        return picks, info
     thr = float(threshold_nt) if threshold_nt else max(threshold_k * noise, DEFAULT_MIN_THRESHOLD_NT)
     found = detect_targets(
         sub["x"].to_numpy(dtype=float), sub["y"].to_numpy(dtype=float), values,
@@ -124,7 +129,27 @@ def pick_targets_in_run(
             "rms_residual_nt": t.rms_residual_nt, "n_points": t.n_points,
             "snr": abs(t.peak_anomaly_nt) / noise,
         })
+    if magnetization:
+        _add_magnetization(picks, sub, values, inclination_deg, declination_deg)
     return picks, {"method": "amplitude", "noise_rms_nt": round(noise, 2), "threshold_nt": round(thr, 1), "n_picks": len(picks)}
+
+
+def _add_magnetization(picks, sub, values, inclination_deg, declination_deg):
+    """Direction of magnetization at each pick (magcore.magnetization): a
+    free dipole against the induced one, judged by how much the free
+    direction improves the fit. A steel mine is close to induced; an
+    object with strong remanence is not - one more handle on "mine or
+    something else", never a classification on its own."""
+    x = sub["x"].to_numpy(dtype=float)
+    y = sub["y"].to_numpy(dtype=float)
+    for p in picks:
+        depth = p.get("depth_below_probe_m")
+        depth = float(depth) if depth is not None and np.isfinite(depth) else 0.6
+        try:
+            est = estimate_magnetization(x, y, values, p["x"], p["y"], depth, inclination_deg, declination_deg, 0.5)
+        except Exception:                      # a diagnostic must not break the picking
+            est = None
+        p["magnetization"] = est.to_dict() if est is not None else None
 
 
 def _pick_by_derivative(sub, values, grid, noise, inclination_deg, declination_deg, peak_k, derivative,
@@ -236,6 +261,8 @@ def merge_runs(per_run: dict[int, list[dict]], match_radius_m: float) -> list[di
             "snr": float(np.nanmax([m["snr"] for m in c["members"]])),
             "k_needed": float(np.nanmax(k_vals)) if np.isfinite(k_vals).any() else None,
             "at_edge": bool(any(m.get("at_edge") for m in c["members"])),
+            "magnetization": next((m["magnetization"] for m in sorted(c["members"], key=lambda m: -(m.get("fit_quality") or 0))
+                                   if m.get("magnetization")), None),
         })
         out[-1]["type_class"] = type_class(out[-1]["p2p_nt"]) if any(m.get("type_class") for m in c["members"]) else None
     return out
@@ -351,13 +378,15 @@ def pick_targets(
 
 def targets_to_csv(result: dict, utm_epsg: int) -> str:
     cols = ["id", "grade", "lat", "lon", "x", "y", "p2p_nt", "k_needed", "type_class", "extent_m", "snr",
-            "depth_below_probe_m", "burial_depth_m", "moment_am2", "size_class", "fit_quality", "runs_seen",
-            "runs_covering", "n_runs", "position_spread_m"]
+            "depth_below_probe_m", "burial_depth_m", "moment_am2", "size_class", "fit_quality", "magnetization",
+            "runs_seen", "runs_covering", "n_runs", "position_spread_m"]
     lines = [",".join(cols).replace("x,y", f"x_epsg{utm_epsg},y_epsg{utm_epsg}")]
     for t in result["targets"]:
         row = []
         for c in cols:
             v = t.get(c)
+            if c == "magnetization":
+                v = v["label"] if isinstance(v, dict) else ""
             if isinstance(v, list):
                 v = " ".join(str(i) for i in v)
             row.append(f"{v:.7f}" if c in ("lat", "lon") else ("" if v is None else str(v)))
