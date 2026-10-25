@@ -73,6 +73,7 @@ class FileInfo:
     n_rows: int = 0
     columns_present: list = field(default_factory=list)
     columns_missing: list = field(default_factory=list)
+    format: str = "magdrone_r3"     # see io_/loaders.py FORMATS
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -271,7 +272,8 @@ def summarize(df: pd.DataFrame) -> dict:
                 dy = (lat2 - lat1) * 110540.0
                 d = np.hypot(dx, dy)
                 d = d[np.isfinite(d)]
-                if len(d):
+                # one shared position per row (Log_Drone CSV) tells nothing about the separation
+                if len(d) and np.median(d) > 0.05:
                     separation[str(s)] = round(float(np.median(d)), 2)
 
     per_sensor = {}

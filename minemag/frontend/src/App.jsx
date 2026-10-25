@@ -544,10 +544,10 @@ export default function App() {
         ))}
         <OfflinePanel mapBounds={mapBounds} points={points} />
 
-        <h2 style={h2}>1. MagDrone R3 자료 올리기 (.asc)</h2>
+        <h2 style={h2}>1. 자료 올리기 (MagDrone R3 .asc / Log_Drone .csv)</h2>
         <input type="file" multiple accept=".asc,.txt,.csv" disabled={busy} onChange={(e) => upload(Array.from(e.target.files))} />
         <div style={{ ...note, marginTop: 4 }}>
-          MagDrone DataTool이 내보낸 ASC. 여러 비행·반복 측정 파일을 함께 선택하면 시간순으로 합쳐집니다. 두 탐침, 트랙, 3축 성분, 고도를 모두 읽습니다.
+          MagDrone DataTool이 내보낸 ASC(플럭스게이트 2탐침, 200 Hz) 또는 광펌핑 스칼라 자력계의 Log_Drone CSV(J1·J2, 50 Hz). 형식은 첫 줄로 자동 판별하고 섞어 올려도 됩니다. 여러 비행·반복 측정 파일을 함께 선택하면 시간순으로 합쳐집니다. Log_Drone은 총자기장에서 IGRF를 빼 이상으로 바꾸고, 트랙 번호가 없으므로 비행 경로의 직선 구간을 트랙으로 만듭니다.
         </div>
         {busy && <div style={{ marginTop: 6 }}>읽는 중...</div>}
         {error && <div style={{ marginTop: 6, color: "#b42318" }}>{error}</div>}
@@ -556,13 +556,13 @@ export default function App() {
           <>
             <h2 style={h2}>적재 요약</h2>
             <div style={row}><span>파일 / 행</span><b>{summary.n_files} / {summary.n_rows.toLocaleString()}</b></div>
-            <div style={row}><span>탐침</span><b>{summary.sensors.join(", ")} (간격 {Object.values(summary.sensor_separation_m).map((v) => fmt(v, 2)).join(", ")} m)</b></div>
+            <div style={row}><span>탐침</span><b>{summary.sensors.join(", ")} {Object.keys(summary.sensor_separation_m).length ? `(간격 ${Object.values(summary.sensor_separation_m).map((v) => fmt(v, 2)).join(", ")} m)` : "(같은 위치 기록, 간격 미상)"}</b></div>
             <div style={row}><span>샘플 간격 / 트랙 / 시간</span><b>{fmt(summary.sample_interval_ms, 0)} ms / {summary.n_tracks} / {fmt(summary.duration_min)} 분</b></div>
             <div style={row}><span>속도 / GPS 고도</span><b>{fmt(summary.speed_m_s?.median, 2)} m/s / {fmt(summary.altitude_m?.min)} ~ {fmt(summary.altitude_m?.max)} m</b></div>
             <div style={row}><span>총자기장 이상</span><b>{fmt(summary.tfa_nt?.min, 0)} ~ {fmt(summary.tfa_nt?.max, 0)} nT (σ {fmt(summary.tfa_nt?.std, 0)})</b></div>
             {files.map((f, i) => (
               <div key={i} style={{ ...note, padding: "2px 0" }}>
-                [{i}] {f.filename} — {f.start_date || "날짜 미상"} · {f.n_rows.toLocaleString()}행 · {f.settings.join(" ")}
+                [{i}] {f.filename} — {f.format === "log_drone_csv" ? "광펌핑 J1·J2" : "MagDrone R3"} · {f.start_date || "날짜 미상"} · {f.n_rows.toLocaleString()}행 · {f.settings.join(" ")}
               </div>
             ))}
 

@@ -18,7 +18,8 @@ from magcore.render import grid_to_geotiff_bytes, grid_to_png_overlay, grid_to_s
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 
-from .io_.magdrone_r3 import MagDroneLoadError, load_magdrone_r3_files, summarize
+from .io_.loaders import load_survey_files
+from .io_.magdrone_r3 import MagDroneLoadError, summarize
 from matplotlib.path import Path as MplPath
 
 from .models import AreaRequest, GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
@@ -142,7 +143,7 @@ class Project:
     def load_files(self, buffers: list, filenames: list[str]) -> dict:
         with self._lock:
             try:
-                df = load_magdrone_r3_files(buffers, filenames)
+                df = load_survey_files(buffers, filenames)
             except MagDroneLoadError as exc:
                 raise ProjectError(str(exc)) from exc
             x, y, epsg = project_to_local_xy(df["lat"].to_numpy(), df["lon"].to_numpy())
