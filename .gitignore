@@ -16,3 +16,4 @@ packaging/output/
 
 # MineMag
 minemag/backend/.data/
+.last_build_commit_minemag
