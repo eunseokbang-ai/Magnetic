@@ -12,7 +12,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.processing.inversion import build_mesh, build_sensitivity_matrix, invert
+from magcore.inversion import build_mesh, build_sensitivity_matrix, invert
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"

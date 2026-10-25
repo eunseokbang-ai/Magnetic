@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.processing.repeat_passes import find_repeat_passes, solve_offsets, summarize
+from magcore.repeat_passes import find_repeat_passes, solve_offsets, summarize
 
 AZIMUTH = 0.0          # lines run north
 SPACING = 50.0

@@ -36,7 +36,7 @@ from pathlib import Path
 
 import requests
 
-from .. import paths
+from . import paths
 
 CACHE_ROOT = paths.data_dir() / "tile_cache"
 

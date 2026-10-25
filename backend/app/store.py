@@ -53,18 +53,18 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from .processing.base_qc import process_base_station
-from .processing.base_segments import level_base_segments
-from .processing.manual_smooth import apply_manual_smoothing
-from .processing.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
-from .processing.height_normalization import (
+from magcore.base_qc import process_base_station
+from magcore.base_segments import level_base_segments
+from magcore.manual_smooth import apply_manual_smoothing
+from magcore.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
+from magcore.height_normalization import (
     HeightNormalization,
     HeightNormalizationError,
     altitude_stats,
     correction_stats,
     fit_height_normalization,
 )
-from .processing.intermagnet import (
+from magcore.intermagnet import (
     DEFAULT_MAX_STATION_DISTANCE_KM,
     IagaParseError,
     IntermagnetFetchError,
@@ -75,16 +75,16 @@ from .processing.intermagnet import (
     parse_iaga2002,
     select_nearest_observatories,
 )
-from .processing.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
-from .processing.anomaly_candidates import SUPPORT_RADIUS_LINE_SPACINGS, find_anomaly_candidates
-from .processing.despike import despike
-from .processing.dipole_fit import classify_moment, detect_targets
-from .processing.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
-from .processing.diurnal import apply_diurnal_correction
-from .processing.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
-from .processing.gridding import GridResult, _nearest_axis_index, grid_confidence, grid_points
-from .processing.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
-from .processing.inversion import (
+from magcore.crossover_leveling import CrossoverLevelingResult, apply_crossover_leveling, compute_crossover_leveling
+from magcore.anomaly_candidates import SUPPORT_RADIUS_LINE_SPACINGS, find_anomaly_candidates
+from magcore.despike import despike
+from magcore.dipole_fit import classify_moment, detect_targets
+from magcore.osm_structures import OsmFetchError, buffer_structures_to_polygons, fetch_osm_structures
+from magcore.diurnal import apply_diurnal_correction
+from magcore.filters import lowpass_filter, moving_average_filter, notch_filter, savgol_filter_1d
+from magcore.gridding import GridResult, _nearest_axis_index, grid_confidence, grid_points
+from magcore.igrf import compute_igrf_total_field, mean_field_intensity_nt, mean_inclination_declination
+from magcore.inversion import (
     InversionError,
     InversionMesh,
     InversionResult,
@@ -98,12 +98,12 @@ from .processing.inversion import (
     render_section_png,
     upsample_susceptibility,
 )
-from .processing.inversion import path_slice_3d as _inversion_path_slice_3d
-from .processing.inversion import vertical_section as _inversion_vertical_section
-from .processing.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
-from .processing.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
-from .processing.line_overlap import resolve_line_overlaps
-from .processing.lines import (
+from magcore.inversion import path_slice_3d as _inversion_path_slice_3d
+from magcore.inversion import vertical_section as _inversion_vertical_section
+from magcore.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
+from magcore.leveling import HeadingLevelingResult, apply_heading_correction, compute_heading_correction
+from magcore.line_overlap import resolve_line_overlaps
+from magcore.lines import (
     LineDetectionParams,
     detect_lines,
     detect_tie_lines,
@@ -112,11 +112,11 @@ from .processing.lines import (
     project_to_local_xy,
     resolve_korea_projection_epsg,
 )
-from .processing.contours import compute_contours
-from .processing.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
-from .processing.geology_sample import GeologySampleError, sample_geotiff_at_point
-from .processing.gps_lag import apply_gps_mag_lag
-from .processing.heading_calibration import (
+from magcore.contours import compute_contours
+from magcore.euler_deconvolution import run_euler_deconvolution as _euler_deconvolution_solve
+from magcore.geology_sample import GeologySampleError, sample_geotiff_at_point
+from magcore.gps_lag import apply_gps_mag_lag
+from magcore.heading_calibration import (
     HeadingCalibrationError,
     build_turn_based_calibration,
     calibration_angular_coverage_deg,
@@ -124,11 +124,11 @@ from .processing.heading_calibration import (
     fit_heading_effect_map,
     magnetic_heading,
 )
-from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
-from .processing.qc_certificate import evaluate_qc_certificate
-from .processing.report import generate_report_markdown
-from .processing.sway import detect_sway
-from .processing.render import (
+from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
+from magcore.qc_certificate import evaluate_qc_certificate
+from magcore.report import generate_report_markdown
+from magcore.sway import detect_sway
+from magcore.render import (
     grid_to_geotiff_bytes,
     grid_to_geotiff_bytes_colored,
     grid_to_png_overlay,
@@ -136,8 +136,8 @@ from .processing.render import (
     grid_to_xyz_bytes,
     polygon_to_bln_bytes,
 )
-from .processing.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
-from .processing.transforms import (
+from magcore.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
+from magcore.transforms import (
     limit_to_line_spacing_resolution,
     resolution_cutoff_m,
     RTP_LOW_LATITUDE_INCLINATION_DEG,
@@ -157,48 +157,48 @@ from .processing.transforms import (
     upward_continuation,
     vertical_derivative,
 )
-from .processing.depth_estimation import (
+from magcore.depth_estimation import (
     analytic_signal_depth_estimates,
     spectral_depth_diagnostic,
     tilt_depth_estimates,
 )
-from .processing.boundary import auto_survey_boundary
-from .processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
-from .processing.contacts import detect_magnetic_contacts
-from .processing.continuation import (
+from magcore.boundary import auto_survey_boundary
+from magcore.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
+from magcore.contacts import detect_magnetic_contacts
+from magcore.continuation import (
     continuation_report,
     equivalent_source_field,
     field_depth_cells,
     source_continuation_fill,
 )
-from .processing.edge_margin import apply_margin, margin_mask, margin_outline
-from .processing.line_resolution import assess_line_resolution
-from .processing.lineaments import extract_lineaments
-from .processing.geology_stats import (
+from magcore.edge_margin import apply_margin, margin_mask, margin_outline
+from magcore.line_resolution import assess_line_resolution
+from magcore.lineaments import extract_lineaments
+from magcore.geology_stats import (
     GeologyServiceError,
     fetch_lithology,
     stats_to_csv as geology_stats_to_csv,
     summarize_by_unit,
     units_geojson,
 )
-from .processing.magnetization import estimate_magnetization
-from .processing.repeat_passes import find_repeat_passes, solve_offsets
-from .processing.repeat_passes import summarize as summarize_repeat_passes
-from .processing.grid_diagnostics import diagnose_striping
-from .processing.microlevel import apply_microleveling
-from .processing.statistical_leveling import (
+from magcore.magnetization import estimate_magnetization
+from magcore.repeat_passes import find_repeat_passes, solve_offsets
+from magcore.repeat_passes import summarize as summarize_repeat_passes
+from magcore.grid_diagnostics import diagnose_striping
+from magcore.microlevel import apply_microleveling
+from magcore.statistical_leveling import (
     StatisticalLevelingResult,
     apply_statistical_leveling,
     compute_statistical_leveling,
     measure_striping,
 )
-from .processing.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
-from .processing.prospectivity import compute_prospectivity
-from .processing.noise_qc import compute_difference_qc
-from .processing.repeatability import analyze_repeatability
-from .processing.sampling_qc import compute_sampling_distance_qc
-from .processing.spectrum import compute_power_spectrum
-from .processing.trend import remove_regional_trend
+from magcore.multiscale_edges import run_multiscale_edges as _multiscale_edges_solve
+from magcore.prospectivity import compute_prospectivity
+from magcore.noise_qc import compute_difference_qc
+from magcore.repeatability import analyze_repeatability
+from magcore.sampling_qc import compute_sampling_distance_qc
+from magcore.spectrum import compute_power_spectrum
+from magcore.trend import remove_regional_trend
 
 DEFAULT_CMAPS = {
     "point": "viridis",
@@ -3597,7 +3597,7 @@ class Project:
     def export_geology_stats_csv(self) -> bytes:
         if not self.geology_stats_cache:
             raise ProjectError("지질 단위별 통계를 먼저 계산하세요.")
-        from .processing.geology_stats import UnitStats
+        from magcore.geology_stats import UnitStats
 
         units = [UnitStats(**{
             "symbol": u["symbol"], "name": u["name"], "age": u.get("age"), "n_points": u["n_points"],

@@ -10,7 +10,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.manual_smooth import apply_manual_smoothing, _interpolate_flagged_runs
+from magcore.manual_smooth import apply_manual_smoothing, _interpolate_flagged_runs
 
 
 def test_interpolate_flagged_runs_bridges_interior_run():

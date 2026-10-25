@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models import GridConfidenceRequest, QcCertificateRequest
-from app.processing.gridding import grid_confidence, grid_points
-from app.processing.qc_certificate import evaluate_qc_certificate
+from magcore.gridding import grid_confidence, grid_points
+from magcore.qc_certificate import evaluate_qc_certificate
 from app.store import ProjectError, store as project_store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"

@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.processing import tile_cache
+from magcore import tile_cache
 
 MERCATOR_ORIGIN = 20037508.342789244
 

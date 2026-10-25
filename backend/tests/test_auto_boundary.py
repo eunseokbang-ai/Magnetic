@@ -24,8 +24,8 @@ from shapely import unary_union
 from shapely.geometry import Point, Polygon
 
 from app.main import app
-from app.processing.boundary import auto_survey_boundary
-from app.processing.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
+from magcore.boundary import auto_survey_boundary
+from magcore.boundary_export import boundary_to_kml, boundary_to_shapefile_zip
 from app.store import boundary_rings
 from app.store import store as project_store
 

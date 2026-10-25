@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.processing.lines import LineDetectionParams, detect_lines, merge_continued_lines
+from magcore.lines import LineDetectionParams, detect_lines, merge_continued_lines
 
 LAT0, LON0 = 34.55, 126.40
 M_PER_DEG_LAT = 111_320.0

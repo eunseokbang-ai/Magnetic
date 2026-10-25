@@ -171,7 +171,7 @@ def test_fetch_auto_detects_dates_from_uploaded_drone_survey(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_irt):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get_irt):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/fetch",
             json={"iaga_code": "IRT"},

@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import matplotlib
 import numpy as np
 
-from app.processing.inversion import render_section_png
+from magcore.inversion import render_section_png
 
 
 def test_rcparams_restored_after_render():

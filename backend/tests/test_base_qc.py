@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.base_qc import process_base_station, trim_base_transients
+from magcore.base_qc import process_base_station, trim_base_transients
 
 RNG = np.random.default_rng(0)
 

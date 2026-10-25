@@ -12,8 +12,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.lines import LineDetectionParams
-from app.processing.repeatability import analyze_repeatability
+from magcore.lines import LineDetectionParams
+from magcore.repeatability import analyze_repeatability
 
 RNG = np.random.default_rng(0)
 

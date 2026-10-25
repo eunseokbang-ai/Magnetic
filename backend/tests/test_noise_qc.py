@@ -7,7 +7,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.noise_qc import compute_difference_qc
+from magcore.noise_qc import compute_difference_qc
 
 RNG = np.random.default_rng(0)
 

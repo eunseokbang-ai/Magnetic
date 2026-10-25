@@ -19,14 +19,14 @@ import numpy as np
 import pandas as pd
 
 from app.models import ProcessParams
-from app.processing.heading_calibration import (
+from magcore.heading_calibration import (
     HeadingCalibrationError,
     build_turn_based_calibration,
     cross_validate_heading_effect_map,
     fit_heading_effect_map,
     magnetic_heading,
 )
-from app.processing.lines import group_turn_segments
+from magcore.lines import group_turn_segments
 from app.store import Project
 
 RNG = np.random.default_rng(0)
@@ -336,7 +336,7 @@ def test_pipeline_heading_calibration_reduces_bias_correlation_with_orientation(
     df_on = project_on.processed
 
     theta, phi = np.zeros(len(df_off)), np.zeros(len(df_off))
-    from app.processing.heading_calibration import magnetic_heading
+    from magcore.heading_calibration import magnetic_heading
 
     theta, phi = magnetic_heading(df_off["compass_x"].to_numpy(), df_off["compass_y"].to_numpy(), df_off["compass_z"].to_numpy())
     injected_bias = true_bias(theta, phi)

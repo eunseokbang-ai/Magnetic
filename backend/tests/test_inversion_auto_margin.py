@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.inversion_auto import _grid_shape, suggest_mesh_params
+from magcore.inversion_auto import _grid_shape, suggest_mesh_params
 
 
 def _check(width, height, n_obs_cap=3500, n_active_cap=90000, line_spacing_m=99.0, seed=0):

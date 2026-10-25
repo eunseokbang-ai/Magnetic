@@ -19,7 +19,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.despike import despike
+from magcore.despike import despike
 
 
 def _smooth_day(n=1440, amplitude=20.0, noise=0.0, seed=0):

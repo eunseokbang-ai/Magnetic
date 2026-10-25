@@ -13,7 +13,8 @@
 
 | 경로 | 내용 |
 |---|---|
-| `backend/` | FastAPI 처리 서버. `app/processing/`에 처리 모듈 68개, `tests/`에 자동화 시험 |
+| `magcore/` | 자력탐사 처리 라이브러리(처리 모듈 68개). DroneMag Studio와 지뢰탐지 전용 프로그램이 함께 쓴다 |
+| `backend/` | FastAPI 처리 서버(`app/`)와 자동화 시험(`tests/`). 처리는 전부 `magcore`를 부른다 |
 | `frontend/` | React + Leaflet 지도 화면 |
 | `docs/` | 기술 매뉴얼(Markdown, PDF)과 PDF 빌드 스크립트 |
 | `packaging/` | PyInstaller 사양(`magnetic.spec`)과 Inno Setup 스크립트(`installer.iss`) |

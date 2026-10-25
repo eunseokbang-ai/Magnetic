@@ -16,7 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing.height_normalization import (
+from magcore.height_normalization import (
     HeightNormalization,
     HeightNormalizationError,
     block_average,
@@ -145,7 +145,7 @@ def test_block_average_means_each_cell():
 def test_the_kernel_matches_the_source_removal_kernel_on_the_plane():
     """Same dipole physics as processing/source_removal.py, which the
     structure models rely on, evaluated there on z = 0."""
-    from app.processing.source_removal import _field_direction, _kernel
+    from magcore.source_removal import _field_direction, _kernel
 
     rng = np.random.default_rng(3)
     x, y = rng.uniform(-100, 100, 40), rng.uniform(-100, 100, 40)

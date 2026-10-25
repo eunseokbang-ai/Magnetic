@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.processing.anomaly_candidates import find_anomaly_candidates
-from app.processing.transforms import analytic_signal
+from magcore.anomaly_candidates import find_anomaly_candidates
+from magcore.transforms import analytic_signal
 
 INCLINATION_DEG = 50.94
 DECLINATION_DEG = -8.10

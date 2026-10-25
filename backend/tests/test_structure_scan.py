@@ -62,7 +62,7 @@ def test_structure_scan_endpoint_returns_buildings_and_anomalies():
     df = project.processed
     center = (float(df["lat"].median()), float(df["lon"].median()))
 
-    with patch("app.processing.osm_structures.requests.post", return_value=_mock_overpass_response(center)):
+    with patch("magcore.osm_structures.requests.post", return_value=_mock_overpass_response(center)):
         r = client.post(f"/api/projects/{project_id}/structure-scan", json={})
     assert r.status_code == 200, r.text
     resp = r.json()
@@ -85,7 +85,7 @@ def test_structure_scan_propagates_network_failure_as_clear_error():
     client, project_id = _make_processed_project()
     import requests
 
-    with patch("app.processing.osm_structures.requests.post", side_effect=requests.ConnectionError("blocked")):
+    with patch("magcore.osm_structures.requests.post", side_effect=requests.ConnectionError("blocked")):
         r = client.post(f"/api/projects/{project_id}/structure-scan", json={})
     assert r.status_code != 200
     assert "네트워크" in r.json()["detail"] or "OpenStreetMap" in r.json()["detail"]

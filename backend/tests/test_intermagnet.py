@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing.intermagnet import IagaParseError, haversine_km, parse_iaga2002
+from magcore.intermagnet import IagaParseError, haversine_km, parse_iaga2002
 
 _XYZF_SAMPLE = """\
  Format                 IAGA-2002                                    |

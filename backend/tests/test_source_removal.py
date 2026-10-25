@@ -21,7 +21,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
+from magcore.source_removal import SourceRemoval, apply_source_removals, fit_source_removal
 
 INC, DEC = 50.94, -8.10
 SRC = (0.0, 0.0, -40.0)            # 40 m below the survey plane

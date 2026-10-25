@@ -11,7 +11,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 from pyproj import Transformer
 
-from app.processing.euler_deconvolution import run_euler_deconvolution
+from magcore.euler_deconvolution import run_euler_deconvolution
 
 UTM_EPSG = 32652  # arbitrary valid UTM zone, only used for the final xy->lonlat reprojection
 

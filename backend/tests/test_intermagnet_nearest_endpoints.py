@@ -78,7 +78,7 @@ def test_fetch_previews_nearest_stations_without_committing(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -104,7 +104,7 @@ def test_fetch_auto_detects_dates_from_uploaded_drone_survey(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"n_stations": 3},
@@ -116,7 +116,7 @@ def test_fetch_auto_detects_dates_from_uploaded_drone_survey(client):
 
 def test_fetch_auto_mode_without_drone_data_fails_clearly(client):
     project_id = _new_project(client)
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"n_stations": 3, "target_lat": 46.48, "target_lon": 106.27},
@@ -140,7 +140,7 @@ def test_apply_commits_nearest_preview_as_base_and_unblocks_processing(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -162,7 +162,7 @@ def test_comparison_available_after_fetch_before_apply(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -185,7 +185,7 @@ def test_comparison_still_available_after_apply(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -228,7 +228,7 @@ def test_csv_export_returns_combined_series(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -258,7 +258,7 @@ def test_csv_export_round_trips_through_standard_base_upload(client):
     project_id = _new_project(client)
     _upload_drone(client, project_id)
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -302,7 +302,7 @@ def test_fetch_rejects_end_date_before_start_date(client):
 
 def test_fetch_without_drone_data_or_explicit_target_fails_clearly(client):
     project_id = _new_project(client)
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3},
@@ -312,7 +312,7 @@ def test_fetch_without_drone_data_or_explicit_target_fails_clearly(client):
 
 def test_fetch_accepts_explicit_target_override_without_drone_data(client):
     project_id = _new_project(client)
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         r = client.post(
             f"/api/projects/{project_id}/base/intermagnet/nearest/fetch",
             json={"start_date": "2026-07-24", "end_date": "2026-07-24", "n_stations": 3, "target_lat": 46.48, "target_lon": 106.27},

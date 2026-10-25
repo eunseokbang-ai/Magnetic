@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from app.processing.height_normalization import dipole_layer_field
+from magcore.height_normalization import dipole_layer_field
 
 INC, DEC = 53.0, -8.0
 LINE_SPACING = 50.0

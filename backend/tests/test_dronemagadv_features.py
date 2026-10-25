@@ -15,12 +15,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.crossover_leveling import compute_crossover_leveling
-from app.processing.despike import despike
-from app.processing.gridding import grid_points
-from app.processing.lines import _pca_dominant_azimuth, korea2010_epsg, resolve_korea_projection_epsg
-from app.processing.render import grid_to_surfer_grd_bytes, polygon_to_bln_bytes
-from app.processing.transforms import (
+from magcore.crossover_leveling import compute_crossover_leveling
+from magcore.despike import despike
+from magcore.gridding import grid_points
+from magcore.lines import _pca_dominant_azimuth, korea2010_epsg, resolve_korea_projection_epsg
+from magcore.render import grid_to_surfer_grd_bytes, polygon_to_bln_bytes
+from magcore.transforms import (
     derivative_easting,
     derivative_northing,
     second_derivative_ee,
@@ -192,7 +192,7 @@ def test_minimum_curvature_multilevel_matches_single_level_on_large_grid():
     """A grid big enough to trigger the multilevel path should still
     converge to essentially the same smooth surface a direct (slow)
     single-level solve would produce."""
-    from app.processing.gridding import _minimum_curvature_multilevel, _minimum_curvature_relax
+    from magcore.gridding import _minimum_curvature_multilevel, _minimum_curvature_relax
 
     rng = np.random.default_rng(4)
     ny, nx = 80, 80  # 6400 cells - safely above _MULTILEVEL_BASE_CELLS

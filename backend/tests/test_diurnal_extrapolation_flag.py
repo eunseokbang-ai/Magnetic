@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.diurnal import apply_diurnal_correction
+from magcore.diurnal import apply_diurnal_correction
 
 
 def test_extrapolated_mask_flags_only_out_of_coverage_samples():

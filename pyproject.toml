@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magcore"
+version = "0.1.0"
+description = "Magnetic-survey processing library shared by DroneMag Studio and the landmine-detection program"
+requires-python = ">=3.11"
+# Versions are pinned in backend/requirements.txt; these are the library's own needs.
+dependencies = [
+    "numpy", "scipy", "pandas", "pyproj", "ppigrf", "verde", "matplotlib",
+    "contourpy", "rasterio", "choclo", "numba", "requests", "shapely", "pyshp",
+]
+
+[tool.setuptools]
+packages = ["magcore"]

@@ -29,7 +29,7 @@ import pytest
 from PIL import Image
 from pyproj import Transformer
 
-from app.processing.render import grid_to_png_overlay
+from magcore.render import grid_to_png_overlay
 
 UTM_EPSG = 32652
 UTM_EPSG_106E = 32648  # zone 48N, central meridian 105E

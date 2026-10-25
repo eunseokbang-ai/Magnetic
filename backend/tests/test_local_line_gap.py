@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.gridding import _local_line_gap_m, _local_line_gap_m_exact, grid_points
+from magcore.gridding import _local_line_gap_m, _local_line_gap_m_exact, grid_points
 
 
 def _three_line_survey():

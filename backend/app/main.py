@@ -60,9 +60,9 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from .processing import local_tiles, tile_cache
-from .processing.colormaps import register_custom_colormaps
-from .processing.overlay_image import OverlayImageError, load_geotiff_overlay
+from magcore import local_tiles, tile_cache
+from magcore.colormaps import register_custom_colormaps
+from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
 from .autosave import AutosaveManager
 from .store import ProjectError, store
 

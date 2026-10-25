@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.processing.osm_structures import (
+from magcore.osm_structures import (
     OsmFetchError,
     OsmStructures,
     buffer_structures_to_polygons,
@@ -55,7 +55,7 @@ def _mock_post(status_code=200, json_body=None):
 
 
 def test_fetch_osm_structures_parses_buildings_and_roads():
-    with patch("app.processing.osm_structures.requests.post", _mock_post()):
+    with patch("magcore.osm_structures.requests.post", _mock_post()):
         result = fetch_osm_structures(46.48, 106.27, 46.49, 106.28)
     assert len(result.buildings) == 1
     assert len(result.roads) == 1
@@ -73,7 +73,7 @@ def test_fetch_osm_structures_rejects_oversized_bbox():
 
 
 def test_fetch_osm_structures_raises_clear_error_on_http_failure():
-    with patch("app.processing.osm_structures.requests.post", _mock_post(status_code=504)):
+    with patch("magcore.osm_structures.requests.post", _mock_post(status_code=504)):
         with pytest.raises(OsmFetchError):
             fetch_osm_structures(46.48, 106.27, 46.49, 106.28)
 
@@ -81,13 +81,13 @@ def test_fetch_osm_structures_raises_clear_error_on_http_failure():
 def test_fetch_osm_structures_raises_on_network_error():
     import requests
 
-    with patch("app.processing.osm_structures.requests.post", side_effect=requests.ConnectionError("blocked")):
+    with patch("magcore.osm_structures.requests.post", side_effect=requests.ConnectionError("blocked")):
         with pytest.raises(OsmFetchError):
             fetch_osm_structures(46.48, 106.27, 46.49, 106.28)
 
 
 def test_buffer_structures_to_polygons_produces_valid_rings():
-    with patch("app.processing.osm_structures.requests.post", _mock_post()):
+    with patch("magcore.osm_structures.requests.post", _mock_post()):
         structures = fetch_osm_structures(46.48, 106.27, 46.49, 106.28)
     polygons = buffer_structures_to_polygons(structures, utm_epsg=32648, building_buffer_m=10.0, road_buffer_m=5.0)
     assert len(polygons) == 2  # building and road buffers here don't overlap

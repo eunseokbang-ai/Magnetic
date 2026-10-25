@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.inversion import (
+from magcore.inversion import (
     InversionResult,
     azimuth_line,
     box_faces,

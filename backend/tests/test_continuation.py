@@ -17,8 +17,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models import TransformRequest
-from app.processing.continuation import continuation_report, source_continuation_fill
-from app.processing.transforms import second_derivative_nz
+from magcore.continuation import continuation_report, source_continuation_fill
+from magcore.transforms import second_derivative_nz
 from app.store import store as project_store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"

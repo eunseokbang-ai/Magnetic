@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models import TransformRequest
-from app.processing.edge_margin import apply_margin, edge_distance_m, margin_mask, margin_outline
+from magcore.edge_margin import apply_margin, edge_distance_m, margin_mask, margin_outline
 from app.store import store as project_store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"

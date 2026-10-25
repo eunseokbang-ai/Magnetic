@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.processing.grid_diagnostics import diagnose_striping
+from magcore.grid_diagnostics import diagnose_striping
 
 CELL = 5.0
 SPACING = 100.0

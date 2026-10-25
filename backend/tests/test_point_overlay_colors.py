@@ -17,7 +17,7 @@ import numpy as np
 import matplotlib.colors
 import pytest
 
-from app.processing.render import (
+from magcore.render import (
     _COLOR_STOP_FRACTIONS,
     _EqualizeNorm,
     _NormalNorm,

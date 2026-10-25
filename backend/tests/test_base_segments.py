@@ -9,8 +9,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.processing.base_segments import find_base_segments, level_base_segments
-from app.processing.diurnal import apply_diurnal_correction
+from magcore.base_segments import find_base_segments, level_base_segments
+from magcore.diurnal import apply_diurnal_correction
 
 
 def _base_day(date: str, level: float, amplitude: float, start="09:00", end="11:00"):

@@ -15,10 +15,10 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.processing.contacts import detect_magnetic_contacts
-from app.processing.gridding import grid_points
-from app.processing.prospectivity import compute_prospectivity
-from app.processing.transforms import analytic_signal, total_horizontal_derivative
+from magcore.contacts import detect_magnetic_contacts
+from magcore.gridding import grid_points
+from magcore.prospectivity import compute_prospectivity
+from magcore.transforms import analytic_signal, total_horizontal_derivative
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"

@@ -16,8 +16,8 @@ from fastapi.testclient import TestClient
 from app.chat import _execute_tool
 from app.main import app
 from app.models import TargetDetectionRequest
-from app.processing.dipole_fit import MU0, detect_targets, field_direction_enu
-from app.processing.gridding import grid_points
+from magcore.dipole_fit import MU0, detect_targets, field_direction_enu
+from magcore.gridding import grid_points
 from app.store import store as project_store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"

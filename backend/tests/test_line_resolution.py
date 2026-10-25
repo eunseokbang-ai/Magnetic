@@ -16,7 +16,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing.line_resolution import assess_line_resolution
+from magcore.line_resolution import assess_line_resolution
 
 SPACING = 60.0
 LINE_LENGTH = 2400.0

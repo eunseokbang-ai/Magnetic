@@ -8,7 +8,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.multiscale_edges import run_multiscale_edges
+from magcore.multiscale_edges import run_multiscale_edges
 
 UTM_EPSG = 32652
 

@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pytest
 
-from app.processing import tile_cache
+from magcore import tile_cache
 
 
 @pytest.fixture(autouse=True)
@@ -89,7 +89,7 @@ def test_download_tiles_rejects_over_cap_request():
 
 def test_fetch_and_cache_tile_writes_to_disk_and_returns_content():
     fake_resp = MagicMock(status_code=200, content=b"fake-png-bytes")
-    with patch("app.processing.tile_cache.requests.get", return_value=fake_resp) as mock_get:
+    with patch("magcore.tile_cache.requests.get", return_value=fake_resp) as mock_get:
         content = tile_cache.fetch_and_cache_tile("osm", 12, 100, 200)
     assert content == b"fake-png-bytes"
     assert tile_cache.get_cached_tile("osm", 12, 100, 200) == b"fake-png-bytes"
@@ -100,7 +100,7 @@ def test_fetch_and_cache_tile_writes_to_disk_and_returns_content():
 def test_fetch_and_cache_tile_returns_none_on_network_failure():
     import requests as requests_module
 
-    with patch("app.processing.tile_cache.requests.get", side_effect=requests_module.RequestException("boom")):
+    with patch("magcore.tile_cache.requests.get", side_effect=requests_module.RequestException("boom")):
         content = tile_cache.fetch_and_cache_tile("osm", 12, 100, 200)
     assert content is None
     assert tile_cache.get_cached_tile("osm", 12, 100, 200) is None
@@ -108,7 +108,7 @@ def test_fetch_and_cache_tile_returns_none_on_network_failure():
 
 def test_download_tiles_skips_already_cached_tiles():
     fake_resp = MagicMock(status_code=200, content=b"x")
-    with patch("app.processing.tile_cache.requests.get", return_value=fake_resp):
+    with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
         result1 = tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
         assert result1.n_downloaded == result1.n_total
         assert result1.n_already_cached == 0
@@ -121,7 +121,7 @@ def test_download_tiles_skips_already_cached_tiles():
 def test_download_tiles_counts_failures_separately():
     import requests as requests_module
 
-    with patch("app.processing.tile_cache.requests.get", side_effect=requests_module.ConnectionError("network down")):
+    with patch("magcore.tile_cache.requests.get", side_effect=requests_module.ConnectionError("network down")):
         result = tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
     assert result.n_failed == result.n_total
     assert result.n_downloaded == 0
@@ -129,7 +129,7 @@ def test_download_tiles_counts_failures_separately():
 
 def test_cache_status_reports_tile_count_and_size():
     fake_resp = MagicMock(status_code=200, content=b"0123456789")  # 10 bytes
-    with patch("app.processing.tile_cache.requests.get", return_value=fake_resp):
+    with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
         tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
     status = tile_cache.cache_status()
     assert status["osm"]["n_tiles"] > 0

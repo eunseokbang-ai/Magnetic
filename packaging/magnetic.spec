@@ -70,6 +70,9 @@ for package in ("pyproj", "rasterio", "ppigrf", "verde", "matplotlib",
 # uvicorn resolves its protocol/loop/lifespan implementations by string at
 # startup, so none of them appear in the import graph.
 hiddenimports += collect_submodules("uvicorn")
+# The processing library is imported by name from the repository root
+# (see backend/app/__init__.py); make sure every module of it is bundled.
+hiddenimports += collect_submodules("magcore")
 hiddenimports += [
     "encodings.idna",
     "httptools",
@@ -80,7 +83,7 @@ hiddenimports += [
 
 a = Analysis(
     [str(BACKEND / "launcher.py")],
-    pathex=[str(BACKEND)],
+    pathex=[str(BACKEND), str(REPO)],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

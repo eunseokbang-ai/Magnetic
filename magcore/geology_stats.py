@@ -33,7 +33,7 @@ import requests
 from shapely.geometry import shape
 from shapely.strtree import STRtree
 
-from .. import paths
+from . import paths
 from .tile_cache import _BROWSER_USER_AGENT
 
 WFS_URL = "https://data.kigam.re.kr/geoserver/wfs"

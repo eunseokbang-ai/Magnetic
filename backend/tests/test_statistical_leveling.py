@@ -13,9 +13,9 @@ import pandas as pd
 import pytest
 
 from app.models import HeadingCorrectionParams
-from app.processing.leveling import apply_heading_correction, compute_heading_correction
-from app.processing.microlevel import apply_microleveling
-from app.processing.statistical_leveling import (
+from magcore.leveling import apply_heading_correction, compute_heading_correction
+from magcore.microlevel import apply_microleveling
+from magcore.statistical_leveling import (
     apply_statistical_leveling,
     compute_statistical_leveling,
 )

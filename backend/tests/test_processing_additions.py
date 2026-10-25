@@ -14,10 +14,10 @@ import pandas as pd
 
 from app.io_.drone_loader import load_drone_csv, load_drone_csvs
 from app.io_.base_loader import load_base_csvs
-from app.processing.filters import moving_average_filter, savgol_filter_1d
-from app.processing.microlevel import apply_microleveling
-from app.processing.transforms import total_horizontal_derivative, upward_continuation
-from app.processing.trend import remove_regional_trend
+from magcore.filters import moving_average_filter, savgol_filter_1d
+from magcore.microlevel import apply_microleveling
+from magcore.transforms import total_horizontal_derivative, upward_continuation
+from magcore.trend import remove_regional_trend
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 

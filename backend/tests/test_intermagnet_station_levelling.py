@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.processing.intermagnet import IagaObservatoryData, estimate_base_from_observatories
+from magcore.intermagnet import IagaObservatoryData, estimate_base_from_observatories
 
 TARGET_LAT, TARGET_LON = 34.55, 126.55
 

@@ -18,8 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.processing.gridding import grid_points
-from app.processing.transforms import (
+from magcore.gridding import grid_points
+from magcore.transforms import (
     _fill_gaps,
     analytic_signal,
     limit_to_line_spacing_resolution,
@@ -307,7 +307,7 @@ def test_it_still_filters_when_the_line_spacing_is_unknown():
 def test_the_cutoff_it_will_use_is_reportable_before_running():
     """So the API can say whether the filter ran and at what width - a
     filter that can quietly decline has to be observable from outside."""
-    from app.processing.transforms import resolution_cutoff_m
+    from magcore.transforms import resolution_cutoff_m
 
     assert resolution_cutoff_m(10.0, 100.0, 1.0) == 100.0
     assert resolution_cutoff_m(10.0, 100.0, 0.5) == 50.0

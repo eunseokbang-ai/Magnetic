@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.processing.crossover_leveling import compute_crossover_leveling
-from app.processing.lines import LineDetectionParams, detect_lines, detect_tie_lines
+from magcore.crossover_leveling import compute_crossover_leveling
+from magcore.lines import LineDetectionParams, detect_lines, detect_tie_lines
 
 RNG = np.random.default_rng(0)
 
@@ -174,7 +174,7 @@ def test_polynomial_leveling_recovers_linear_error():
     ordered_detected_ids = centroid_x.index.tolist()
 
     before_values = detected["value"].to_numpy(copy=True)
-    from app.processing.crossover_leveling import apply_crossover_leveling
+    from magcore.crossover_leveling import apply_crossover_leveling
 
     leveled_values = apply_crossover_leveling(detected, "value", result)
 

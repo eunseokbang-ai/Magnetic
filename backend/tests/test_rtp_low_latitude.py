@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.transforms import reduction_to_equator, reduction_to_pole
+from magcore.transforms import reduction_to_equator, reduction_to_pole
 
 CELL = 10.0
 
@@ -67,7 +67,7 @@ def test_high_latitude_rtp_is_untouched_by_the_cap():
     out = reduction_to_pole(grid, CELL, inclination_deg=53.0, declination_deg=-8.0)
 
     # Recompute without the magnitude clamp, mirroring the module's filter.
-    from app.processing.transforms import _apply_filter, _direction_coeffs
+    from magcore.transforms import _apply_filter, _direction_coeffs
 
     a, b, c = _direction_coeffs(53.0, -8.0)
 

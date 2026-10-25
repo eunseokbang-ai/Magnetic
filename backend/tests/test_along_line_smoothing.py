@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.gridding import _along_line_lowpass, grid_points
+from magcore.gridding import _along_line_lowpass, grid_points
 
 
 def _synthetic_survey(n_lines=10, line_spacing=100.0, along_spacing=2.0, line_len=2000.0, noise_std=5.0, seed=0):

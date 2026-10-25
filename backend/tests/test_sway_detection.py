@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from app.models import ProcessParams
-from app.processing.sway import detect_sway
+from magcore.sway import detect_sway
 from app.store import Project
 
 RNG = np.random.default_rng(0)

@@ -15,7 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.render import grid_to_png_overlay, robust_center_scale
+from magcore.render import grid_to_png_overlay, robust_center_scale
 
 UTM_EPSG = 32652
 

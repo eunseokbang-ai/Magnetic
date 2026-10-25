@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.processing.line_overlap import resolve_line_overlaps
+from magcore.line_overlap import resolve_line_overlaps
 
 
 def _line_with_overlap(noise_first: float, noise_second: float, overlap_m: float = 20.0,

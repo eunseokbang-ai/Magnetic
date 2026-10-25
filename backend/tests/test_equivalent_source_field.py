@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models import TransformRequest
-from app.processing.continuation import equivalent_source_field, field_depth_cells
-from app.processing.transforms import limit_to_line_spacing_resolution, second_derivative_ee
+from magcore.continuation import equivalent_source_field, field_depth_cells
+from magcore.transforms import limit_to_line_spacing_resolution, second_derivative_ee
 from app.store import store as project_store
 
 CELL = 10.0

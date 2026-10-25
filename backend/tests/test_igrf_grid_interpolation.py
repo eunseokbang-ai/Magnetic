@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import ppigrf
 
-from app.processing.igrf import compute_igrf_total_field
+from magcore.igrf import compute_igrf_total_field
 
 
 def _reference_total_field(lat, lon, alt_m, date) -> np.ndarray:

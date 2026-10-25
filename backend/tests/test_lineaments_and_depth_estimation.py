@@ -16,14 +16,14 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.processing.depth_estimation import (
+from magcore.depth_estimation import (
     analytic_signal_depth_estimates,
     spectral_depth_diagnostic,
     tilt_depth_estimates,
 )
-from app.processing.gridding import grid_points
-from app.processing.lineaments import extract_lineaments
-from app.processing.transforms import total_horizontal_derivative
+from magcore.gridding import grid_points
+from magcore.lineaments import extract_lineaments
+from magcore.transforms import total_horizontal_derivative
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"

@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.processing import tile_cache
+from magcore import tile_cache
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ def test_estimate_rejects_unknown_source(client):
 
 def test_download_then_status_then_serve_tile(client):
     fake_resp = MagicMock(status_code=200, content=b"fake-tile-bytes")
-    with patch("app.processing.tile_cache.requests.get", return_value=fake_resp):
+    with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
         r = client.post("/api/tiles/download", json=_BBOX)
     assert r.status_code == 200, r.text
     result = r.json()
@@ -82,12 +82,12 @@ def test_download_then_status_then_serve_tile(client):
 
 def test_get_tile_falls_back_to_live_fetch_when_not_cached(client):
     fake_resp = MagicMock(status_code=200, content=b"live-fetched")
-    with patch("app.processing.tile_cache.requests.get", return_value=fake_resp):
+    with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
         r = client.get("/api/tiles/osm/9/300/150")
     assert r.status_code == 200, r.text
     assert r.content == b"live-fetched"
     # now cached, so a second request should not need the network at all
-    with patch("app.processing.tile_cache.requests.get", side_effect=AssertionError("should not be called")):
+    with patch("magcore.tile_cache.requests.get", side_effect=AssertionError("should not be called")):
         r2 = client.get("/api/tiles/osm/9/300/150")
     assert r2.status_code == 200, r2.text
     assert r2.content == b"live-fetched"
@@ -96,7 +96,7 @@ def test_get_tile_falls_back_to_live_fetch_when_not_cached(client):
 def test_get_tile_404s_when_uncached_and_unreachable(client):
     import requests as requests_module
 
-    with patch("app.processing.tile_cache.requests.get", side_effect=requests_module.ConnectionError("offline")):
+    with patch("magcore.tile_cache.requests.get", side_effect=requests_module.ConnectionError("offline")):
         r = client.get("/api/tiles/osm/9/300/150")
     assert r.status_code == 404
 

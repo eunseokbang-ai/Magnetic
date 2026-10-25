@@ -11,8 +11,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.filters import notch_filter
-from app.processing.spectrum import compute_power_spectrum
+from magcore.filters import notch_filter
+from magcore.spectrum import compute_power_spectrum
 
 RNG = np.random.default_rng(0)
 

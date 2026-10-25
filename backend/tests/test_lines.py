@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pandas as pd
 
-from app.processing.lines import LineDetectionParams, _bridge_line_gaps, detect_lines
+from magcore.lines import LineDetectionParams, _bridge_line_gaps, detect_lines
 
 LAT0, LON0 = 37.5, 127.0
 M_PER_DEG_LAT = 111_320.0

@@ -11,7 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.processing import local_tiles
+from magcore import local_tiles
 
 
 def _make_xyz_folder(root: pathlib.Path, zoom: int, x_range: range, y_range: range, ext: str = "png") -> None:

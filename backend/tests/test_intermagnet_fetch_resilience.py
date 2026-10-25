@@ -21,8 +21,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import pytest
 import requests
 
-from app.processing import intermagnet
-from app.processing.intermagnet import fetch_iaga2002_text, select_nearest_observatories
+from magcore import intermagnet
+from magcore.intermagnet import fetch_iaga2002_text, select_nearest_observatories
 
 TARGET = (36.5, 127.9)
 DATES = [date(2026, 9, 7), date(2026, 9, 8), date(2026, 9, 9)]
@@ -79,21 +79,21 @@ class FakeGin:
 @pytest.fixture(autouse=True)
 def _only_our_candidates(monkeypatch):
     """Keep the candidate list to the three fake stations."""
-    from app.processing.intermagnet_stations import ObservatoryRosterEntry
+    from magcore.intermagnet_stations import ObservatoryRosterEntry
 
     entries = [ObservatoryRosterEntry(iaga_code=c, name=c, country="Republic of Korea") for c in STATIONS]
     monkeypatch.setattr(intermagnet, "_candidates_by_rough_distance", lambda lat, lon, limit: entries)
 
 
 def _select(gin, report=None, n=2):
-    with patch("app.processing.intermagnet.requests.get", side_effect=gin.get):
+    with patch("magcore.intermagnet.requests.get", side_effect=gin.get):
         return select_nearest_observatories(*TARGET, DATES, n_stations=n, report=report)
 
 
 def test_a_timeout_is_retried_rather_than_treated_as_missing_data():
     gin = FakeGin(flaky={("CYG", DATES[0]): 2})     # two timeouts, then fine
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=gin.get):
+    with patch("magcore.intermagnet.requests.get", side_effect=gin.get):
         text = fetch_iaga2002_text("CYG", DATES[0], days=1)
 
     assert "CYGF" in text
@@ -103,7 +103,7 @@ def test_a_timeout_is_retried_rather_than_treated_as_missing_data():
 def test_missing_data_is_not_retried():
     gin = FakeGin(missing={("CYG", DATES[0])})
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=gin.get):
+    with patch("magcore.intermagnet.requests.get", side_effect=gin.get):
         with pytest.raises(intermagnet.IntermagnetFetchError):
             fetch_iaga2002_text("CYG", DATES[0], days=1)
 
@@ -187,7 +187,7 @@ def test_choosing_stations_reads_only_the_header_of_a_day():
     resp = MagicMock()
     resp.status_code = 200
     resp.iter_content.side_effect = chunks
-    with patch("app.processing.intermagnet.requests.get", return_value=resp):
+    with patch("magcore.intermagnet.requests.get", return_value=resp):
         station = intermagnet.fetch_observatory_header("KAK", DATES[0])
 
     assert station is not None and abs(station.lat - 36.23) < 1e-6
@@ -197,12 +197,12 @@ def test_choosing_stations_reads_only_the_header_of_a_day():
 
 def test_a_known_station_is_not_asked_where_it_is_again():
     first = FakeGin()
-    with patch("app.processing.intermagnet.requests.get", side_effect=first.get):
+    with patch("magcore.intermagnet.requests.get", side_effect=first.get):
         intermagnet.fetch_observatory_header("KAK", DATES[0])
     assert first.calls
 
     second = FakeGin()
-    with patch("app.processing.intermagnet.requests.get", side_effect=second.get):
+    with patch("magcore.intermagnet.requests.get", side_effect=second.get):
         station = intermagnet.fetch_observatory_header("KAK", DATES[1])
 
     assert station is not None and station.iaga_code == "KAK"
@@ -255,7 +255,7 @@ def test_a_station_that_never_answers_is_left_out_for_a_while():
     station, not the line - and the next run does not wait on it again."""
     silent = {("KAK", d): 99 for d in DATES}
     report: dict = {}
-    with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+    with patch("magcore.intermagnet.requests.get", side_effect=FakeGin().get):
         intermagnet.fetch_observatory_header("KAK", DATES[0])       # position known from earlier
     _select(FakeGin(flaky=silent), report, n=3)
     assert "KAK" in {d["iaga_code"] for d in report["dropped"]}
@@ -272,7 +272,7 @@ def test_a_dead_line_does_not_blacklist_every_station():
     """If nothing answered at all, that is the connection - no station is
     marked, and the next run asks all of them again."""
     for code in STATIONS:
-        with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+        with patch("magcore.intermagnet.requests.get", side_effect=FakeGin().get):
             intermagnet.fetch_observatory_header(code, DATES[0])
     everything = {(c, d): 99 for c in STATIONS for d in DATES}
     with pytest.raises(intermagnet.IntermagnetFetchError):
@@ -286,7 +286,7 @@ def test_a_dead_line_does_not_blacklist_every_station():
 
 def test_a_dead_station_costs_only_the_first_few_dates():
     dead = {("KAK", d) for d in DATES[1:]} | {("KAK", DATES[0])}
-    with patch("app.processing.intermagnet.requests.get", side_effect=FakeGin().get):
+    with patch("magcore.intermagnet.requests.get", side_effect=FakeGin().get):
         intermagnet.fetch_observatory_header("KAK", DATES[0])
     gin = FakeGin(missing=dead)
 

@@ -15,7 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing import geology_stats as gs
+from magcore import geology_stats as gs
 
 
 def _square(lon0, lat0, size, **props):

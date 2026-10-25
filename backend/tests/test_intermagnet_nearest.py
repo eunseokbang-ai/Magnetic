@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.processing.intermagnet import (
+from magcore.intermagnet import (
     IagaObservatoryData,
     IntermagnetFetchError,
     _bearing_deg,
@@ -131,7 +131,7 @@ def test_pick_direction_diverse_fills_remaining_slots_by_true_distance_not_probe
 
 
 def test_select_nearest_observatories_picks_real_station_near_target():
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, estimated_dates_by_code = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=60
         )
@@ -151,7 +151,7 @@ def test_select_nearest_observatories_falls_back_to_later_dates_for_probing():
     # requested date (07-20 here) isn't published by any candidate at
     # all. Probing must fall through to a later requested date rather
     # than giving up outright just because the first one drew a blank.
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, _ = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 20), date(2026, 7, 24)], n_stations=2, max_candidates=60
         )
@@ -167,7 +167,7 @@ def test_select_nearest_observatories_drops_a_date_with_no_data_anywhere_nearby(
     # any OTHER date (and its neighbors) can never find real coverage for
     # that date - it should simply be dropped from the result rather than
     # erroring, while the date that does match stays.
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, estimated_dates_by_code = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24), date(2026, 8, 15)], n_stations=2, max_candidates=60
         )
@@ -185,7 +185,7 @@ def test_select_nearest_observatories_respects_max_distance_km():
     # outside 500km, IRT (~2537km) and GZH (~2044km) are outside 2000km
     # too - a tight 500km cutoff should leave only CYG (~99km) even
     # though n_stations=4 asks for more.
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, _ = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=60, max_distance_km=500.0
         )
@@ -197,7 +197,7 @@ def test_select_nearest_observatories_default_cutoff_excludes_far_mock_stations(
     # DEFAULT_MAX_STATION_DISTANCE_KM (2000km) cutoff - requesting all 5
     # mock stations should come back with only the 3 within range even
     # though n_stations=5 is requested.
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, _ = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=5, max_candidates=60
         )
@@ -209,7 +209,7 @@ def test_select_nearest_observatories_default_cutoff_excludes_far_mock_stations(
 def test_select_nearest_observatories_max_distance_none_reaches_far_stations():
     # explicitly disabling the cutoff should restore the old
     # reach-as-far-as-needed behavior, picking up IRT/GZH too.
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get):
         stations, _ = select_nearest_observatories(
             _TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=5, max_candidates=60, max_distance_km=None
         )
@@ -222,7 +222,7 @@ def test_select_nearest_observatories_raises_clear_error_when_nothing_found():
         resp = MagicMock(status_code=404, text="not found")
         return resp
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_all_404):
+    with patch("magcore.intermagnet.requests.get", side_effect=_all_404):
         with pytest.raises(IntermagnetFetchError, match="관측소"):
             select_nearest_observatories(_TARGET_LAT, _TARGET_LON, [date(2026, 7, 24)], n_stations=4, max_candidates=10)
 
@@ -271,7 +271,7 @@ def test_fetch_observatory_dates_estimates_sparse_missing_date_from_its_own_neig
         return resp
 
     requested = [date(2026, 7, 15), date(2026, 7, 16), date(2026, 8, 3), date(2026, 8, 4), date(2026, 8, 5)]
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_by_date):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get_by_date):
         data, estimated_dates = fetch_observatory_dates("CYG", requested)
 
     assert set(estimated_dates) == {"2026-07-15", "2026-08-05"}
@@ -292,7 +292,7 @@ def test_fetch_observatory_dates_drops_date_with_no_neighbor_data_either():
         resp = MagicMock(status_code=404, text="not found")
         return resp
 
-    with patch("app.processing.intermagnet.requests.get", side_effect=_fake_requests_get_none):
+    with patch("magcore.intermagnet.requests.get", side_effect=_fake_requests_get_none):
         with pytest.raises(IntermagnetFetchError):
             fetch_observatory_dates("CYG", [date(2026, 7, 15)])
 
@@ -469,7 +469,7 @@ def test_a_rebuilt_day_joins_the_real_days_on_both_sides():
     """
     from datetime import date
 
-    from app.processing.intermagnet import fill_missing_days
+    from magcore.intermagnet import fill_missing_days
 
     days = [date(2026, 9, 7), date(2026, 9, 8), date(2026, 9, 9)]
     truth = _drifting_station_days(days, 50130.0, 22.0, drift_per_day=4.0, seed=1)
@@ -494,7 +494,7 @@ def test_a_rebuilt_day_with_nothing_after_it_still_uses_what_is_there():
     must not be lost."""
     from datetime import date
 
-    from app.processing.intermagnet import fill_missing_days
+    from magcore.intermagnet import fill_missing_days
 
     days = [date(2026, 9, 7), date(2026, 9, 8), date(2026, 9, 9)]
     truth = _drifting_station_days(days, 50130.0, 22.0, drift_per_day=4.0, seed=2)

@@ -14,7 +14,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from app.processing.gridding import grid_points
+from magcore.gridding import grid_points
 
 
 def test_grid_axis_spacing_exactly_matches_cell_size_on_both_axes():

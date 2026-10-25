@@ -15,8 +15,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import numpy as np
 import pytest
 
-from app.processing.magnetization import estimate_magnetization
-from app.processing.source_removal import _field_direction, _kernel
+from magcore.magnetization import estimate_magnetization
+from magcore.source_removal import _field_direction, _kernel
 
 INC, DEC = 50.94, -8.10
 DEPTH = 50.0
