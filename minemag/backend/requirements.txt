@@ -1,0 +1,3 @@
+# MineMag shares magcore and its dependencies with DroneMag Studio; the
+# pins live in one place.
+-r ../../backend/requirements.txt

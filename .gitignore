@@ -13,3 +13,6 @@ backend/.data/
 # 패키징 빌드 산출물 (packaging/ 스크립트로 언제든 재생성)
 packaging/build/
 packaging/output/
+
+# MineMag
+minemag/backend/.data/
