@@ -49,13 +49,15 @@ function GridOverlay({ overlay, opacity }) {
 }
 
 /** Map clicks go to the backend: value of the shown grid there and the nearest reading. */
-/** Live basemaps. OSM and Esri go through this app's tile cache
- * (api.tileUrl) so what was seen online is still there offline; Google's
- * unofficial tiles are shown directly and never cached. */
+/** Live basemaps, Google imagery first (the default). Esri goes through
+ * this app's tile cache (api.tileUrl) so what was seen online is still
+ * there offline; Google and OSM load straight into the browser and are
+ * never cached - OSM's tile policy forbids bulk use and it blocked the
+ * cache's fetches with 403, Google's terms do not allow it either. */
 const BASEMAPS = {
-  osm: { label: "OpenStreetMap", url: api.tileUrl("osm"), maxNative: 19, attribution: "&copy; OpenStreetMap contributors" },
-  esri: { label: "Esri 위성영상", url: api.tileUrl("esri"), maxNative: 19, attribution: "Tiles &copy; Esri" },
   google: { label: "Google 위성 (비공식 타일, 약관 주의)", url: "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", maxNative: 20, attribution: "&copy; Google" },
+  esri: { label: "Esri 위성영상 (오프라인 캐시)", url: api.tileUrl("esri"), maxNative: 19, attribution: "Tiles &copy; Esri" },
+  osm: { label: "OpenStreetMap", url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", maxNative: 19, attribution: "&copy; OpenStreetMap contributors" },
   none: { label: "없음" },
 };
 
@@ -65,11 +67,11 @@ function BoundsWatcher({ onChange }) {
   return null;
 }
 
-/** Pre-download OSM / Esri tiles of a small area for a site with no
+/** Pre-download Esri imagery tiles of a small area for a site with no
  * internet. Fields: bbox + zoom range, filled from the map view or from the
  * loaded survey (plus a margin). */
 function OfflinePanel({ mapBounds, points }) {
-  const [source, setSource] = useState("esri");
+  const source = "esri";
   const [bbox, setBbox] = useState({ min_lat: "", min_lon: "", max_lat: "", max_lon: "" });
   const [zoom, setZoom] = useState({ min: 14, max: 19 });
   const [estimate, setEstimate] = useState(null);
@@ -103,16 +105,12 @@ function OfflinePanel({ mapBounds, points }) {
   );
   return (
     <details style={{ marginTop: 6 }}>
-      <summary style={{ fontSize: 12, cursor: "pointer" }}>오프라인 지도 미리 받기 {status && `(OSM ${status.osm?.n_tiles ?? 0}장 · Esri ${status.esri?.n_tiles ?? 0}장 저장됨)`}</summary>
+      <summary style={{ fontSize: 12, cursor: "pointer" }}>오프라인 지도 미리 받기 {status && `(Esri ${status.esri?.n_tiles ?? 0}장 저장됨)`}</summary>
       <div style={note}>
-        인터넷이 없는 현장에서도 배경지도가 보이도록 조사 지역의 타일을 미리 받아 둡니다. 받아 둔 타일은 위의 OpenStreetMap·Esri 위성영상 선택에서 그대로 쓰입니다
-        (온라인에서 한 번 본 곳도 자동으로 저장됩니다). 좁은 범위와 필요한 확대단계만 받으세요. 한 번에 5,000장까지입니다.
+        인터넷이 없는 현장에서도 배경지도가 보이도록 조사 지역의 Esri 위성영상 타일을 미리 받아 둡니다. 받아 둔 타일은 위의 "Esri 위성영상 (오프라인 캐시)" 선택에서 그대로 쓰입니다
+        (온라인에서 한 번 본 곳도 자동으로 저장됩니다). OpenStreetMap과 Google은 타일 정책상 미리 받을 수 없습니다. 좁은 범위와 필요한 확대단계만 받으세요. 한 번에 5,000장까지입니다.
       </div>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
-        <select value={source} onChange={(e) => setSource(e.target.value)}>
-          <option value="esri">Esri 위성영상</option>
-          <option value="osm">OpenStreetMap</option>
-        </select>
         <button style={ghost} onClick={useView} disabled={!mapBounds}>현재 화면 범위</button>
         <button style={ghost} onClick={useSurvey} disabled={!points}>자료 범위 +200 m</button>
       </div>
@@ -127,7 +125,7 @@ function OfflinePanel({ mapBounds, points }) {
       </div>
       {result && <div style={{ fontSize: 11, marginTop: 4 }}>완료: 새로 {result.n_downloaded.toLocaleString()}장, 이미 있던 {result.n_already_cached.toLocaleString()}장{result.n_failed > 0 && <span style={{ color: "#b42318" }}>, 실패 {result.n_failed}장</span>}</div>}
       {err && <div style={warn}>{err}</div>}
-      {status && ["osm", "esri"].map((k) => status[k] && (
+      {status && ["esri"].map((k) => status[k] && (
         <div key={k} style={{ fontSize: 11 }}>{status[k].label}: {status[k].n_tiles.toLocaleString()}장 ({status[k].size_mb} MB){status[k].zoom_levels.length > 0 && ` · 확대 ${status[k].zoom_levels.join(", ")}`}</div>
       ))}
     </details>
@@ -268,9 +266,9 @@ export default function App() {
 
   const [basemaps, setBasemaps] = useState([]);        // GeoTIFF overlays with image_data_url
   const [basemapOpacity, setBasemapOpacity] = useState(1);
-  const [basemap, setBasemap] = useState(() => { try { return localStorage.getItem("minemag.basemap") || "osm"; } catch { return "osm"; } });
+  const [basemap, setBasemap] = useState(() => { try { return localStorage.getItem("minemag.basemap.v2") || "google"; } catch { return "google"; } });
   const [mapBounds, setMapBounds] = useState(null);
-  useEffect(() => { try { localStorage.setItem("minemag.basemap", basemap); } catch { /* private window */ } }, [basemap]);
+  useEffect(() => { try { localStorage.setItem("minemag.basemap.v2", basemap); } catch { /* private window */ } }, [basemap]);
   const [tileLayers, setTileLayers] = useState([]);    // registered local tile folders
   const [tilePath, setTilePath] = useState("");
   const [mapBusy, setMapBusy] = useState(false);

@@ -207,12 +207,14 @@ def delete_basemap(project_id: str, name: str):
     return store.get(project_id).remove_basemap(name)
 
 
-# Basemaps through the offline tile cache (magcore.tile_cache, rooted in
-# MineMag's own data dir): the map's OSM and Esri layers ask this app for
-# their tiles, so a tile seen while online is served from disk afterwards,
-# and /api/tiles/download fills a survey area in advance for a site with
-# no internet. Google imagery stays a direct, uncached layer (its terms
-# do not allow bulk download).
+# Esri imagery through the offline tile cache (magcore.tile_cache, rooted
+# in MineMag's own data dir): the map's Esri layer asks this app for its
+# tiles, so a tile seen while online is served from disk afterwards, and
+# /api/tiles/download fills a survey area in advance for a site with no
+# internet. OSM and Google are direct, uncached browser layers: OSM's
+# policy forbids bulk use and its servers blocked our fetches with 403,
+# Google's terms do not allow it either.
+_CACHED_SOURCES = ("esri",)
 @app.post("/api/tiles/estimate")
 def estimate_tiles(req: TileBboxRequest):
     n_tiles = tile_cache.count_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
@@ -230,13 +232,13 @@ def download_tiles(req: TileBboxRequest):
 @app.get("/api/tiles/status")
 def tiles_status():
     status = tile_cache.cache_status()
-    return {k: v for k, v in status.items() if k in ("osm", "esri")}
+    return {k: v for k, v in status.items() if k in _CACHED_SOURCES}
 
 
 @app.get("/api/tiles/{source}/{z}/{x}/{y}")
 def get_tile(source: str, z: int, x: int, y: int):
-    if source not in ("osm", "esri"):
-        raise HTTPException(status_code=404, detail=f"지원하지 않는 지도 소스입니다: {source}")
+    if source not in _CACHED_SOURCES:
+        raise HTTPException(status_code=404, detail=f"캐시를 거치지 않는 지도 소스입니다: {source}")
     content = tile_cache.get_cached_tile(source, z, x, y) or tile_cache.fetch_and_cache_tile(source, z, x, y)
     if content is None:
         raise HTTPException(status_code=404, detail="타일이 캐시에 없고 인터넷에서도 받아오지 못했습니다.")

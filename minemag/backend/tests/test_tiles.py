@@ -47,17 +47,21 @@ def test_estimate_download_status_and_serve():
         again = client.post("/api/tiles/download", json=_BBOX).json()
         assert again["n_already_cached"] == est["n_tiles"] and again["n_downloaded"] == 0
     st = client.get("/api/tiles/status").json()
-    assert set(st) == {"osm", "esri"} and st["esri"]["n_tiles"] == est["n_tiles"] and st["esri"]["zoom_levels"] == [16, 17]
+    assert set(st) == {"esri"} and st["esri"]["n_tiles"] == est["n_tiles"] and st["esri"]["zoom_levels"] == [16, 17]
     z, (x, y) = 16, tile_cache.tiles_for_bbox(36.378, 127.360, 36.380, 127.362, 16)[0]
     with patch.object(tile_cache.requests, "get", side_effect=AssertionError("must come from the cache")):
         r = client.get(f"/api/tiles/esri/{z}/{x}/{y}")
     assert r.status_code == 200 and r.content == b"\x89PNG tile" and r.headers["content-type"] == "image/jpeg"
     with patch.object(tile_cache.requests, "get", return_value=_ok(b"live")):
-        r = client.get("/api/tiles/osm/16/1/1")              # not cached: fetched live and stored
+        r = client.get("/api/tiles/esri/16/1/1")             # not cached: fetched live and stored
     assert r.status_code == 200 and r.content == b"live"
     with patch.object(tile_cache.requests, "get", side_effect=tile_cache.requests.RequestException("offline")):
-        assert client.get("/api/tiles/osm/16/1/1").status_code == 200       # now from disk
-        assert client.get("/api/tiles/osm/16/2/2").status_code == 404       # offline and not cached
-    assert client.get("/api/tiles/google/16/1/1").status_code == 404
-    assert client.post("/api/tiles/estimate", json={**_BBOX, "source": "google"}).status_code == 422
+        assert client.get("/api/tiles/esri/16/1/1").status_code == 200      # now from disk
+        assert client.get("/api/tiles/esri/16/2/2").status_code == 404      # offline and not cached
+    # OSM and Google are browser-direct layers: never fetched or served by this app
+    with patch.object(tile_cache.requests, "get", side_effect=AssertionError("must not be fetched")):
+        assert client.get("/api/tiles/osm/16/1/1").status_code == 404
+        assert client.get("/api/tiles/google/16/1/1").status_code == 404
+    for src in ("osm", "google"):
+        assert client.post("/api/tiles/estimate", json={**_BBOX, "source": src}).status_code == 422
     assert client.post("/api/tiles/download", json={**_BBOX, "min_zoom": 0, "max_zoom": 19, "min_lat": 30, "max_lat": 40, "min_lon": 120, "max_lon": 130}).status_code == 400

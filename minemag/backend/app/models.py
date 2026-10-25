@@ -54,9 +54,11 @@ class LocalTileFolderRequest(BaseModel):
 
 class TileBboxRequest(BaseModel):
     """A bounding box and zoom range of basemap tiles to count or to
-    download for offline use (magcore.tile_cache). Only the two sources
-    whose tile policies allow a modest pre-download are offered."""
-    source: Literal["osm", "esri"]
+    download for offline use (magcore.tile_cache). Esri only: OSM's tile
+    usage policy forbids bulk download, and its servers answered our
+    cache's fetches with 403 "Access blocked" (2026-10-25), so OSM is
+    shown straight from the browser and never cached."""
+    source: Literal["esri"] = "esri"
     min_lat: float = Field(ge=-90, le=90)
     min_lon: float = Field(ge=-180, le=180)
     max_lat: float = Field(ge=-90, le=90)
