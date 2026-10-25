@@ -39,6 +39,10 @@ export const resetPreprocess = (projectId) => request(`/projects/${projectId}/pr
 export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
 export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
 export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targets`, req);
+export const tileUrl = (source) => `${BASE}/tiles/${source}/{z}/{x}/{y}`;
+export const estimateOfflineTiles = (req) => post("/tiles/estimate", req);
+export const downloadOfflineTiles = (req) => post("/tiles/download", req);
+export const getOfflineTileStatus = () => request("/tiles/status");
 export const setArea = (projectId, polygon) => request(`/projects/${projectId}/area`, { method: "PUT", body: JSON.stringify({ polygon }) });
 export const clearArea = (projectId) => request(`/projects/${projectId}/area`, { method: "DELETE" });
 export const getArea = (projectId) => request(`/projects/${projectId}/area`);

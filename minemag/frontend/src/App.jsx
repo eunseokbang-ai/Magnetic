@@ -49,6 +49,91 @@ function GridOverlay({ overlay, opacity }) {
 }
 
 /** Map clicks go to the backend: value of the shown grid there and the nearest reading. */
+/** Live basemaps. OSM and Esri go through this app's tile cache
+ * (api.tileUrl) so what was seen online is still there offline; Google's
+ * unofficial tiles are shown directly and never cached. */
+const BASEMAPS = {
+  osm: { label: "OpenStreetMap", url: api.tileUrl("osm"), maxNative: 19, attribution: "&copy; OpenStreetMap contributors" },
+  esri: { label: "Esri 위성영상", url: api.tileUrl("esri"), maxNative: 19, attribution: "Tiles &copy; Esri" },
+  google: { label: "Google 위성 (비공식 타일, 약관 주의)", url: "https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}", maxNative: 20, attribution: "&copy; Google" },
+  none: { label: "없음" },
+};
+
+function BoundsWatcher({ onChange }) {
+  const map = useMapEvents({ moveend: () => onChange(map.getBounds()), zoomend: () => onChange(map.getBounds()) });
+  useEffect(() => { onChange(map.getBounds()); }, [map]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
+
+/** Pre-download OSM / Esri tiles of a small area for a site with no
+ * internet. Fields: bbox + zoom range, filled from the map view or from the
+ * loaded survey (plus a margin). */
+function OfflinePanel({ mapBounds, points }) {
+  const [source, setSource] = useState("esri");
+  const [bbox, setBbox] = useState({ min_lat: "", min_lon: "", max_lat: "", max_lon: "" });
+  const [zoom, setZoom] = useState({ min: 14, max: 19 });
+  const [estimate, setEstimate] = useState(null);
+  const [result, setResult] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const refresh = () => api.getOfflineTileStatus().then(setStatus).catch(() => {});
+  useEffect(() => { refresh(); }, []);
+
+  const useView = () => mapBounds && setBbox({
+    min_lat: mapBounds.getSouth().toFixed(5), min_lon: mapBounds.getWest().toFixed(5),
+    max_lat: mapBounds.getNorth().toFixed(5), max_lon: mapBounds.getEast().toFixed(5),
+  });
+  const useSurvey = () => {
+    if (!points) return;
+    const la = points.lat, lo = points.lon;
+    const mLat = 200 / 110540, mLon = 200 / (111320 * Math.cos((Math.min(...la) * Math.PI) / 180));   // 200 m margin
+    setBbox({ min_lat: (Math.min(...la) - mLat).toFixed(5), min_lon: (Math.min(...lo) - mLon).toFixed(5),
+      max_lat: (Math.max(...la) + mLat).toFixed(5), max_lon: (Math.max(...lo) + mLon).toFixed(5) });
+  };
+  const req = () => ({ source, min_lat: Number(bbox.min_lat), min_lon: Number(bbox.min_lon), max_lat: Number(bbox.max_lat), max_lon: Number(bbox.max_lon), min_zoom: Number(zoom.min), max_zoom: Number(zoom.max) });
+  const valid = Object.values(bbox).every((v) => v !== "" && !Number.isNaN(Number(v)));
+  const run = async (fn, set) => {
+    setBusy(true); setErr(null);
+    try { set(await fn(req())); if (fn === api.downloadOfflineTiles) refresh(); } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  const field = (k, label) => (
+    <label style={{ fontSize: 11 }}>{label} <input type="number" step="0.00001" value={bbox[k]} onChange={(e) => setBbox({ ...bbox, [k]: e.target.value })} style={{ width: 90 }} /></label>
+  );
+  return (
+    <details style={{ marginTop: 6 }}>
+      <summary style={{ fontSize: 12, cursor: "pointer" }}>오프라인 지도 미리 받기 {status && `(OSM ${status.osm?.n_tiles ?? 0}장 · Esri ${status.esri?.n_tiles ?? 0}장 저장됨)`}</summary>
+      <div style={note}>
+        인터넷이 없는 현장에서도 배경지도가 보이도록 조사 지역의 타일을 미리 받아 둡니다. 받아 둔 타일은 위의 OpenStreetMap·Esri 위성영상 선택에서 그대로 쓰입니다
+        (온라인에서 한 번 본 곳도 자동으로 저장됩니다). 좁은 범위와 필요한 확대단계만 받으세요. 한 번에 5,000장까지입니다.
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+        <select value={source} onChange={(e) => setSource(e.target.value)}>
+          <option value="esri">Esri 위성영상</option>
+          <option value="osm">OpenStreetMap</option>
+        </select>
+        <button style={ghost} onClick={useView} disabled={!mapBounds}>현재 화면 범위</button>
+        <button style={ghost} onClick={useSurvey} disabled={!points}>자료 범위 +200 m</button>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+        {field("min_lat", "남")}{field("max_lat", "북")}{field("min_lon", "서")}{field("max_lon", "동")}
+        <label style={{ fontSize: 11 }}>확대 <input type="number" min="0" max="19" value={zoom.min} onChange={(e) => setZoom({ ...zoom, min: e.target.value })} style={{ width: 40 }} />~<input type="number" min="0" max="19" value={zoom.max} onChange={(e) => setZoom({ ...zoom, max: e.target.value })} style={{ width: 40 }} /></label>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+        <button style={ghost} disabled={!valid || busy} onClick={() => run(api.estimateOfflineTiles, setEstimate)}>타일 수 확인</button>
+        <button style={button} disabled={!valid || busy || (estimate && estimate.exceeds_max)} onClick={() => run(api.downloadOfflineTiles, setResult)}>{busy ? "받는 중..." : "다운로드"}</button>
+        {estimate && <span style={{ fontSize: 11, color: estimate.exceeds_max ? "#b42318" : undefined }}>{estimate.n_tiles.toLocaleString()}장 · 약 {estimate.estimated_mb} MB{estimate.exceeds_max && " · 최대치 초과, 범위나 확대단계를 줄이세요"}</span>}
+      </div>
+      {result && <div style={{ fontSize: 11, marginTop: 4 }}>완료: 새로 {result.n_downloaded.toLocaleString()}장, 이미 있던 {result.n_already_cached.toLocaleString()}장{result.n_failed > 0 && <span style={{ color: "#b42318" }}>, 실패 {result.n_failed}장</span>}</div>}
+      {err && <div style={warn}>{err}</div>}
+      {status && ["osm", "esri"].map((k) => status[k] && (
+        <div key={k} style={{ fontSize: 11 }}>{status[k].label}: {status[k].n_tiles.toLocaleString()}장 ({status[k].size_mb} MB){status[k].zoom_levels.length > 0 && ` · 확대 ${status[k].zoom_levels.join(", ")}`}</div>
+      ))}
+    </details>
+  );
+}
+
 function ClickInspector({ onClick }) {
   useMapEvents({ click: (e) => onClick(e.latlng.lat, e.latlng.lng) });
   return null;
@@ -183,7 +268,9 @@ export default function App() {
 
   const [basemaps, setBasemaps] = useState([]);        // GeoTIFF overlays with image_data_url
   const [basemapOpacity, setBasemapOpacity] = useState(1);
-  const [showOsm, setShowOsm] = useState(true);
+  const [basemap, setBasemap] = useState(() => { try { return localStorage.getItem("minemag.basemap") || "osm"; } catch { return "osm"; } });
+  const [mapBounds, setMapBounds] = useState(null);
+  useEffect(() => { try { localStorage.setItem("minemag.basemap", basemap); } catch { /* private window */ } }, [basemap]);
   const [tileLayers, setTileLayers] = useState([]);    // registered local tile folders
   const [tilePath, setTilePath] = useState("");
   const [mapBusy, setMapBusy] = useState(false);
@@ -401,7 +488,9 @@ export default function App() {
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
           <label style={{ fontSize: 12 }}>GeoTIFF <input type="file" accept=".tif,.tiff" disabled={mapBusy} onChange={(e) => addBasemap(e.target.files[0])} /></label>
-          <label style={{ fontSize: 12 }}><input type="checkbox" checked={showOsm} onChange={(e) => setShowOsm(e.target.checked)} /> OSM 바탕</label>
+          <label style={{ fontSize: 12 }}>바탕 <select value={basemap} onChange={(e) => setBasemap(e.target.value)}>
+            {Object.entries(BASEMAPS).map(([k, b]) => <option key={k} value={k}>{b.label}</option>)}
+          </select></label>
           {basemaps.length > 0 && <label style={{ fontSize: 12 }}>불투명도 <input type="range" min="0.2" max="1" step="0.05" value={basemapOpacity} onChange={(e) => setBasemapOpacity(Number(e.target.value))} /></label>}
         </div>
         {basemaps.map((b) => (
@@ -415,6 +504,7 @@ export default function App() {
         {tileLayers.map((l) => (
           <div key={l.id} style={{ ...row, fontSize: 11 }}><span>{l.label} (z {l.min_zoom}~{l.max_zoom}, {l.scheme})</span><button style={{ ...ghost, padding: "1px 6px" }} onClick={() => dropTiles(l.id)}>지우기</button></div>
         ))}
+        <OfflinePanel mapBounds={mapBounds} points={points} />
 
         <h2 style={h2}>1. MagDrone R3 자료 올리기 (.asc)</h2>
         <input type="file" multiple accept=".asc,.txt,.csv" disabled={busy} onChange={(e) => upload(Array.from(e.target.files))} />
@@ -718,7 +808,8 @@ export default function App() {
             ? <Polyline positions={drawPts} pathOptions={{ color: "#b42318", weight: 2, dashArray: "4 3" }} />
             : <CircleMarker center={drawPts[0]} radius={5} pathOptions={{ color: "#b42318" }} />)}
           {sample && <CircleMarker center={[sample.lat, sample.lon]} radius={6} weight={2} pathOptions={{ color: "#111", fillOpacity: 0 }} />}
-          {showOsm && <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />}
+          <BoundsWatcher onChange={setMapBounds} />
+          {BASEMAPS[basemap].url && <TileLayer key={basemap} url={BASEMAPS[basemap].url} maxNativeZoom={BASEMAPS[basemap].maxNative} maxZoom={24} attribution={BASEMAPS[basemap].attribution} />}
           {tileLayers.map((l) => (
             <TileLayer key={l.id} url={api.localTileUrl(l.id)} minNativeZoom={l.min_zoom} maxNativeZoom={l.max_zoom} maxZoom={24} bounds={l.bounds} />
           ))}

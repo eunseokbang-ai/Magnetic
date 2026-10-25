@@ -52,6 +52,19 @@ class LocalTileFolderRequest(BaseModel):
     scheme: Literal["auto", "xyz", "tms"] = "auto"
 
 
+class TileBboxRequest(BaseModel):
+    """A bounding box and zoom range of basemap tiles to count or to
+    download for offline use (magcore.tile_cache). Only the two sources
+    whose tile policies allow a modest pre-download are offered."""
+    source: Literal["osm", "esri"]
+    min_lat: float = Field(ge=-90, le=90)
+    min_lon: float = Field(ge=-180, le=180)
+    max_lat: float = Field(ge=-90, le=90)
+    max_lon: float = Field(ge=-180, le=180)
+    min_zoom: int = Field(ge=0, le=19)
+    max_zoom: int = Field(ge=0, le=19)
+
+
 class AreaRequest(BaseModel):
     """The area of interest as [[lat, lon], ...] (3 or more vertices; a
     rectangle is four). Readings outside it - the turns and the take-off

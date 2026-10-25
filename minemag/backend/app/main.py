@@ -17,13 +17,14 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from magcore import local_tiles
+from magcore import local_tiles, tile_cache
 from magcore.colormaps import register_custom_colormaps
 from magcore.local_tiles import LocalTileError
 from magcore.overlay_image import OverlayImageError
+from magcore.tile_cache import TileCacheError
 
 from . import paths
-from .models import AreaRequest, GridRequest, LocalTileFolderRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
+from .models import AreaRequest, GridRequest, LocalTileFolderRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest, TileBboxRequest
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -60,6 +61,11 @@ async def _project_error(_request: Request, exc: ProjectError):
 
 @app.exception_handler(OverlayImageError)
 async def _overlay_error(_request: Request, exc: OverlayImageError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(TileCacheError)
+async def _tile_cache_error(_request: Request, exc: TileCacheError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -199,6 +205,43 @@ def get_basemap(project_id: str, name: str):
 @app.delete("/api/projects/{project_id}/basemaps/{name}")
 def delete_basemap(project_id: str, name: str):
     return store.get(project_id).remove_basemap(name)
+
+
+# Basemaps through the offline tile cache (magcore.tile_cache, rooted in
+# MineMag's own data dir): the map's OSM and Esri layers ask this app for
+# their tiles, so a tile seen while online is served from disk afterwards,
+# and /api/tiles/download fills a survey area in advance for a site with
+# no internet. Google imagery stays a direct, uncached layer (its terms
+# do not allow bulk download).
+@app.post("/api/tiles/estimate")
+def estimate_tiles(req: TileBboxRequest):
+    n_tiles = tile_cache.count_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
+    avg_kb_per_tile = 25 if req.source == "esri" else 15
+    return {"n_tiles": n_tiles, "estimated_mb": round(n_tiles * avg_kb_per_tile / 1024, 1),
+            "max_tiles": tile_cache.MAX_TILES_PER_REQUEST, "exceeds_max": n_tiles > tile_cache.MAX_TILES_PER_REQUEST}
+
+
+@app.post("/api/tiles/download")
+def download_tiles(req: TileBboxRequest):
+    r = tile_cache.download_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
+    return {"n_total": r.n_total, "n_already_cached": r.n_already_cached, "n_downloaded": r.n_downloaded, "n_failed": r.n_failed}
+
+
+@app.get("/api/tiles/status")
+def tiles_status():
+    status = tile_cache.cache_status()
+    return {k: v for k, v in status.items() if k in ("osm", "esri")}
+
+
+@app.get("/api/tiles/{source}/{z}/{x}/{y}")
+def get_tile(source: str, z: int, x: int, y: int):
+    if source not in ("osm", "esri"):
+        raise HTTPException(status_code=404, detail=f"지원하지 않는 지도 소스입니다: {source}")
+    content = tile_cache.get_cached_tile(source, z, x, y) or tile_cache.fetch_and_cache_tile(source, z, x, y)
+    if content is None:
+        raise HTTPException(status_code=404, detail="타일이 캐시에 없고 인터넷에서도 받아오지 못했습니다.")
+    return Response(content=content, media_type=tile_cache.TILE_SOURCES[source]["media_type"],
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 # Large orthophotos: an already-tiled {z}/{x}/{y} folder served from disk
