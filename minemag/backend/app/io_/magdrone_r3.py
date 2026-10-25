@@ -235,18 +235,28 @@ def summarize(df: pd.DataFrame) -> dict:
     sensors = sorted(int(s) for s in df["sensor"].unique())
     primary = sensors[0]
     s1 = df[df["sensor"] == primary].sort_values("timestamp")
-    t = s1["timestamp"].to_numpy().astype("datetime64[ms]").astype(np.int64)
-    dt = np.diff(t) if len(t) > 1 else np.array([])
+    # Sample intervals, gaps, duration and speed are measured inside each
+    # file: the days between two flights are not a gap in either of them.
+    file_col = s1["file_index"].to_numpy() if "file_index" in s1 else np.zeros(len(s1), dtype=int)
+    t_all = s1["timestamp"].to_numpy().astype("datetime64[ms]").astype(np.int64)
+    x_all, y_all = _local_xy(s1["lat"].to_numpy(), s1["lon"].to_numpy())
+    dts, speeds, duration_ms = [], [], 0.0
+    for f in np.unique(file_col):
+        m = file_col == f
+        t_f = t_all[m]
+        if len(t_f) > 1:
+            d = np.diff(t_f)
+            dts.append(d)
+            duration_ms += float(t_f[-1] - t_f[0])
+            step = np.hypot(np.diff(x_all[m]), np.diff(y_all[m]))
+            ok = (d > 0) & (d <= GAP_THRESHOLD_MS)
+            speeds.append(step[ok] / (d[ok] / 1000.0))
+    dt = np.concatenate(dts) if dts else np.array([])
     gaps = dt[dt > GAP_THRESHOLD_MS] if len(dt) else np.array([])
-
-    x, y = _local_xy(s1["lat"].to_numpy(), s1["lon"].to_numpy())
-    if len(dt):
-        step = np.hypot(np.diff(x), np.diff(y))
-        moving = dt > 0
-        speed = step[moving] / (dt[moving] / 1000.0)
-        speed = speed[np.isfinite(speed) & (dt[moving] <= GAP_THRESHOLD_MS)]
-    else:
-        speed = np.array([])
+    speed = np.concatenate(speeds) if speeds else np.array([])
+    speed = speed[np.isfinite(speed)]
+    t = t_all
+    x, y = x_all, y_all
 
     # Probe separation: distance between probes logged at the same instant.
     separation = {}
@@ -306,7 +316,7 @@ def summarize(df: pd.DataFrame) -> dict:
         "sample_interval_ms": round(float(np.median(dt)), 2) if len(dt) else None,
         "n_gaps": int(len(gaps)),
         "longest_gap_s": round(float(gaps.max()) / 1000.0, 1) if len(gaps) else 0.0,
-        "duration_min": round(float(t[-1] - t[0]) / 60000.0, 1) if len(t) > 1 else 0.0,
+        "duration_min": round(duration_ms / 60000.0, 1),
         "time_range": [str(s1["timestamp"].iloc[0]), str(s1["timestamp"].iloc[-1])],
         "n_tracks": n_tracks,
         "speed_m_s": _stats(speed) if len(speed) else None,

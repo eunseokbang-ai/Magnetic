@@ -2,8 +2,9 @@
 
 Same skeleton as DroneMag Studio's backend (CORS limited to this machine,
 gzip, the built frontend served from one port), with its own, much
-shorter pipeline: load the two-probe export, QC it, grid it, pick
-targets, export a clearance list. Only the first step exists yet.
+shorter pipeline: load the two-probe export, QC the platform noise, grid
+it, compare repeated runs, pick targets, export a clearance list. The
+first four steps exist.
 """
 from __future__ import annotations
 
@@ -17,8 +18,13 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from magcore.colormaps import register_custom_colormaps
+
 from . import paths
+from .models import GridRequest, QcRequest, RepeatRequest
 from .store import ProjectError, store
+
+register_custom_colormaps()
 
 app = FastAPI(title="MineMag API")
 
@@ -82,6 +88,21 @@ def points(project_id: str, sensor: int | None = None, max_points: int = 20000):
     if max_points < 100 or max_points > 200000:
         raise HTTPException(status_code=422, detail="max_points는 100~200000 사이여야 합니다.")
     return store.get(project_id).points(sensor=sensor, max_points=max_points)
+
+
+@app.post("/api/projects/{project_id}/qc")
+def platform_qc(project_id: str, req: QcRequest):
+    return store.get(project_id).qc(req)
+
+
+@app.post("/api/projects/{project_id}/grid")
+def grid(project_id: str, req: GridRequest):
+    return store.get(project_id).grid(req)
+
+
+@app.post("/api/projects/{project_id}/repeat")
+def repeat(project_id: str, req: RepeatRequest):
+    return store.get(project_id).repeat(req)
 
 
 _frontend_dist = paths.frontend_dist()

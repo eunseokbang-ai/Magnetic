@@ -18,6 +18,8 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+const post = (path, body) => request(path, { method: "POST", body: JSON.stringify(body || {}) });
+
 export const getVersion = () => request("/version");
 export const createProject = () => request("/projects", { method: "POST" });
 
@@ -30,3 +32,7 @@ export function uploadFiles(projectId, files) {
 export const getSummary = (projectId) => request(`/projects/${projectId}/summary`);
 export const getPoints = (projectId, sensor, maxPoints = 8000) =>
   request(`/projects/${projectId}/points?max_points=${maxPoints}${sensor ? `&sensor=${sensor}` : ""}`);
+
+export const runQc = (projectId, req) => post(`/projects/${projectId}/qc`, req);
+export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
+export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
