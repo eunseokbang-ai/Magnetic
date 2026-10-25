@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, CircleMarker, Marker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet-imageoverlay-rotated";
 import * as api from "./api";
@@ -99,6 +99,12 @@ export default function App() {
   const [repeatBusy, setRepeatBusy] = useState(false);
   const [compareCell, setCompareCell] = useState(0.25);
 
+  const [sensorHeight, setSensorHeight] = useState(0.5);
+  const [heightsByFile, setHeightsByFile] = useState({});
+  const [thresholdK, setThresholdK] = useState(5);
+  const [targets, setTargets] = useState(null);
+  const [targetsBusy, setTargetsBusy] = useState(false);
+
   useEffect(() => {
     api.getVersion().then(setVersion).catch(() => {});
     // ?project=<id> reopens a project this server already holds (another
@@ -114,6 +120,7 @@ export default function App() {
     setQc(null);
     setGrid(null);
     setRepeat(null);
+    setTargets(null);
   };
 
   const upload = async (files) => {
@@ -180,6 +187,20 @@ export default function App() {
       setError(e.message);
     } finally {
       setRepeatBusy(false);
+    }
+  };
+
+  const runTargets = async () => {
+    setTargetsBusy(true);
+    setError(null);
+    try {
+      const byFile = {};
+      for (const [k, v] of Object.entries(heightsByFile)) if (v !== "" && Number.isFinite(Number(v))) byFile[k] = Number(v);
+      setTargets(await api.pickTargets(projectId, { sensor_height_m: Number(sensorHeight), sensor_heights_by_file: byFile, threshold_k: Number(thresholdK) }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTargetsBusy(false);
     }
   };
 
@@ -317,6 +338,56 @@ export default function App() {
               </>
             )}
 
+            <h2 style={h2}>5. 표적 피킹</h2>
+            <div style={note}>
+              측정마다 따로 격자에서 국소 봉우리를 찾아 유도 쌍극자(위치·탐침 아래 깊이·모멘트)를 원 측점에 맞춥니다. 문턱은 그 측정의 조용한 구간 잡음 rms × k.
+              측정이 여럿이면 {targets ? targets.match_radius_m : 0.5} m 안에서 서로 맞춰 "n회 중 k회에서 보임"을 셉니다. 등급 A = 모든 측정에서 보이고 SNR ≥ 10·맞춤 ≥ 0.5, B = SNR ≥ 5·맞춤 ≥ 0.3, C = 나머지.
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+              <label>탐침 지상고(m) <input type="number" step="0.1" min="0" value={sensorHeight} onChange={(e) => setSensorHeight(e.target.value)} style={{ width: 55 }} /></label>
+              {files.length > 1 && files.map((f, i) => (
+                <label key={i} title={f.filename}>[{i}] <input type="number" step="0.1" min="0" placeholder={sensorHeight} value={heightsByFile[i] ?? ""} onChange={(e) => setHeightsByFile({ ...heightsByFile, [i]: e.target.value })} style={{ width: 50 }} /></label>
+              ))}
+              <label>문턱 k <input type="number" step="0.5" min="1" value={thresholdK} onChange={(e) => setThresholdK(e.target.value)} style={{ width: 50 }} /></label>
+              <button style={button} disabled={targetsBusy} onClick={runTargets}>{targetsBusy ? "계산 중..." : "표적 피킹"}</button>
+              {targets && targets.n_targets > 0 && <a href={api.targetsCsvUrl(projectId)} style={{ fontSize: 12 }}>CSV 내려받기</a>}
+            </div>
+            {targets && (
+              <div style={{ marginTop: 6 }}>
+                <div style={row}><span>표적 (A / B / C)</span><b>{targets.n_targets} ({targets.n_by_grade.A} / {targets.n_by_grade.B} / {targets.n_by_grade.C})</b></div>
+                <div style={row}><span>복각 / 편각</span><b>{fmt(targets.inclination_deg)}° / {fmt(targets.declination_deg)}°</b></div>
+                {Object.entries(targets.runs).map(([k, v]) => (
+                  <div key={k} style={row}><span>[{k}] 잡음 rms / 문턱 / 피킹</span><b>{fmt(v.noise_rms_nt)} / {fmt(v.threshold_nt, 0)} nT / {v.n_picks}</b></div>
+                ))}
+                <div style={{ maxHeight: 260, overflow: "auto", marginTop: 6, border: "1px solid #d9e2d6", borderRadius: 6, background: "white" }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: "#eef3ea" }}>
+                        {["#", "등급", "최대(nT)", "SNR", "매설심도(m)", "크기", "맞춤", "보임"].map((h) => <th key={h} style={{ padding: "3px 4px", textAlign: "right" }}>{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {targets.targets.map((t) => (
+                        <tr key={t.id} style={{ borderTop: "1px solid #eef3ea" }}>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{t.id}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right", fontWeight: 700, color: t.grade === "A" ? "#b42318" : t.grade === "B" ? "#b26a00" : "#6b7a66" }}>{t.grade}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.peak_nt, 0)}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.snr, 0)}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.burial_depth_m, 2)}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }} title={`${fmt(t.moment_am2, 2)} A·m²`}>{t.size_class.split(" ")[0]}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{fmt(t.fit_quality, 2)}</td>
+                          <td style={{ padding: "2px 4px", textAlign: "right" }}>{t.runs_seen.length}/{t.n_runs}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ ...note, marginTop: 4 }}>
+                  크기는 쌍극자 모멘트의 자릿수 분류일 뿐 종류(지뢰/파편/불발탄)를 말해 주지 않습니다. 금속이 거의 없는 지뢰는 이상이 없을 수 있습니다.
+                </div>
+              </div>
+            )}
+
             <h2 style={h2}>지도 표시</h2>
             <select value={sensor} onChange={(e) => setSensor(Number(e.target.value))}>
               <option value={0}>두 탐침 모두</option>
@@ -331,6 +402,12 @@ export default function App() {
           <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />
           {points && <FitBounds lat={points.lat} lon={points.lon} />}
           {grid && showGrid && <GridOverlay overlay={grid.overlay} opacity={opacity} />}
+          {targets && targets.targets.map((t) => (
+            <CircleMarker key={`t${t.id}`} center={[t.lat, t.lon]} radius={9} weight={2}
+              pathOptions={{ color: t.grade === "A" ? "#b42318" : t.grade === "B" ? "#b26a00" : "#6b7a66", fillOpacity: 0.1 }}>
+              <Tooltip permanent direction="right" offset={[8, 0]}>{t.id}{t.grade}</Tooltip>
+            </CircleMarker>
+          ))}
           {points && showPoints && points.lat.map((la, i) => (
             <CircleMarker key={i} center={[la, points.lon[i]]} radius={grid && showGrid ? 1 : 2} stroke={false} fillOpacity={0.9} pathOptions={{ fillColor: grid && showGrid ? "#333" : color(points.tfa[i], vmax) }} />
           ))}

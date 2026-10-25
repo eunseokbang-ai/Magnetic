@@ -3,8 +3,7 @@
 Same skeleton as DroneMag Studio's backend (CORS limited to this machine,
 gzip, the built frontend served from one port), with its own, much
 shorter pipeline: load the two-probe export, QC the platform noise, grid
-it, compare repeated runs, pick targets, export a clearance list. The
-first four steps exist.
+it, compare repeated runs, pick and grade targets, export the list.
 """
 from __future__ import annotations
 
@@ -15,13 +14,13 @@ import subprocess
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from magcore.colormaps import register_custom_colormaps
 
 from . import paths
-from .models import GridRequest, QcRequest, RepeatRequest
+from .models import GridRequest, QcRequest, RepeatRequest, TargetRequest
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -103,6 +102,20 @@ def grid(project_id: str, req: GridRequest):
 @app.post("/api/projects/{project_id}/repeat")
 def repeat(project_id: str, req: RepeatRequest):
     return store.get(project_id).repeat(req)
+
+
+@app.post("/api/projects/{project_id}/targets")
+def targets(project_id: str, req: TargetRequest):
+    return store.get(project_id).targets(req)
+
+
+@app.get("/api/projects/{project_id}/targets.csv")
+def targets_csv(project_id: str):
+    text = store.get(project_id).targets_csv()
+    return Response(
+        content=text.encode("utf-8-sig"), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=minemag_targets.csv"},
+    )
 
 
 _frontend_dist = paths.frontend_dist()

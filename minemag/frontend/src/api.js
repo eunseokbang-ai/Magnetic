@@ -36,3 +36,5 @@ export const getPoints = (projectId, sensor, maxPoints = 8000) =>
 export const runQc = (projectId, req) => post(`/projects/${projectId}/qc`, req);
 export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
 export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
+export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targets`, req);
+export const targetsCsvUrl = (projectId) => `${BASE}/projects/${projectId}/targets.csv`;
