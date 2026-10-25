@@ -17,10 +17,13 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from magcore import local_tiles
 from magcore.colormaps import register_custom_colormaps
+from magcore.local_tiles import LocalTileError
+from magcore.overlay_image import OverlayImageError
 
 from . import paths
-from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
+from .models import GridRequest, LocalTileFolderRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
 from .store import ProjectError, store
 
 register_custom_colormaps()
@@ -52,6 +55,16 @@ _VERSION = _running_version()
 
 @app.exception_handler(ProjectError)
 async def _project_error(_request: Request, exc: ProjectError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(OverlayImageError)
+async def _overlay_error(_request: Request, exc: OverlayImageError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(LocalTileError)
+async def _tile_error(_request: Request, exc: LocalTileError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -139,6 +152,59 @@ def targets_csv(project_id: str):
         content=text.encode("utf-8-sig"), media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=minemag_targets.csv"},
     )
+
+
+# ---------------------------------------------------------- basemaps
+@app.post("/api/projects/{project_id}/basemaps")
+async def upload_basemap(project_id: str, file: UploadFile = File(...)):
+    content = await file.read()
+    return store.get(project_id).add_basemap(file.filename or "orthophoto", content)
+
+
+@app.get("/api/projects/{project_id}/basemaps")
+def list_basemaps(project_id: str):
+    return store.get(project_id).list_basemaps()
+
+
+@app.get("/api/projects/{project_id}/basemaps/{name}")
+def get_basemap(project_id: str, name: str):
+    return store.get(project_id).basemap(name)
+
+
+@app.delete("/api/projects/{project_id}/basemaps/{name}")
+def delete_basemap(project_id: str, name: str):
+    return store.get(project_id).remove_basemap(name)
+
+
+# Large orthophotos: an already-tiled {z}/{x}/{y} folder served from disk
+# (tile once with QGIS "Generate XYZ tiles" or gdal2tiles.py). Not
+# project-scoped, like DroneMag Studio's.
+@app.post("/api/local-tiles/register")
+def register_local_tile_folder(req: LocalTileFolderRequest):
+    scheme_override = None if req.scheme == "auto" else req.scheme
+    layer = local_tiles.register_local_tile_folder(req.path, req.label, scheme_override)
+    south, west, north, east = layer.bounds
+    return {"id": layer.id, "label": layer.label, "min_zoom": layer.min_zoom, "max_zoom": layer.max_zoom,
+            "scheme": layer.scheme, "bounds": [[south, west], [north, east]]}
+
+
+@app.post("/api/local-tiles/pick-folder")
+def pick_local_tile_folder():
+    return {"path": local_tiles.pick_folder_dialog()}
+
+
+@app.delete("/api/local-tiles/{layer_id}")
+def unregister_local_tile_folder(layer_id: str):
+    local_tiles.unregister_local_tile_folder(layer_id)
+    return {"status": "ok"}
+
+
+@app.get("/api/local-tiles/{layer_id}/{z}/{x}/{y}")
+def get_local_tile(layer_id: str, z: int, x: int, y: int):
+    content, media_type = local_tiles.get_tile(layer_id, z, x, y)
+    if content is None:
+        raise HTTPException(status_code=404, detail="타일을 찾을 수 없습니다.")
+    return Response(content=content, media_type=media_type)
 
 
 _frontend_dist = paths.frontend_dist()

@@ -7,17 +7,20 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 
+import io
+
 import numpy as np
 import pandas as pd
 
 from magcore.lines import project_to_local_xy
+from magcore.overlay_image import load_geotiff_overlay
 from magcore.render import grid_to_geotiff_bytes, grid_to_png_overlay, grid_to_surfer_grd_bytes
 
 from .io_.magdrone_r3 import MagDroneLoadError, load_magdrone_r3_files, summarize
 from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, TargetRequest
 from .processing.gridding import grid_survey, repeat_comparison
 from .processing.platform_qc import platform_qc
-from .processing.peaks import derivative_grid
+from .processing.peaks import SIGNED_KINDS, derivative_grid
 from .processing.preprocess import PreprocessParams, preprocess
 from .processing.targets import pick_targets, targets_to_csv, targets_to_geojson
 from magcore.igrf import mean_inclination_declination
@@ -40,6 +43,7 @@ class Project:
     repeat_cache: dict = field(default_factory=dict)
     target_cache: dict | None = None
     field_direction: tuple | None = None   # (inclination, declination) from IGRF at the site
+    basemaps: list = field(default_factory=list)   # GeoTIFF overlays: {name, image_data_url, bounds, ...}
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def _require(self) -> pd.DataFrame:
@@ -147,11 +151,37 @@ class Project:
             self.grid_cache[key] = (grid, stats)
         return self.grid_cache[key]
 
+    def _derived(self, grid, kind: str):
+        inc, dec = self._igrf_direction() if kind == "rtp" else (None, None)
+        return derivative_grid(grid.values, grid.cell_size_m, kind, inc, dec)
+
     def grid_values(self, req: GridRequest):
         """(values, easting, northing, cell) of the requested kind."""
         grid, _stats = self._base_grid(req)
-        values = derivative_grid(grid.values, grid.cell_size_m, req.kind)
-        return values, grid.easting, grid.northing, grid.cell_size_m
+        return self._derived(grid, req.kind), grid.easting, grid.northing, grid.cell_size_m
+
+    def add_basemap(self, name: str, content: bytes) -> dict:
+        """A georeferenced orthophoto (GeoTIFF) as a map overlay, rendered
+        by magcore.overlay_image (decimated to 2000 px). Big orthophotos go
+        through the local tile folders instead."""
+        overlay = load_geotiff_overlay(io.BytesIO(content), name=name)
+        with self._lock:
+            self.basemaps = [b for b in self.basemaps if b["name"] != name] + [overlay]
+        return {"basemaps": [{k: v for k, v in b.items() if k != "image_data_url"} for b in self.basemaps]}
+
+    def remove_basemap(self, name: str) -> dict:
+        with self._lock:
+            self.basemaps = [b for b in self.basemaps if b["name"] != name]
+        return {"basemaps": [{k: v for k, v in b.items() if k != "image_data_url"} for b in self.basemaps]}
+
+    def list_basemaps(self) -> dict:
+        return {"basemaps": [{k: v for k, v in b.items() if k != "image_data_url"} for b in self.basemaps]}
+
+    def basemap(self, name: str) -> dict:
+        for b in self.basemaps:
+            if b["name"] == name:
+                return b
+        raise ProjectError(f"배경 이미지를 찾을 수 없습니다: {name}")
 
     def grid(self, req: GridRequest) -> dict:
         """The grid as a map overlay plus its statistics."""
@@ -160,9 +190,9 @@ class Project:
         with self._lock:
             if key not in self.grid_cache:
                 grid, stats = self._base_grid(req)
-                values = derivative_grid(grid.values, grid.cell_size_m, req.kind)
+                values = self._derived(grid, req.kind)
                 finite = values[np.isfinite(values)]
-                if req.kind == "anomaly":
+                if req.kind in SIGNED_KINDS:
                     vmax = max(float(np.percentile(np.abs(finite), 99.5)) if len(finite) else 1.0, 1.0)
                     overlay = grid_to_png_overlay(
                         values, grid.easting, grid.northing, self.utm_epsg,
@@ -233,7 +263,7 @@ class Project:
                     df, inc, dec, self.utm_epsg, noise_by_file,
                     sensor_height_m=req.sensor_height_m,
                     sensor_heights_by_file={int(k): v for k, v in (req.sensor_heights_by_file or {}).items()},
-                    match_radius_m=req.match_radius_m,
+                    match_radius_m=req.match_radius_m, max_targets=req.max_targets,
                     cell_size_m=req.cell_size_m, threshold_k=req.threshold_k, threshold_nt=req.threshold_nt,
                     fit_window_m=req.fit_window_m, max_depth_m=req.max_depth_m, min_fit_quality=req.min_fit_quality,
                     method=req.method, peak_k=req.peak_k, derivative=req.derivative,

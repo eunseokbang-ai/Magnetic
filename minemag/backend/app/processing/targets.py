@@ -132,7 +132,7 @@ def _pick_by_derivative(sub, values, grid, noise, inclination_deg, declination_d
     """The paper's way: prominence peaks of the THD (or ASA) of the
     residual grid locate the targets; a dipole fitted to the raw readings
     around each peak adds depth and moment where the fit works."""
-    deriv = derivative_grid(grid.values, grid.cell_size_m, derivative)
+    deriv = derivative_grid(grid.values, grid.cell_size_m, derivative, inclination_deg, declination_deg)
     peaks, info = find_peaks(deriv, grid.values, grid.easting, grid.northing, grid.cell_size_m,
                              k=peak_k, min_separation_m=min_separation_m)
     x = sub["x"].to_numpy(dtype=float)
@@ -278,6 +278,7 @@ def pick_targets(
     sensor_height_m: float = DEFAULT_SENSOR_HEIGHT_M,
     sensor_heights_by_file: dict[int, float] | None = None,
     match_radius_m: float = DEFAULT_MATCH_RADIUS_M,
+    max_targets: int | None = None,
     **run_kwargs,
 ) -> dict:
     """`sensor_height_m` is the probe height above ground for every run
@@ -314,8 +315,17 @@ def pick_targets(
             "n_runs_covering": len(covering),
             "grade": grade,
         })
-    order = {"A": 0, "B": 1, "C": 2}
-    targets.sort(key=lambda t: (order[t["grade"]], -abs(t["peak_nt"])))
+    # Strongest first - the K the pick needs when it came from a derived
+    # grid, the signal-to-noise ratio otherwise - so a top-N cut keeps the
+    # biggest, whatever their grade.
+    def strength(t):
+        k = t.get("k_needed")
+        return float(k) if k is not None and np.isfinite(k) else float(t["snr"]) if np.isfinite(t["snr"]) else 0.0
+
+    targets.sort(key=lambda t: -strength(t))
+    n_before_cut = len(targets)
+    if max_targets is not None and max_targets > 0:
+        targets = targets[:max_targets]
     for i, t in enumerate(targets, start=1):
         t["id"] = i
         t["depth_by_run"] = {str(k): round(v, 3) for k, v in t["depth_by_run"].items()}
@@ -326,6 +336,8 @@ def pick_targets(
     counts = {g: sum(1 for t in targets if t["grade"] == g) for g in ("A", "B", "C")}
     return {
         "n_targets": len(targets),
+        "n_before_cut": n_before_cut,
+        "max_targets": max_targets,
         "n_by_grade": counts,
         "n_runs": n_runs,
         "sensor_height_m": sensor_height_m,

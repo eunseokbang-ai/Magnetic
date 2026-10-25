@@ -42,6 +42,19 @@ export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targ
 export const targetsCsvUrl = (projectId) => `${BASE}/projects/${projectId}/targets.csv`;
 export const targetsGeojsonUrl = (projectId) => `${BASE}/projects/${projectId}/targets.geojson`;
 
+export function uploadBasemap(projectId, file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/projects/${projectId}/basemaps`, { method: "POST", body: form });
+}
+export const listBasemaps = (projectId) => request(`/projects/${projectId}/basemaps`);
+export const getBasemap = (projectId, name) => request(`/projects/${projectId}/basemaps/${encodeURIComponent(name)}`);
+export const deleteBasemap = (projectId, name) => request(`/projects/${projectId}/basemaps/${encodeURIComponent(name)}`, { method: "DELETE" });
+export const registerLocalTiles = (req) => post("/local-tiles/register", req);
+export const pickLocalTileFolder = () => request("/local-tiles/pick-folder", { method: "POST" });
+export const unregisterLocalTiles = (id) => request(`/local-tiles/${id}`, { method: "DELETE" });
+export const localTileUrl = (id) => `${BASE}/local-tiles/${id}/{z}/{x}/{y}`;
+
 /** Grid exports are POSTs (the grid parameters travel in the body); the
  * browser is handed the file as a download. */
 export async function downloadGrid(projectId, req, fmt) {

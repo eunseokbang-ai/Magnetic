@@ -25,8 +25,8 @@ class GridRequest(BaseModel):
     cell_size_m: float = Field(0.125, gt=0.01, le=5.0)
     method: Literal["minimum_curvature", "linear"] = "minimum_curvature"
     detrend_order: int = Field(1, ge=0, le=3)
-    # What the overlay shows: the residual anomaly, its THD or its ASA.
-    kind: Literal["anomaly", "thd", "asa"] = "anomaly"
+    # What the overlay shows: the residual anomaly or a derived grid of it.
+    kind: Literal["anomaly", "rtp", "thd", "asa", "tilt", "vd1"] = "anomaly"
     # None = both probes.
     sensors: Optional[list[int]] = None
     # None = every file together.
@@ -43,6 +43,15 @@ class RepeatRequest(BaseModel):
     min_samples: int = Field(3, ge=1, le=1000)
 
 
+class LocalTileFolderRequest(BaseModel):
+    """An already-tiled {z}/{x}/{y} orthophoto folder on this machine,
+    served straight from disk - for orthophotos too big to upload. See
+    magcore/local_tiles.py."""
+    path: str
+    label: Optional[str] = None
+    scheme: Literal["auto", "xyz", "tms"] = "auto"
+
+
 class QcRequest(BaseModel):
     quiet_threshold_nt: float = Field(60.0, gt=1.0, le=5000.0)
 
@@ -52,7 +61,9 @@ class TargetRequest(BaseModel):
     # "thd": prominence peaks of the THD (or ASA) of the residual grid, K x MAD (the paper);
     # "amplitude": local maxima of |anomaly| above threshold_k x the run's noise.
     method: Literal["thd", "amplitude"] = "thd"
-    derivative: Literal["thd", "asa"] = "thd"
+    derivative: Literal["thd", "asa", "rtp"] = "thd"
+    # Keep only the strongest N targets (None = all).
+    max_targets: Optional[int] = Field(None, ge=1, le=10000)
     peak_k: float = Field(20.0, gt=0.5, le=1000.0)
     min_separation_m: float = Field(1.2, gt=0.1, le=10.0)
     grid_method: Literal["minimum_curvature", "linear"] = "minimum_curvature"

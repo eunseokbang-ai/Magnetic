@@ -36,7 +36,13 @@ from __future__ import annotations
 import numpy as np
 from scipy import ndimage
 
-from magcore.transforms import analytic_signal, total_horizontal_derivative
+from magcore.transforms import (
+    analytic_signal,
+    reduction_to_pole,
+    tilt_angle,
+    total_horizontal_derivative,
+    vertical_derivative,
+)
 
 DEFAULT_K = 20.0                  # the paper's anti-personnel reference
 # The THD of one dipole has a weaker secondary maximum at the edge of its
@@ -53,13 +59,33 @@ TYPE_CLASSES = [
 ]
 
 
-def derivative_grid(grid_values: np.ndarray, cell_size_m: float, kind: str) -> np.ndarray:
+# Which derived grids peak over the source (usable for picking) and which
+# are signed maps for looking at.
+PICKING_KINDS = ("thd", "asa", "rtp")
+SIGNED_KINDS = ("anomaly", "rtp", "tilt", "vd1")
+KIND_LABELS = {"anomaly": "잔차 이상", "rtp": "극자화 변환(RTP)", "thd": "총수평미분(THD)", "asa": "해석신호(ASA)",
+               "tilt": "틸트각", "vd1": "1차 수직미분"}
+
+
+def derivative_grid(grid_values: np.ndarray, cell_size_m: float, kind: str,
+                    inclination_deg: float | None = None, declination_deg: float | None = None) -> np.ndarray:
+    """A derived grid of the residual anomaly. RTP needs the field
+    direction; for an induced source it moves the anomaly's maximum over
+    the source, which the dipolar raw anomaly does not have."""
     if kind == "thd":
         return total_horizontal_derivative(grid_values, cell_size_m)
     if kind == "asa":
         return analytic_signal(grid_values, cell_size_m)
     if kind == "anomaly":
         return grid_values
+    if kind == "rtp":
+        if inclination_deg is None or declination_deg is None:
+            raise ValueError("RTP에는 복각·편각이 필요합니다.")
+        return reduction_to_pole(grid_values, cell_size_m, inclination_deg, declination_deg)
+    if kind == "tilt":
+        return tilt_angle(grid_values, cell_size_m)
+    if kind == "vd1":
+        return vertical_derivative(grid_values, cell_size_m, order=1)
     raise ValueError(f"알 수 없는 파생 격자: {kind}")
 
 

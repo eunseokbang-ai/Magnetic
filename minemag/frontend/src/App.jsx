@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, CircleMarker, Tooltip, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, ImageOverlay, CircleMarker, Tooltip, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet-imageoverlay-rotated";
 import * as api from "./api";
@@ -123,6 +123,14 @@ export default function App() {
   const [thresholdK, setThresholdK] = useState(5);
   const [targets, setTargets] = useState(null);
   const [targetsBusy, setTargetsBusy] = useState(false);
+  const [maxTargets, setMaxTargets] = useState("");
+
+  const [basemaps, setBasemaps] = useState([]);        // GeoTIFF overlays with image_data_url
+  const [basemapOpacity, setBasemapOpacity] = useState(1);
+  const [showOsm, setShowOsm] = useState(true);
+  const [tileLayers, setTileLayers] = useState([]);    // registered local tile folders
+  const [tilePath, setTilePath] = useState("");
+  const [mapBusy, setMapBusy] = useState(false);
 
   useEffect(() => {
     api.getVersion().then(setVersion).catch(() => {});
@@ -130,6 +138,10 @@ export default function App() {
     if (existing) {
       setProjectId(existing);
       api.getSummary(existing).then(setSummary).catch((e) => setError(e.message));
+      api.listBasemaps(existing)
+        .then((r) => Promise.all(r.basemaps.map((b) => api.getBasemap(existing, b.name))))
+        .then(setBasemaps)
+        .catch(() => {});
     }
   }, []);
 
@@ -205,6 +217,34 @@ export default function App() {
   });
   const exportGrid = (fmt) => guard(setGridBusy, () => api.downloadGrid(projectId, gridReq(), fmt));
   const runRepeat = () => guard(setRepeatBusy, async () => setRepeat(await api.compareRepeats(projectId, { compare_cell_m: Number(compareCell) })));
+  const addBasemap = (file) => guard(setMapBusy, async () => {
+    if (!file) return;
+    const pid = projectId || (await api.createProject()).project_id;
+    setProjectId(pid);
+    const r = await api.uploadBasemap(pid, file);
+    const full = await api.getBasemap(pid, file.name);
+    setBasemaps((prev) => [...prev.filter((b) => b.name !== full.name), full]);
+    return r;
+  });
+  const dropBasemap = (name) => guard(setMapBusy, async () => {
+    await api.deleteBasemap(projectId, name);
+    setBasemaps((prev) => prev.filter((b) => b.name !== name));
+  });
+  const pickTiles = () => guard(setMapBusy, async () => {
+    const r = await api.pickLocalTileFolder();
+    if (r.path) setTilePath(r.path);
+  });
+  const addTiles = () => guard(setMapBusy, async () => {
+    if (!tilePath) return;
+    const layer = await api.registerLocalTiles({ path: tilePath });
+    setTileLayers((prev) => [...prev, layer]);
+    setTilePath("");
+  });
+  const dropTiles = (id) => guard(setMapBusy, async () => {
+    await api.unregisterLocalTiles(id);
+    setTileLayers((prev) => prev.filter((l) => l.id !== id));
+  });
+
   const runTargets = () => guard(setTargetsBusy, async () => {
     const byFile = {};
     for (const [k, v] of Object.entries(heightsByFile)) if (v !== "" && Number.isFinite(Number(v))) byFile[k] = Number(v);
@@ -212,6 +252,7 @@ export default function App() {
       method: tMethod, derivative, peak_k: Number(peakK), threshold_k: Number(thresholdK),
       sensor_height_m: Number(sensorHeight), sensor_heights_by_file: byFile,
       cell_size_m: Number(cell), grid_method: gridMethod, detrend_order: Number(detrend),
+      max_targets: maxTargets === "" ? null : Number(maxTargets),
     }));
   });
 
@@ -226,6 +267,28 @@ export default function App() {
       <div style={panel}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>MineMag</div>
         <div style={note}>드론·사족보행로봇 자력탐사 지뢰·불발탄 탐지 {version?.commit && `· ${version.commit}`}</div>
+
+        <h2 style={h2}>0. 배경지도</h2>
+        <div style={note}>
+          정사영상 GeoTIFF를 올리면 지도 위에 겹칩니다(2000픽셀로 줄여서 표시). 수 GB짜리 큰 정사영상은 QGIS "XYZ 타일 생성"이나 gdal2tiles.py로
+          한 번 타일로 만든 뒤 그 폴더를 지정하면 원본 크기 그대로, 파일을 올리지 않고 바로 봅니다.
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+          <label style={{ fontSize: 12 }}>GeoTIFF <input type="file" accept=".tif,.tiff" disabled={mapBusy} onChange={(e) => addBasemap(e.target.files[0])} /></label>
+          <label style={{ fontSize: 12 }}><input type="checkbox" checked={showOsm} onChange={(e) => setShowOsm(e.target.checked)} /> OSM 바탕</label>
+          {basemaps.length > 0 && <label style={{ fontSize: 12 }}>불투명도 <input type="range" min="0.2" max="1" step="0.05" value={basemapOpacity} onChange={(e) => setBasemapOpacity(Number(e.target.value))} /></label>}
+        </div>
+        {basemaps.map((b) => (
+          <div key={b.name} style={{ ...row, fontSize: 11 }}><span>{b.name}</span><button style={{ ...ghost, padding: "1px 6px" }} onClick={() => dropBasemap(b.name)}>지우기</button></div>
+        ))}
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+          <input type="text" placeholder="타일 폴더 경로 ({z}/{x}/{y}.png)" value={tilePath} onChange={(e) => setTilePath(e.target.value)} style={{ flex: 1, minWidth: 180, fontSize: 11 }} />
+          <button style={ghost} disabled={mapBusy} onClick={pickTiles}>폴더 선택</button>
+          <button style={button} disabled={mapBusy || !tilePath} onClick={addTiles}>타일 추가</button>
+        </div>
+        {tileLayers.map((l) => (
+          <div key={l.id} style={{ ...row, fontSize: 11 }}><span>{l.label} (z {l.min_zoom}~{l.max_zoom}, {l.scheme})</span><button style={{ ...ghost, padding: "1px 6px" }} onClick={() => dropTiles(l.id)}>지우기</button></div>
+        ))}
 
         <h2 style={h2}>1. MagDrone R3 자료 올리기 (.asc)</h2>
         <input type="file" multiple accept=".asc,.txt,.csv" disabled={busy} onChange={(e) => upload(Array.from(e.target.files))} />
@@ -327,8 +390,11 @@ export default function App() {
               </select>
               <select value={kind} onChange={(e) => setKind(e.target.value)}>
                 <option value="anomaly">잔차 이상</option>
+                <option value="rtp">극자화 변환(RTP)</option>
                 <option value="thd">THD</option>
                 <option value="asa">ASA</option>
+                <option value="tilt">틸트각</option>
+                <option value="vd1">1차 수직미분</option>
               </select>
               <select value={gridFile} onChange={(e) => setGridFile(e.target.value)}>
                 <option value="">모든 파일</option>
@@ -344,8 +410,8 @@ export default function App() {
               <div style={{ marginTop: 6 }}>
                 <div style={row}><span>자료 / 방법</span><b>{grid.stats.processed ? "전처리됨" : "원 자료"} / {grid.stats.method === "minimum_curvature" ? "최소곡률" : "선형"}{grid.stats.detrend_order ? `, ${grid.stats.detrend_order}차 추세 제거(σ ${fmt(grid.stats.trend_std_nt)} nT)` : ""}</b></div>
                 <div style={row}><span>덮임 / 셀 수</span><b>{fmt(grid.stats.coverage_pct)}% / {grid.stats.n_cells.toLocaleString()}</b></div>
-                <div style={row}><span>{grid.stats.kind === "anomaly" ? "이상 범위 / rms" : `${grid.stats.kind.toUpperCase()} 범위 / rms`}</span><b>{fmt(grid.stats.min, 1)} ~ {fmt(grid.stats.max, 1)} / {fmt(grid.stats.rms, 1)}{grid.stats.kind === "anomaly" ? " nT" : " nT/m"}</b></div>
-                <div style={row}><span>색 범위</span><b>{grid.stats.kind === "anomaly" ? `±${fmt(grid.overlay.vmax, 0)} nT` : `0 ~ ${fmt(grid.overlay.vmax, 0)} nT/m`}</b></div>
+                <div style={row}><span>{({ anomaly: "이상", rtp: "RTP", thd: "THD", asa: "ASA", tilt: "틸트각", vd1: "1차 수직미분" })[grid.stats.kind]} 범위 / rms</span><b>{fmt(grid.stats.min, 1)} ~ {fmt(grid.stats.max, 1)} / {fmt(grid.stats.rms, 1)} {({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]}</b></div>
+                <div style={row}><span>색 범위</span><b>{["anomaly", "rtp", "tilt", "vd1"].includes(grid.stats.kind) ? `±${fmt(grid.overlay.vmax, 0)}` : `0 ~ ${fmt(grid.overlay.vmax, 0)}`}</b></div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4, fontSize: 12, flexWrap: "wrap" }}>
                   <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> 격자</label>
                   <label><input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} /> 측점</label>
@@ -397,6 +463,7 @@ export default function App() {
                   <select value={derivative} onChange={(e) => setDerivative(e.target.value)}>
                     <option value="thd">THD</option>
                     <option value="asa">ASA</option>
+                    <option value="rtp">RTP</option>
                   </select>
                   <label>K <input type="number" step="1" min="1" value={peakK} onChange={(e) => setPeakK(e.target.value)} style={inputW(50)} /></label>
                 </>
@@ -407,11 +474,12 @@ export default function App() {
               {files.length > 1 && files.map((f, i) => (
                 <label key={i} title={f.filename}>[{i}] <input type="number" step="0.1" min="0" placeholder={sensorHeight} value={heightsByFile[i] ?? ""} onChange={(e) => setHeightsByFile({ ...heightsByFile, [i]: e.target.value })} style={inputW(45)} /></label>
               ))}
+              <label>표시 개수(큰 것부터) <input type="number" step="1" min="1" placeholder="전부" value={maxTargets} onChange={(e) => setMaxTargets(e.target.value)} style={inputW(55)} /></label>
               <button style={button} disabled={targetsBusy} onClick={runTargets}>{targetsBusy ? "계산 중..." : "표적 피킹"}</button>
             </div>
             {targets && (
               <div style={{ marginTop: 6 }}>
-                <div style={row}><span>표적 (A / B / C)</span><b>{targets.n_targets} ({targets.n_by_grade.A} / {targets.n_by_grade.B} / {targets.n_by_grade.C})</b></div>
+                <div style={row}><span>표적 (A / B / C){targets.max_targets ? ` · 상위 ${targets.max_targets}개 / 전체 ${targets.n_before_cut}` : ""}</span><b>{targets.n_targets} ({targets.n_by_grade.A} / {targets.n_by_grade.B} / {targets.n_by_grade.C})</b></div>
                 <div style={row}><span>자료 / 복각 / 편각</span><b>{targets.processed ? "전처리됨" : "원 자료"} / {fmt(targets.inclination_deg)}° / {fmt(targets.declination_deg)}°</b></div>
                 {Object.entries(targets.runs).map(([k, v]) => (
                   <div key={k} style={row}>
@@ -468,7 +536,13 @@ export default function App() {
       </div>
       <div style={{ flex: 1 }}>
         <MapContainer center={[36.3789, 127.361]} zoom={18} maxZoom={24} preferCanvas style={{ height: "100%" }}>
-          <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />
+          {showOsm && <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />}
+          {tileLayers.map((l) => (
+            <TileLayer key={l.id} url={api.localTileUrl(l.id)} minNativeZoom={l.min_zoom} maxNativeZoom={l.max_zoom} maxZoom={24} bounds={l.bounds} />
+          ))}
+          {basemaps.map((b) => (
+            <ImageOverlay key={b.name} url={b.image_data_url} bounds={b.bounds} opacity={basemapOpacity} />
+          ))}
           {points && <FitBounds lat={points.lat} lon={points.lon} />}
           {grid && showGrid && <GridOverlay overlay={grid.overlay} opacity={opacity} />}
           {points && showPoints && points.lat.map((la, i) => (
