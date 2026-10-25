@@ -19,7 +19,9 @@ from pyproj import Transformer
 from scipy.spatial import cKDTree
 
 from .io_.magdrone_r3 import MagDroneLoadError, load_magdrone_r3_files, summarize
-from .models import GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
+from matplotlib.path import Path as MplPath
+
+from .models import AreaRequest, GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
 from .processing.gridding import grid_survey, repeat_comparison
 from .processing.platform_qc import platform_qc
 from .processing.peaks import SIGNED_KINDS, derivative_grid
@@ -47,6 +49,7 @@ class Project:
     field_direction: tuple | None = None   # (inclination, declination) from IGRF at the site
     basemaps: list = field(default_factory=list)   # GeoTIFF overlays: {name, image_data_url, bounds, ...}
     last_grid: tuple | None = None                 # (values, easting, northing, kind) of the grid last shown
+    area_polygon: list | None = None               # [[lat, lon], ...] or None = everything
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
 
     def _require(self) -> pd.DataFrame:
@@ -54,14 +57,63 @@ class Project:
             raise ProjectError("자료를 먼저 올리세요.")
         return self.raw
 
+    def _in_area(self, df: pd.DataFrame) -> np.ndarray:
+        if self.area_polygon is None:
+            return np.ones(len(df), dtype=bool)
+        path = MplPath([(lon, lat) for lat, lon in self.area_polygon])
+        return path.contains_points(np.column_stack([df["lon"].to_numpy(), df["lat"].to_numpy()]))
+
+    def _clip(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Only the readings inside the area of interest, when one is set."""
+        if self.area_polygon is None:
+            return df
+        key = ("clip", id(df), len(df))
+        cached = self.grid_cache.get(key)
+        if cached is None:
+            inside = self._in_area(df)
+            if inside.sum() < 10:
+                raise ProjectError("설정한 영역 안에 측점이 거의 없습니다. 영역을 다시 그리세요.")
+            cached = df[inside]
+            cached.attrs = dict(df.attrs)
+            self.grid_cache[key] = cached
+        return cached
+
     def _working(self) -> pd.DataFrame:
         """What the grid, the repeat comparison and the targets read: the
-        pre-processed frame when there is one, else the raw readings."""
+        pre-processed frame when there is one, else the raw readings -
+        inside the area of interest."""
         self._require()
-        return self.proc if self.proc is not None else self.raw
+        return self._clip(self.proc if self.proc is not None else self.raw)
+
+    def _raw_working(self) -> pd.DataFrame:
+        return self._clip(self._require())
+
+    def set_area(self, req: AreaRequest | None) -> dict:
+        polygon = [[float(a), float(b)] for a, b in req.polygon] if req is not None else None
+        if polygon is not None and self.raw is not None:
+            keep, self.area_polygon = self.area_polygon, polygon
+            n_inside = int(self._in_area(self.raw).sum())
+            self.area_polygon = keep
+            if n_inside < 10:
+                raise ProjectError(f"설정한 영역 안에 측점이 {n_inside}개뿐입니다. 측선을 덮도록 영역을 다시 그리세요.")
+        with self._lock:
+            self.area_polygon = polygon
+            self.proc, self.preprocess_report = None, None    # the pre-processing was on the old area: redo it
+            self.qc_cache, self.grid_cache, self.repeat_cache = {}, {}, {}
+            self.target_cache = None
+            self.last_grid = None
+        return self.area_status()
+
+    def area_status(self) -> dict:
+        df = self.raw
+        if df is None:
+            return {"polygon": self.area_polygon, "n_inside": None, "n_total": None}
+        inside = self._in_area(df)
+        return {"polygon": self.area_polygon, "n_inside": int(inside.sum()), "n_total": int(len(df)),
+                "n_inside_processed": int(self._in_area(self.proc).sum()) if self.proc is not None else None}
 
     def run_preprocess(self, req: PreprocessRequest) -> dict:
-        df = self._require()
+        df = self._raw_working()
         params = PreprocessParams(
             resample_hz=req.resample_hz, samples_per_m=req.samples_per_m, hampel_k=req.hampel_k,
             hampel_window=req.hampel_window, lpf_hz=req.lpf_hz,
@@ -114,13 +166,16 @@ class Project:
         """Readings for the map, thinned to at most `max_points` rows per
         request. Lat/lon so the frontend needs no projection."""
         df = self._working() if processed else self._require()
+        inside = self._in_area(df)
         if sensor is not None:
+            inside = inside[(df["sensor"] == sensor).to_numpy()]
             df = df[df["sensor"] == sensor]
         stride = max(1, int(np.ceil(len(df) / max_points)))
         sub = df.iloc[::stride]
         return {
             "n_total": int(len(df)),
             "stride": stride,
+            "in_area": inside[::stride].tolist() if self.area_polygon is not None else None,
             "lat": np.round(sub["lat"].to_numpy(), 7).tolist(),
             "lon": np.round(sub["lon"].to_numpy(), 7).tolist(),
             "tfa": np.round(sub["tfa"].to_numpy(), 2).tolist(),
@@ -131,7 +186,7 @@ class Project:
         }
 
     def qc(self, req: QcRequest) -> dict:
-        df = self._require()
+        df = self._raw_working()
         key = (req.quiet_threshold_nt,)
         with self._lock:
             if key not in self.qc_cache:
@@ -256,7 +311,7 @@ class Project:
         """Readings along one survey line (one DataTool track), raw and
         processed, against distance along the line - for seeing what the
         filter did and what an anomaly looks like in the row."""
-        df = self._working()
+        df = self.proc if self.proc is not None else self._require()     # a profile shows the whole track, area or not
         sub = df[(df["file_index"] == file_index) & (df["track"] == line_id)]
         if sensor is not None:
             sub = sub[sub["sensor"] == sensor]

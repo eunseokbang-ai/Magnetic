@@ -52,6 +52,14 @@ class LocalTileFolderRequest(BaseModel):
     scheme: Literal["auto", "xyz", "tms"] = "auto"
 
 
+class AreaRequest(BaseModel):
+    """The area of interest as [[lat, lon], ...] (3 or more vertices; a
+    rectangle is four). Readings outside it - the turns and the take-off
+    and landing the pre-processing could not tell apart - are left out of
+    everything that follows."""
+    polygon: list[list[float]] = Field(..., min_length=3)
+
+
 class SampleRequest(BaseModel):
     """A map click: the value of the last grid shown there, and the
     nearest reading."""

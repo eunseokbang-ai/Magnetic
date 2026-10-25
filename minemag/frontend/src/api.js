@@ -39,6 +39,9 @@ export const resetPreprocess = (projectId) => request(`/projects/${projectId}/pr
 export const makeGrid = (projectId, req) => post(`/projects/${projectId}/grid`, req);
 export const compareRepeats = (projectId, req) => post(`/projects/${projectId}/repeat`, req);
 export const pickTargets = (projectId, req) => post(`/projects/${projectId}/targets`, req);
+export const setArea = (projectId, polygon) => request(`/projects/${projectId}/area`, { method: "PUT", body: JSON.stringify({ polygon }) });
+export const clearArea = (projectId) => request(`/projects/${projectId}/area`, { method: "DELETE" });
+export const getArea = (projectId) => request(`/projects/${projectId}/area`);
 export const sampleAt = (projectId, lat, lon) => post(`/projects/${projectId}/sample`, { lat, lon });
 export const lineProfile = (projectId, fileIndex, lineId, sensor) =>
   request(`/projects/${projectId}/line-profile?file_index=${fileIndex}&line_id=${lineId}${sensor ? `&sensor=${sensor}` : ""}`);

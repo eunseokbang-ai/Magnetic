@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, ImageOverlay, CircleMarker, Tooltip, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, ImageOverlay, CircleMarker, Polygon, Polyline, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet-imageoverlay-rotated";
 import * as api from "./api";
@@ -174,6 +174,9 @@ export default function App() {
   const [maxTargets, setMaxTargets] = useState("");
 
   const [sample, setSample] = useState(null);
+  const [area, setArea] = useState(null);              // {polygon, n_inside, n_total}
+  const [drawMode, setDrawMode] = useState(null);      // null | "polygon" | "rect"
+  const [drawPts, setDrawPts] = useState([]);
   const [profile, setProfile] = useState(null);
   const [profileFile, setProfileFile] = useState(0);
   const [profileLine, setProfileLine] = useState("");
@@ -191,6 +194,7 @@ export default function App() {
     if (existing) {
       setProjectId(existing);
       api.getSummary(existing).then(setSummary).catch((e) => setError(e.message));
+      api.getArea(existing).then((a) => setArea(a.polygon ? a : null)).catch(() => {});
       api.listBasemaps(existing)
         .then((r) => Promise.all(r.basemaps.map((b) => api.getBasemap(existing, b.name))))
         .then(setBasemaps)
@@ -298,6 +302,50 @@ export default function App() {
     setTileLayers((prev) => prev.filter((l) => l.id !== id));
   });
 
+  const applyArea = async (polygon) => {
+    try {
+      const a = await api.setArea(projectId, polygon);
+      setArea(a);
+      setQc(null);
+      setGrid(null);
+      setRepeat(null);
+      setTargets(null);
+      if (pre) setPre(null);                              // the pre-processing was on the whole set: redo it inside the area
+      setDrawMode(null);
+      setDrawPts([]);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const dropArea = async () => {
+    try {
+      await api.clearArea(projectId);
+      setArea(null);
+      setQc(null);
+      setGrid(null);
+      setRepeat(null);
+      setTargets(null);
+      if (pre) setPre(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const mapClick = (lat, lon) => {
+    if (drawMode === "polygon") {
+      setDrawPts((p) => [...p, [lat, lon]]);
+      return;
+    }
+    if (drawMode === "rect") {
+      if (drawPts.length === 0) {
+        setDrawPts([[lat, lon]]);
+      } else {
+        const [a, b] = [drawPts[0], [lat, lon]];
+        applyArea([[a[0], a[1]], [a[0], b[1]], [b[0], b[1]], [b[0], a[1]]]);
+      }
+      return;
+    }
+    inspect(lat, lon);
+  };
   const inspect = async (lat, lon) => {
     if (!projectId || !summary) return;
     try {
@@ -389,6 +437,23 @@ export default function App() {
                 [{i}] {f.filename} — {f.start_date || "날짜 미상"} · {f.n_rows.toLocaleString()}행 · {f.settings.join(" ")}
               </div>
             ))}
+
+            <h2 style={h2}>1-1. 영역 지정</h2>
+            <div style={note}>
+              지도에 사각형이나 다각형을 그리면 그 안의 측점만 QC·전처리·격자·비교·피킹에 씁니다. 전처리가 못 걸러낸 선회·이착륙 구간은 이렇게 바깥으로 빼면 됩니다.
+              사각형은 모서리 두 점, 다각형은 꼭짓점을 차례로 찍고 "완료".
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
+              <button style={drawMode === "rect" ? button : ghost} onClick={() => { setDrawMode(drawMode === "rect" ? null : "rect"); setDrawPts([]); }}>사각형</button>
+              <button style={drawMode === "polygon" ? button : ghost} onClick={() => { setDrawMode(drawMode === "polygon" ? null : "polygon"); setDrawPts([]); }}>다각형</button>
+              {drawMode === "polygon" && <button style={button} disabled={drawPts.length < 3} onClick={() => applyArea(drawPts)}>완료 ({drawPts.length}점)</button>}
+              {drawMode && <button style={ghost} onClick={() => { setDrawMode(null); setDrawPts([]); }}>취소</button>}
+              {area && <button style={ghost} onClick={dropArea}>영역 지우기</button>}
+            </div>
+            {drawMode && <div style={warn}>지도를 클릭해 {drawMode === "rect" ? "모서리 두 점을" : "꼭짓점을"} 찍으세요.</div>}
+            {area && (
+              <div style={row}><span>영역 안 측점</span><b>{area.n_inside?.toLocaleString()} / {area.n_total?.toLocaleString()} ({fmt((100 * area.n_inside) / Math.max(1, area.n_total), 0)}%)</b></div>
+            )}
 
             <h2 style={h2}>2. 플랫폼 잡음 QC</h2>
             <div style={note}>
@@ -647,7 +712,11 @@ export default function App() {
       <div style={{ flex: 1, position: "relative" }}>
         <Profile data={profile} onClose={() => setProfile(null)} />
         <MapContainer center={[36.3789, 127.361]} zoom={18} maxZoom={24} preferCanvas style={{ height: "100%" }}>
-          <ClickInspector onClick={inspect} />
+          <ClickInspector onClick={mapClick} />
+          {area && area.polygon && <Polygon positions={area.polygon} pathOptions={{ color: "#2f5a22", weight: 2, fillOpacity: 0.04, dashArray: "6 4" }} />}
+          {drawPts.length > 0 && (drawMode === "polygon"
+            ? <Polyline positions={drawPts} pathOptions={{ color: "#b42318", weight: 2, dashArray: "4 3" }} />
+            : <CircleMarker center={drawPts[0]} radius={5} pathOptions={{ color: "#b42318" }} />)}
           {sample && <CircleMarker center={[sample.lat, sample.lon]} radius={6} weight={2} pathOptions={{ color: "#111", fillOpacity: 0 }} />}
           {showOsm && <TileLayer url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxNativeZoom={19} maxZoom={24} attribution="&copy; OpenStreetMap" />}
           {tileLayers.map((l) => (
@@ -660,7 +729,7 @@ export default function App() {
           {grid && showGrid && <GridOverlay overlay={grid.overlay} opacity={opacity} />}
           {points && showPoints && points.lat.map((la, i) => (
             <CircleMarker key={i} center={[la, points.lon[i]]} radius={grid && showGrid ? 1 : 2} stroke={false} fillOpacity={0.9}
-              pathOptions={{ fillColor: points.line_id && points.line_id[i] < 0 ? "#aaa" : grid && showGrid ? "#333" : color(points.tfa[i], vmax) }} />
+              pathOptions={{ fillColor: (points.in_area && !points.in_area[i]) || (points.line_id && points.line_id[i] < 0) ? "#bbb" : grid && showGrid ? "#333" : color(points.tfa[i], vmax) }} />
           ))}
           {targets && targets.targets.map((t) => (
             <CircleMarker key={`t${t.id}`} center={[t.lat, t.lon]} radius={9} weight={2}
