@@ -99,9 +99,11 @@ def pick_targets_in_run(
     detrend_order: int = 1,
     inclination_declination=None,
     magnetization: bool = True,
+    fill_polygon_xy=None,
 ) -> tuple[list[dict], dict]:
     """Picks of one run (one file), on its own grid and its own noise."""
-    grid, _stats = grid_survey(sub, cell_size_m=cell_size_m, method=grid_method, detrend_order=detrend_order)
+    grid, _stats = grid_survey(sub, cell_size_m=cell_size_m, method=grid_method, detrend_order=detrend_order,
+                               fill_polygon_xy=fill_polygon_xy)
     noise = float(noise_rms_nt) if noise_rms_nt else _robust_std(grid.values)
     noise = max(noise, 1e-3)
     values = _levelled(sub)

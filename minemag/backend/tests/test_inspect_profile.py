@@ -40,7 +40,15 @@ def test_line_profile_before_and_after_preprocessing():
     assert p["tracks"] == [10, 11] and {s["sensor"] for s in p["series"]} == {1, 2}
     s1 = next(s for s in p["series"] if s["sensor"] == 1)
     assert s1["raw_value"] is None and len(s1["value"]) == len(s1["distance_m"])
-    assert s1["distance_m"][-1] > 20                           # a 27 m track, thinned
+    assert max(s1["distance_m"]) > 20 and min(s1["distance_m"]) < 2    # a 27 m track on the common axis from the south end
+    # tracks 10 and 11 were walked in opposite directions: on the common axis one
+    # runs up and the other down, and both start near the same origin
+    p11 = client.get(f"/api/projects/{pid}/line-profile", params={"file_index": 0, "line_id": 11, "sensor": 1}).json()
+    d10, d11 = s1["distance_m"], p11["series"][0]["distance_m"]
+    assert (d10[-1] > d10[0]) != (d11[-1] > d11[0])
+    assert abs(min(d10) - min(d11)) < 3 and abs(max(d10) - max(d11)) < 3
+    assert p["axis"]["origin_label"] == "남쪽 끝" and 80 < p["axis"]["azimuth_deg"] < 100
+    assert {p["axis"]["travel"], p11["axis"]["travel"]} == {"forward", "backward"}
     client.post(f"/api/projects/{pid}/preprocess", json={"lpf_hz": 2.0})
     p2 = client.get(f"/api/projects/{pid}/line-profile", params={"file_index": 0, "line_id": 10, "sensor": 1}).json()
     assert p2["processed"] is True and len(p2["series"]) == 1

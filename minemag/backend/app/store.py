@@ -23,7 +23,7 @@ from .io_.magdrone_r3 import MagDroneLoadError, summarize
 from matplotlib.path import Path as MplPath
 
 from .models import AreaRequest, GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
-from .processing.gridding import grid_survey, repeat_comparison
+from .processing.gridding import dominant_azimuth_deg, grid_survey, repeat_comparison
 from .processing.platform_qc import platform_qc
 from .processing.peaks import SIGNED_KINDS, derivative_grid
 from .processing.preprocess import PreprocessParams, preprocess
@@ -78,6 +78,15 @@ class Project:
             cached.attrs = dict(df.attrs)
             self.grid_cache[key] = cached
         return cached
+
+    def _area_polygon_xy(self) -> list | None:
+        """The area of interest in the project's local metric frame."""
+        if self.area_polygon is None or self.utm_epsg is None:
+            return None
+        lat = np.array([p[0] for p in self.area_polygon], dtype=float)
+        lon = np.array([p[1] for p in self.area_polygon], dtype=float)
+        x, y, _ = project_to_local_xy(lat, lon, epsg_override=int(self.utm_epsg))
+        return list(zip(x.tolist(), y.tolist()))
 
     def _working(self) -> pd.DataFrame:
         """What the grid, the repeat comparison and the targets read: the
@@ -197,13 +206,14 @@ class Project:
     def _base_grid(self, req: GridRequest):
         df = self._working()
         key = ("base", req.cell_size_m, tuple(req.sensors or ()), req.file_index, req.max_distance_m, req.level,
-               req.method, req.detrend_order, self.proc is not None)
+               req.method, req.detrend_order, self.proc is not None, req.fill_inside_area)
         if key not in self.grid_cache:
             try:
                 grid, stats = grid_survey(
                     df, cell_size_m=req.cell_size_m, sensors=req.sensors, file_index=req.file_index,
                     max_distance_m=req.max_distance_m, level=req.level, method=req.method,
                     detrend_order=req.detrend_order,
+                    fill_polygon_xy=self._area_polygon_xy() if req.fill_inside_area else None,
                 )
             except ValueError as exc:
                 raise ProjectError(str(exc)) from exc
@@ -245,7 +255,7 @@ class Project:
     def grid(self, req: GridRequest) -> dict:
         """The grid as a map overlay plus its statistics."""
         key = ("overlay", req.cell_size_m, tuple(req.sensors or ()), req.file_index, req.max_distance_m, req.level,
-               req.method, req.detrend_order, req.kind, req.cmap, self.proc is not None)
+               req.method, req.detrend_order, req.kind, req.cmap, self.proc is not None, req.fill_inside_area)
         with self._lock:
             if key not in self.grid_cache:
                 grid, stats = self._base_grid(req)
@@ -308,33 +318,63 @@ class Project:
             }
         return out
 
+    def _profile_axis(self, df: pd.DataFrame, file_index: int) -> dict | None:
+        """The common distance axis of a file's lines: along the dominant
+        line direction, from the file's lowest end (south for north-south
+        lines, west for east-west), so a line flown back reads at the same
+        distance as its neighbour flown forth. None without two lines."""
+        sub = df[df["file_index"] == file_index]
+        col = "line_id" if "line_id" in sub.columns else "track"
+        lines = sub[sub[col] >= 0]
+        if lines[col].nunique() < 1 or len(lines) < 10:
+            return None
+        az = dominant_azimuth_deg(lines, col) if lines[col].nunique() >= 2 else None
+        if az is None:
+            ends = lines[["x", "y"]].iloc[[0, -1]].to_numpy()
+            az = float(np.degrees(np.arctan2(ends[1, 1] - ends[0, 1], ends[1, 0] - ends[0, 0])) % 180.0)
+        ux, uy = float(np.cos(np.radians(az))), float(np.sin(np.radians(az)))
+        if (abs(uy) >= abs(ux) and uy < 0) or (abs(ux) > abs(uy) and ux < 0):
+            ux, uy = -ux, -uy                              # the axis runs south->north or west->east
+        along = sub["x"].to_numpy(dtype=float) * ux + sub["y"].to_numpy(dtype=float) * uy
+        return {"azimuth_deg": round(az, 1), "ux": ux, "uy": uy, "origin": float(np.nanmin(along)),
+                "origin_label": "남쪽 끝" if abs(uy) >= abs(ux) else "서쪽 끝"}
+
     def line_profile(self, file_index: int, line_id: int, sensor: int | None = None) -> dict:
-        """Readings along one survey line (one DataTool track), raw and
-        processed, against distance along the line - for seeing what the
-        filter did and what an anomaly looks like in the row."""
+        """Readings along one survey line (one track), raw and processed,
+        against distance on the file's common line axis (_profile_axis) -
+        the same anomaly sits at the same distance whichever way the line
+        was flown, so lines flown back and forth compare directly."""
         df = self.proc if self.proc is not None else self._require()     # a profile shows the whole track, area or not
         sub = df[(df["file_index"] == file_index) & (df["track"] == line_id)]
         if sensor is not None:
             sub = sub[sub["sensor"] == sensor]
         if sub.empty:
             raise ProjectError(f"파일 {file_index}의 측선 {line_id}에 자료가 없습니다.")
+        axis = self._profile_axis(df, file_index)
         series = []
+        travel = None
         for s, g in sub.groupby("sensor"):
             g = g.sort_values("timestamp")
             x, y = g["x"].to_numpy(dtype=float), g["y"].to_numpy(dtype=float)
-            dist = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
+            if axis is not None:
+                dist = x * axis["ux"] + y * axis["uy"] - axis["origin"]
+                if travel is None and len(dist) > 1:
+                    travel = "forward" if dist[-1] >= dist[0] else "backward"
+            else:
+                dist = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
             series.append({
                 "sensor": int(s),
                 "distance_m": np.round(dist, 3).tolist(),
                 "value": np.round(g["tfa"].to_numpy(dtype=float), 2).tolist(),
                 "raw_value": np.round(g["tfa_raw"].to_numpy(dtype=float), 2).tolist() if "tfa_raw" in g else None,
                 "excluded": (g["line_id"] < 0).tolist() if "line_id" in g else None,
-                "lat": np.round(g["lat"].to_numpy(dtype=float), 7).tolist(),
-                "lon": np.round(g["lon"].to_numpy(dtype=float), 7).tolist(),
+                "lat": np.round(g["lat"].to_numpy(), 7).tolist(),
+                "lon": np.round(g["lon"].to_numpy(), 7).tolist(),
             })
         tracks = sorted(int(v) for v in df.loc[df["file_index"] == file_index, "track"].unique())
         return {"file_index": file_index, "line_id": line_id, "processed": self.proc is not None,
-                "tracks": tracks, "series": series}
+                "tracks": tracks, "series": series,
+                "axis": None if axis is None else {"azimuth_deg": axis["azimuth_deg"], "origin_label": axis["origin_label"], "travel": travel}}
 
     def grid_export(self, req: GridRequest, fmt: str) -> bytes:
         values, easting, northing, cell = self.grid_values(req)
@@ -392,6 +432,7 @@ class Project:
                     method=req.method, peak_k=req.peak_k, derivative=req.derivative,
                     magnetization=req.estimate_magnetization,
                     min_separation_m=req.min_separation_m, grid_method=req.grid_method, detrend_order=req.detrend_order,
+                    fill_polygon_xy=self._area_polygon_xy() if req.fill_inside_area else None,
                 )
             except ValueError as exc:
                 raise ProjectError(str(exc)) from exc

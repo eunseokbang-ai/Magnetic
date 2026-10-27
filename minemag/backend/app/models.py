@@ -35,6 +35,9 @@ class GridRequest(BaseModel):
     max_distance_m: Optional[float] = Field(None, gt=0.05, le=20.0)
     level: Literal["median", "none"] = "median"
     cmap: str = "RdBu_r"
+    # Keep every cell inside the area of interest (no distance mask there),
+    # so uneven line spacing leaves no holes in the block. Needs an area.
+    fill_inside_area: bool = False
 
 
 class RepeatRequest(BaseModel):
@@ -103,6 +106,7 @@ class TargetRequest(BaseModel):
     min_separation_m: float = Field(1.2, gt=0.1, le=10.0)
     grid_method: Literal["minimum_curvature", "linear"] = "minimum_curvature"
     detrend_order: int = Field(1, ge=0, le=3)
+    fill_inside_area: bool = False
     # Probe height above the ground, to turn depth below the probe into burial depth.
     sensor_height_m: float = Field(0.5, ge=0.0, le=10.0)
     # Per-file override, keyed by file index as a string ("0": 0.5, "1": 0.3).

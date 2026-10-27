@@ -157,7 +157,7 @@ function Profile({ data, onClose }) {
   if (!data) return null;
   const W = 820, H = 220, padL = 50, padR = 10, padT = 10, padB = 26;
   const all = data.series.flatMap((s) => [...s.value, ...(s.raw_value || [])]).filter(Number.isFinite);
-  const dmax = Math.max(...data.series.flatMap((s) => s.distance_m), 1);
+  const dmax = Math.max(...data.series.flatMap((s) => s.distance_m), 1);     // from the common origin 0, so tracks line up
   const lo = Math.min(...all), hi = Math.max(...all);
   const X = (d) => padL + ((W - padL - padR) * d) / dmax;
   const Y = (v) => padT + (H - padT - padB) * (1 - (v - lo) / Math.max(1e-9, hi - lo));
@@ -166,7 +166,7 @@ function Profile({ data, onClose }) {
   return (
     <div style={{ position: "absolute", left: 10, right: 10, bottom: 10, zIndex: 1000, background: "white", border: "1px solid #c9d3c4", borderRadius: 8, padding: 8, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-        <span>측선 프로파일 — 파일 [{data.file_index}] 트랙 {data.line_id}{data.processed ? " (회색: 전처리 전, 색: 전처리 후)" : " (원 자료)"} · 탐침 {data.series.map((s) => s.sensor).join(", ")}</span>
+        <span>측선 프로파일 — 파일 [{data.file_index}] 트랙 {data.line_id}{data.processed ? " (회색: 전처리 전, 색: 전처리 후)" : " (원 자료)"} · 탐침 {data.series.map((s) => s.sensor).join(", ")}{data.axis ? ` · 거리는 측선 축(${fmt(data.axis.azimuth_deg, 0)}°) ${data.axis.origin_label} 기준${data.axis.travel ? `, 이 트랙은 ${data.axis.travel === "forward" ? "그쪽에서 출발" : "반대쪽에서 출발"}` : ""}` : ""}</span>
         <button style={{ ...ghost, padding: "1px 8px" }} onClick={onClose}>닫기</button>
       </div>
       <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
@@ -231,6 +231,7 @@ export default function App() {
 
   const [cell, setCell] = useState(0.125);
   const [maxDist, setMaxDist] = useState("");          // "" = auto from the line spacing
+  const [fillArea, setFillArea] = useState(true);       // inside the area of interest, no distance mask
   const [gridMethod, setGridMethod] = useState("minimum_curvature");
   const [detrend, setDetrend] = useState(1);
   const [kind, setKind] = useState("anomaly");
@@ -328,6 +329,7 @@ export default function App() {
   const gridReq = () => ({
     cell_size_m: Number(cell),
     max_distance_m: maxDist === "" ? null : Number(maxDist),
+    fill_inside_area: fillArea && !!area,
     method: gridMethod,
     detrend_order: Number(detrend),
     kind,
@@ -506,6 +508,7 @@ export default function App() {
       method: tMethod, derivative, peak_k: Number(peakK), threshold_k: Number(thresholdK),
       sensor_height_m: Number(sensorHeight), sensor_heights_by_file: byFile,
       cell_size_m: Number(cell), grid_method: gridMethod, detrend_order: Number(detrend),
+      fill_inside_area: fillArea && !!area,
       max_targets: maxTargets === "" ? null : Number(maxTargets),
     }));
   });
@@ -675,6 +678,9 @@ export default function App() {
             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 }}>
               <label>셀(m) <input type="number" step="0.025" min="0.02" value={cell} onChange={(e) => setCell(e.target.value)} style={inputW(60)} /></label>
               <label title="비워 두면 측선 간격의 0.75배(0.6~5 m)로 자동">최대 거리(m) <input type="number" step="0.1" min="0.1" placeholder="자동" value={maxDist} onChange={(e) => setMaxDist(e.target.value)} style={inputW(55)} /></label>
+              <label title={area ? "지정한 영역 안은 최대 거리와 상관없이 보간값으로 채웁니다(측선 간격이 고르지 않아 생기는 빈 곳 제거). 표적 피킹의 격자에도 적용" : "먼저 1-1에서 영역을 지정하세요"} style={{ opacity: area ? 1 : 0.5 }}>
+                <input type="checkbox" checked={fillArea} disabled={!area} onChange={(e) => setFillArea(e.target.checked)} /> 영역 안 채움
+              </label>
               <select value={gridMethod} onChange={(e) => setGridMethod(e.target.value)}>
                 <option value="minimum_curvature">최소곡률(장력)</option>
                 <option value="linear">선형</option>
@@ -706,7 +712,7 @@ export default function App() {
               <div style={{ marginTop: 6 }}>
                 <div style={row}><span>자료 / 방법</span><b>{grid.stats.processed ? "전처리됨" : "원 자료"} / {grid.stats.method === "minimum_curvature" ? "최소곡률" : "선형"}{grid.stats.detrend_order ? `, ${grid.stats.detrend_order}차 추세 제거(σ ${fmt(grid.stats.trend_std_nt)} nT)` : ""}</b></div>
                 <div style={row}><span>덮임 / 셀 수</span><b>{fmt(grid.stats.coverage_pct)}% / {grid.stats.n_cells.toLocaleString()}</b></div>
-                <div style={row}><span>최대 거리</span><b>{fmt(grid.stats.max_distance_m)} m{grid.stats.max_distance_auto ? ` (자동${grid.stats.line_spacing_m ? `, 측선 간격 ${fmt(grid.stats.line_spacing_m)} m` : ""})` : ""}</b></div>
+                <div style={row}><span>최대 거리</span><b>{fmt(grid.stats.max_distance_m)} m{grid.stats.max_distance_auto ? ` (자동${grid.stats.line_spacing_m ? `, 측선 간격 ${fmt(grid.stats.line_spacing_m)} m` : ""})` : ""}{grid.stats.fill_inside_area ? ` · 영역 안 ${grid.stats.n_filled_cells.toLocaleString()}셀 채움` : ""}</b></div>
                 <div style={row}><span>{({ anomaly: "이상", rtp: "RTP", thd: "THD", asa: "ASA", tilt: "틸트각", vd1: "1차 수직미분" })[grid.stats.kind]} 범위 / rms</span><b>{fmt(grid.stats.min, 1)} ~ {fmt(grid.stats.max, 1)} / {fmt(grid.stats.rms, 1)} {({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]}</b></div>
                 <div style={row}><span>색 범위</span><b>{["anomaly", "rtp", "tilt", "vd1"].includes(grid.stats.kind) ? `±${fmt(grid.overlay.vmax, 0)}` : `0 ~ ${fmt(grid.overlay.vmax, 0)}`}</b></div>
                 <Legend overlay={grid.overlay} unit={({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]} />

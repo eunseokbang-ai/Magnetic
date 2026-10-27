@@ -44,6 +44,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from matplotlib.path import Path as MplPath
+from scipy.spatial import cKDTree
+
 from magcore.gridding import GridResult, grid_points
 from magcore.lines import cross_track_coordinate
 from magcore.trend import remove_regional_trend
@@ -132,8 +135,14 @@ def grid_survey(
     level: str = "median",
     method: str = DEFAULT_METHOD,
     detrend_order: int = DEFAULT_DETREND_ORDER,
+    fill_polygon_xy=None,
 ) -> tuple[GridResult, dict]:
-    """`method`: "minimum_curvature" (the paper's continuous-curvature
+    """`fill_polygon_xy`: [(x, y), ...] of the area of interest; cells
+    inside it are kept whatever their distance to a reading, so uneven
+    line spacing does not leave holes inside the surveyed block (the
+    interpolation is still the gridder's; this only lifts the distance
+    mask there). Outside the polygon the distance mask applies as usual.
+    `method`: "minimum_curvature" (the paper's continuous-curvature
     gridding, magcore's Briggs relaxation, no overshoot between lines)
     or "linear". `detrend_order`: 0 keeps the grid as gridded, 1 removes
     a plane, 2 a quadratic - the paper's regional background removal,
@@ -150,10 +159,22 @@ def grid_survey(
     if auto:
         max_distance_m = auto_max_distance(spacing)
     values = _levelled(sub, level)
-    grid = grid_points(
-        sub["x"].to_numpy(dtype=float), sub["y"].to_numpy(dtype=float), values,
-        cell_size_m, method=method, max_distance_m=max_distance_m,
-    )
+    x_pts, y_pts = sub["x"].to_numpy(dtype=float), sub["y"].to_numpy(dtype=float)
+    n_filled = 0
+    if fill_polygon_xy is not None and len(fill_polygon_xy) >= 3:
+        # grid everything, then mask by distance only outside the polygon
+        grid = grid_points(x_pts, y_pts, values, cell_size_m, method=method, max_distance_m=1e9)
+        gx, gy = np.meshgrid(grid.easting, grid.northing)
+        if gx.shape != grid.values.shape:
+            gx, gy = gx.T, gy.T
+        centres = np.column_stack([gx.ravel(), gy.ravel()])
+        inside = MplPath(np.asarray(fill_polygon_xy, dtype=float)).contains_points(centres).reshape(grid.values.shape)
+        dist = cKDTree(np.column_stack([x_pts, y_pts])).query(centres, k=1)[0].reshape(grid.values.shape)
+        near = dist <= max_distance_m
+        n_filled = int((inside & ~near & np.isfinite(grid.values)).sum())
+        grid.values = np.where(inside | near, grid.values, np.nan)
+    else:
+        grid = grid_points(x_pts, y_pts, values, cell_size_m, method=method, max_distance_m=max_distance_m)
     trend_removed = None
     if detrend_order and detrend_order > 0 and np.isfinite(grid.values).sum() > 10:
         residual, trend = remove_regional_trend(grid.values, grid.easting, grid.northing, order=int(detrend_order))
@@ -171,6 +192,8 @@ def grid_survey(
         "max_distance_m": round(float(max_distance_m), 2),
         "max_distance_auto": auto,
         "line_spacing_m": round(spacing, 2) if spacing is not None else None,
+        "fill_inside_area": fill_polygon_xy is not None and len(fill_polygon_xy) >= 3,
+        "n_filled_cells": n_filled,
         "extent_m": {"x": round(float(np.ptp(grid.easting)) + cell_size_m, 1), "y": round(float(np.ptp(grid.northing)) + cell_size_m, 1)},
         "sensors": sorted(int(s) for s in sub["sensor"].unique()),
         "file_index": file_index,
