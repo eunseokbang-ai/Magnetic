@@ -277,6 +277,17 @@ def get_local_tile(layer_id: str, z: int, x: int, y: int):
     return Response(content=content, media_type=media_type)
 
 
+@app.middleware("http")
+async def _no_cache_for_the_page(request: Request, call_next):
+    """index.html must not be cached: the bundle it names changes with
+    every build, and a browser holding yesterday's page keeps running
+    yesterday's app (seen 2026-10-27 after run_minemag.bat rebuilt)."""
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
+
 _frontend_dist = paths.frontend_dist()
 if _frontend_dist.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_dist), html=True), name="frontend")

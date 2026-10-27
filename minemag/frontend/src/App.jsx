@@ -291,6 +291,7 @@ export default function App() {
     setQc(null);
     setPre(null);
     setGrid(null);
+    setShowPoints(true);                                  // the grid is gone: nothing else shows the data
     setRepeat(null);
     setTargets(null);
   };
@@ -393,6 +394,7 @@ export default function App() {
       setArea(a);
       setQc(null);
       setGrid(null);
+      setShowPoints(true);
       setRepeat(null);
       setTargets(null);
       if (pre) setPre(null);                              // the pre-processing was on the whole set: redo it inside the area
@@ -448,6 +450,7 @@ export default function App() {
       setArea(null);
       setQc(null);
       setGrid(null);
+      setShowPoints(true);
       setRepeat(null);
       setTargets(null);
       if (pre) setPre(null);
@@ -709,7 +712,6 @@ export default function App() {
                 <Legend overlay={grid.overlay} unit={({ anomaly: "nT", rtp: "nT", thd: "nT/m", asa: "nT/m", tilt: "°", vd1: "nT/m" })[grid.stats.kind]} />
                 <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 4, fontSize: 12, flexWrap: "wrap" }}>
                   <label><input type="checkbox" checked={showGrid} onChange={(e) => setShowGrid(e.target.checked)} /> 격자</label>
-                  <label><input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} /> 측점</label>
                   <label>불투명도 <input type="range" min="0.2" max="1" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /></label>
                   <button style={ghost} disabled={gridBusy} onClick={() => exportGrid("grd")}>GRD</button>
                   <button style={ghost} disabled={gridBusy} onClick={() => exportGrid("tif")}>GeoTIFF</button>
@@ -854,6 +856,7 @@ export default function App() {
                 <option value={0}>두 탐침 모두</option>
                 {summary.sensors.map((s) => <option key={s} value={s}>탐침 {s}</option>)}
               </select>
+              <label style={{ fontSize: 12 }}><input type="checkbox" checked={showPoints} onChange={(e) => setShowPoints(e.target.checked)} /> 측점 표시</label>
               {pre && <label style={{ fontSize: 12 }}><input type="checkbox" checked={showProcessed} onChange={(e) => setShowProcessed(e.target.checked)} /> 전처리된 값</label>}
               {points && <span style={note}>{points.lat.length.toLocaleString()}점 (1/{points.stride}){points.processed ? " · 전처리" : ""}</span>}
             </div>
