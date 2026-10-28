@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { MapContainer, TileLayer, LayersControl, ImageOverlay, ScaleControl, useMap, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, LayersControl, ImageOverlay, ScaleControl, CircleMarker, Polyline, Polygon, Tooltip, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -948,6 +948,32 @@ const GEOLOGY_LAYERS = [
   { source: "kigam_fault_50k", name: "KIGAM 단층 1:5만", minZoom: 9, zIndex: 310 },
 ];
 
+const VECTOR_COLORS = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf"];
+
+function VectorLayer({ layer }) {
+  const color = VECTOR_COLORS[Math.abs([...layer.name].reduce((h, c) => h + c.charCodeAt(0), 0)) % VECTOR_COLORS.length];
+  const style = { color, weight: 2, opacity: layer.opacity, fillOpacity: 0.15 * layer.opacity };
+  return (
+    <>
+      {layer.features.map((f, i) =>
+        f.geometry === "Point" ? (
+          <CircleMarker key={i} center={f.coordinates[0]} radius={7} pathOptions={{ ...style, fillColor: color, fillOpacity: 0.9 * layer.opacity }} pane="markerPane">
+            <Tooltip permanent direction="right" offset={[8, 0]} opacity={layer.opacity}>{f.name}</Tooltip>
+          </CircleMarker>
+        ) : f.geometry === "LineString" ? (
+          <Polyline key={i} positions={f.coordinates} pathOptions={style} pane="markerPane">
+            <Tooltip sticky>{f.name}</Tooltip>
+          </Polyline>
+        ) : (
+          <Polygon key={i} positions={f.coordinates} pathOptions={style} pane="markerPane">
+            <Tooltip sticky>{f.name}</Tooltip>
+          </Polygon>
+        )
+      )}
+    </>
+  );
+}
+
 export default function MapView({
   points,
   colorRange,
@@ -1063,6 +1089,11 @@ export default function MapView({
               opacity={l.opacity}
               pane="overlayPane"
             />
+          ) : l.type === "vector" ? (
+            // drill holes, sample sites, outlines: points as labelled
+            // markers, lines and polygons as outlines (markerPane so the
+            // labels sit above the grid image and the survey points)
+            <VectorLayer key={l.id} layer={l} />
           ) : (
             <ImageOverlay key={l.id} url={l.image_data_url} bounds={l.bounds} opacity={l.opacity} />
           )

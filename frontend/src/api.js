@@ -284,6 +284,18 @@ export function uploadOverlayImage(file) {
 // the chat assistant's sample_point tool can read real pixel values at a
 // point - separate from uploadOverlayImage above, which only produces a
 // display image for the map and is not tied to a project.
+export const VECTOR_LAYER_EXTENSIONS = [".kml", ".kmz", ".geojson", ".json", ".csv", ".txt"];
+export function isVectorLayerFile(name) {
+  const n = (name || "").toLowerCase();
+  return VECTOR_LAYER_EXTENSIONS.some((ext) => n.endsWith(ext));
+}
+
+export function uploadVectorLayer(file) {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/vector-layers`, { method: "POST", body: form });
+}
+
 export function uploadReferenceLayer(projectId, file) {
   const form = new FormData();
   form.append("file", file);

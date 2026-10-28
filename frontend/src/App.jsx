@@ -1452,15 +1452,18 @@ export default function App() {
       setOverlayUploading(true);
       const id = await ensureProject();
       const [resp] = await Promise.all([
-        api.uploadOverlayImage(file),
+        api.isVectorLayerFile(file.name) ? api.uploadVectorLayer(file) : api.uploadOverlayImage(file),
         // Best-effort: also keep a project-scoped copy so the chat
-        // assistant's sample_point tool can read real pixel values here.
-        // Must never block the map overlay display if it fails.
+        // assistant's sample_point tool can read real pixel values (or
+        // the nearest drill hole) here. Must never block the map display.
         api.uploadReferenceLayer(id, file).catch(() => null),
       ]);
       setOverlayLayers((prev) => [
         ...prev,
-        { id: `${Date.now()}-${Math.random()}`, name: resp.name, image_data_url: resp.image_data_url, bounds: resp.bounds, opacity: 0.8, visible: true },
+        resp.type === "vector"
+          ? { id: `${Date.now()}-${Math.random()}`, name: resp.name, type: "vector", features: resp.features, bounds: resp.bounds,
+              n_points: resp.n_points, n_lines: resp.n_lines, n_polygons: resp.n_polygons, opacity: 1, visible: true }
+          : { id: `${Date.now()}-${Math.random()}`, name: resp.name, image_data_url: resp.image_data_url, bounds: resp.bounds, opacity: 0.8, visible: true },
       ]);
     } catch (e) {
       setOverlayError(e.message || String(e));
@@ -2883,7 +2886,7 @@ export default function App() {
           />
         )}
 
-        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>12. 참조 레이어 (지질도 등 GeoTIFF)</h2>
+        <h2 style={{ fontSize: 13, margin: "16px 0 10px 0" }}>12. 참조 레이어 (GeoTIFF · KML/KMZ · GeoJSON · CSV)</h2>
         <LayerManager
           layers={overlayLayers}
           onUpload={handleUploadOverlayImage}

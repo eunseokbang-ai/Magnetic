@@ -49,11 +49,13 @@ export default function LayerManager({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ fontSize: 12, color: "#4a3d28" }}>
-        좌표계가 내장된 GeoTIFF(지질도 등)를 업로드하면 배경지도 위에 겹쳐 표시됩니다. 목록 아래쪽이 위 레이어입니다.
+        좌표계가 내장된 GeoTIFF(지질도, 항공 자력도 등)를 업로드하면 배경지도 위에 겹쳐 표시됩니다. 시추 위치·시료 채취 지점·조사 경계 같은
+        점·선·면 자료는 Google Earth의 KML/KMZ, GeoJSON, 또는 위도·경도 열(lat/lon, 위도/경도)이 있는 CSV로 올리면 이름표가 붙은 표시로
+        그려집니다(위경도 WGS84만, 투영 좌표는 불가). 목록 아래쪽이 위 레이어입니다.
       </div>
       <input
         type="file"
-        accept=".tif,.tiff"
+        accept=".tif,.tiff,.kml,.kmz,.geojson,.json,.csv,.txt"
         style={inputStyle}
         disabled={uploading}
         onChange={async (e) => {
@@ -135,6 +137,11 @@ export default function LayerManager({
                 <input type="checkbox" checked={l.visible} onChange={(e) => onToggleVisible(l.id, e.target.checked)} />
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.name}>
                   {l.name}
+                  {l.type === "vector" && (
+                    <span style={{ color: "#8a7a5c" }}>
+                      {" "}({[l.n_points ? `점 ${l.n_points}` : null, l.n_lines ? `선 ${l.n_lines}` : null, l.n_polygons ? `면 ${l.n_polygons}` : null].filter(Boolean).join(", ")})
+                    </span>
+                  )}
                 </span>
                 <button
                   disabled={idx === layers.length - 1}

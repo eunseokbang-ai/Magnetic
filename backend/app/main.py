@@ -11,6 +11,7 @@ from datetime import date, timedelta
 import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -63,6 +64,7 @@ from .models import (
 from magcore import local_tiles, tile_cache
 from magcore.colormaps import register_custom_colormaps
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
+from magcore.vector_layer import VectorLayerError, detect_vector_format, load_vector_layer
 from .autosave import AutosaveManager
 from .store import ProjectError, store
 
@@ -183,6 +185,11 @@ async def drone_error_handler(request, exc: DroneLoadError):
 async def base_error_handler(request, exc: BaseLoadError):
     from fastapi.responses import JSONResponse
 
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(VectorLayerError)
+async def vector_layer_error_handler(request, exc: VectorLayerError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -697,6 +704,15 @@ async def upload_overlay_image(file: UploadFile):
     content = await file.read()
     name = file.filename or "overlay"
     return load_geotiff_overlay(io.BytesIO(content), name=name)
+
+
+@app.post("/api/vector-layers")
+async def upload_vector_layer(file: UploadFile):
+    """Stateless preview of a vector file (KML/KMZ/GeoJSON/CSV points,
+    lines, polygons) for the map's layer manager - the vector twin of
+    /api/overlay-images."""
+    content = await file.read()
+    return load_vector_layer(content, file.filename or "layer")
 
 
 @app.post("/api/projects/{project_id}/reference-layers")

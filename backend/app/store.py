@@ -125,6 +125,7 @@ from magcore.heading_calibration import (
     magnetic_heading,
 )
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
+from magcore.vector_layer import detect_vector_format, load_vector_layer
 from magcore.qc_certificate import evaluate_qc_certificate
 from magcore.report import generate_report_markdown
 from magcore.sway import detect_sway
@@ -428,6 +429,7 @@ class Project:
     repeat_pass_summary_cache: dict | None = None
     geology_stats_cache: dict | None = None
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
+    reference_vectors: dict = field(default_factory=dict)  # name -> parsed vector layer (magcore.vector_layer)
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
     transform_cache: dict = field(default_factory=dict)
@@ -3786,6 +3788,10 @@ class Project:
         addition to the stateless preview endpoint the map layer manager
         uses) so the chat assistant can sample real pixel values at a
         point instead of only showing the layer as a picture."""
+        if detect_vector_format(name, data) is not None and not name.lower().endswith((".tif", ".tiff")):
+            layer = load_vector_layer(data, name)
+            self.reference_vectors[layer["name"]] = layer
+            return layer
         try:
             preview = load_geotiff_overlay(io.BytesIO(data), name=name)
         except OverlayImageError as exc:
@@ -3795,6 +3801,7 @@ class Project:
 
     def remove_reference_layer(self, name: str) -> dict:
         self.reference_layers.pop(name, None)
+        self.reference_vectors.pop(name, None)
         return {"removed": name}
 
     def sample_point(self, lat: float, lon: float) -> dict:
@@ -3836,6 +3843,18 @@ class Project:
                     }
                 else:
                     result["inversion_susceptibility_profile"] = {"note": "역산 메쉬 범위 밖의 좌표입니다."}
+
+        if self.reference_vectors:
+            nearest = None
+            for layer_name, layer in self.reference_vectors.items():
+                for f in layer["features"]:
+                    for la, lo in f["coordinates"]:
+                        d = float(np.hypot((la - lat) * 110540.0, (lo - lon) * 111320.0 * np.cos(np.radians(lat))))
+                        if nearest is None or d < nearest["distance_m"]:
+                            nearest = {"layer": layer_name, "name": f["name"], "geometry": f["geometry"], "distance_m": round(d, 1),
+                                       "properties": f.get("properties") or {}}
+            if nearest is not None:
+                result["nearest_vector_feature"] = nearest
 
         if self.reference_layers:
             geology = {}
