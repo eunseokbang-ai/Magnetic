@@ -1354,7 +1354,12 @@ WMS를 화면에서 직접 부르지 않고 백엔드를 거치게 한 이유는
 - **래스터(GeoTIFF).** 좌표계가 내장된 지질도·항공 자력도·정사영상. `overlay_image.py`가 WGS84로
   투영해 2000픽셀 이하로 줄인 그림과 경계를 돌려주고, 지도는 그 그림을 반투명으로 겹친다. 4밴드
   파일의 알파 채널은 투명도로 쓰인다(조사 경계 밖을 투명하게 만든 항공 RTP 그림처럼). 수십 GB급
-  정사영상은 업로드 대신 미리 타일링한 폴더를 연동한다(`local_tiles.py`).
+  정사영상은 업로드 대신 파일 경로를 지정해 바로 타일로 본다(`local_raster.py`: 요청된 타일마다 GeoTIFF의
+  내부 오버뷰에서 한 창을 읽어 `WarpedVRT`로 웹 메르카토르에 맞추고 PNG로 캐시. 안동 2026-10-28 정사영상
+  187,062 × 123,655 px·114 GB에서 타일 하나 50~400 ms, 캐시 뒤 수 ms). 오버뷰가 없는 파일은 `gdaladdo`로
+  먼저 만든다. 이미 타일로 만든 폴더(QGIS, gdal2tiles, Metashape Export Tiles)는 `local_tiles.py`가 읽는다.
+  Metashape 프로젝트의 `*.files/…/orthomosaic` 폴더는 내부 형식(orthomosaic.zip 색인 + tile-행-열.tif +
+  피라미드 zip)이라 쓸 수 없다.
 - **벡터(KML/KMZ, GeoJSON, CSV).** 시추 위치, 시료 채취 지점, 조사 경계처럼 점·선·면으로 된 자료.
   `vector_layer.py`가 세 형식을 하나의 구조(이름, 기하, [위도, 경도] 좌표, 속성)로 읽고, 지도는 점을
   이름표가 붙은 표식으로, 선·면을 외곽선으로 그린다. KML은 Google Earth Pro가 쓰는 대로 한 Placemark

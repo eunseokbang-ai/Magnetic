@@ -1483,6 +1483,8 @@ export default function App() {
       const layer = prev.find((l) => l.id === id);
       if (layer?.type === "tiles") {
         api.unregisterLocalTileFolder(layer.tile_layer_id).catch(() => {});
+      } else if (layer?.type === "raster") {
+        api.unregisterLocalRaster(layer.raster_layer_id).catch(() => {});
       } else if (layer && projectId) {
         api.deleteReferenceLayer(projectId, layer.name).catch(() => {});
       }
@@ -1514,6 +1516,40 @@ export default function App() {
     } finally {
       setTileFolderRegistering(false);
     }
+  };
+
+  const handleRegisterLocalRaster = async (path, label) => {
+    try {
+      setTileFolderError(null);
+      setTileFolderRegistering(true);
+      const resp = await api.registerLocalRaster({ path, label });
+      setOverlayLayers((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random()}`,
+          name: resp.label,
+          type: "raster",
+          raster_layer_id: resp.id,
+          bounds: resp.bounds,
+          min_zoom: resp.min_zoom,
+          max_zoom: resp.max_zoom,
+          has_overviews: resp.has_overviews,
+          size_gb: resp.size_gb,
+          res_m: resp.res_m,
+          opacity: 1,
+          visible: true,
+        },
+      ]);
+    } catch (e) {
+      setTileFolderError(e.message || String(e));
+    } finally {
+      setTileFolderRegistering(false);
+    }
+  };
+
+  const handlePickRasterFile = async () => {
+    const resp = await api.pickLocalRasterFile();
+    return resp.path;
   };
 
   const handlePickTileFolder = async () => {
@@ -2900,6 +2936,8 @@ export default function App() {
           tileFolderRegistering={tileFolderRegistering}
           tileFolderError={tileFolderError}
           onPickTileFolder={handlePickTileFolder}
+          onRegisterRaster={handleRegisterLocalRaster}
+          onPickRasterFile={handlePickRasterFile}
         />
 
         <details id="wf-section-advanced" open={purposeMode === "mineral"} style={{ marginBottom: 4 }}>

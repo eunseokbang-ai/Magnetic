@@ -654,6 +654,13 @@ class TileBboxRequest(BaseModel):
     max_zoom: int = Field(ge=0, le=19)
 
 
+class LocalRasterRequest(BaseModel):
+    """A GeoTIFF on the backend's own disk to serve as map tiles without
+    uploading or re-tiling it - see magcore/local_raster.py."""
+    path: str = Field(..., min_length=1, max_length=1024)
+    label: Optional[str] = Field(None, max_length=200)
+
+
 class LocalTileFolderRequest(BaseModel):
     """Points the backend at a local folder containing an already-tiled
     {z}/{x}/{y}.<ext> raster pyramid (e.g. produced by QGIS or GDAL's

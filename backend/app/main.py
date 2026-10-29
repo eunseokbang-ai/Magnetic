@@ -34,6 +34,7 @@ from .models import (
     InversionSliceRequest,
     IntermagnetFetchRequest,
     LineamentRequest,
+    LocalRasterRequest,
     LocalTileFolderRequest,
     ManualExcludeRequest,
     AutoBoundaryRequest,
@@ -61,7 +62,8 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from magcore import local_tiles, tile_cache
+from magcore import local_raster, local_tiles, tile_cache
+from magcore.local_raster import LocalRasterError
 from magcore.colormaps import register_custom_colormaps
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
 from magcore.vector_layer import VectorLayerError, detect_vector_format, load_vector_layer
@@ -185,6 +187,11 @@ async def drone_error_handler(request, exc: DroneLoadError):
 async def base_error_handler(request, exc: BaseLoadError):
     from fastapi.responses import JSONResponse
 
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(LocalRasterError)
+async def local_raster_error_handler(request, exc: LocalRasterError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -951,6 +958,41 @@ def get_tile(source: str, z: int, x: int, y: int):
 # project-scoped, same rationale as the offline tile cache above. See
 # processing/local_tiles.py for why this exists instead of just uploading
 # the raw GeoTIFF through /overlay-images.
+# A big GeoTIFF (a photogrammetry orthomosaic of tens of GB) served as
+# tiles straight from disk: one windowed read from its internal overviews
+# per tile, cached as PNG. See magcore/local_raster.py.
+@app.post("/api/local-rasters/register")
+def register_local_raster(req: LocalRasterRequest):
+    layer = local_raster.register_local_raster(req.path, req.label)
+    south, west, north, east = layer.bounds
+    return {
+        "id": layer.id, "label": layer.label, "min_zoom": layer.min_zoom, "max_zoom": layer.max_zoom,
+        "bounds": [[south, west], [north, east]], "width": layer.width, "height": layer.height, "bands": layer.bands,
+        "crs": layer.crs, "res_m": layer.res_m, "has_overviews": layer.has_overviews, "size_gb": layer.size_gb,
+    }
+
+
+@app.post("/api/local-rasters/pick-file")
+def pick_local_raster_file():
+    return {"path": local_raster.pick_file_dialog()}
+
+
+@app.delete("/api/local-rasters/{layer_id}")
+def unregister_local_raster(layer_id: str):
+    local_raster.unregister_local_raster(layer_id)
+    return {"removed": layer_id}
+
+
+@app.get("/api/local-rasters/{layer_id}/{z}/{x}/{y}")
+def get_local_raster_tile(layer_id: str, z: int, x: int, y: int):
+    if local_raster.get_layer(layer_id) is None:
+        raise HTTPException(status_code=404, detail=f"등록되지 않은 래스터 레이어입니다: {layer_id}")
+    content = local_raster.get_tile(layer_id, z, x, y)
+    if content is None:
+        return Response(status_code=204)
+    return Response(content=content, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.post("/api/local-tiles/register")
 def register_local_tile_folder(req: LocalTileFolderRequest):
     scheme_override = None if req.scheme == "auto" else req.scheme

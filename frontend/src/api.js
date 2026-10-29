@@ -262,6 +262,18 @@ export function getOfflineTileStatus() {
   return request(`/tiles/status`);
 }
 
+export function registerLocalRaster(req) {
+  return request(`/local-rasters/register`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function unregisterLocalRaster(layerId) {
+  return request(`/local-rasters/${encodeURIComponent(layerId)}`, { method: "DELETE" });
+}
+
+export function pickLocalRasterFile() {
+  return request(`/local-rasters/pick-file`, { method: "POST" });
+}
+
 export function registerLocalTileFolder(req) {
   return request(`/local-tiles/register`, { method: "POST", body: JSON.stringify(req) });
 }

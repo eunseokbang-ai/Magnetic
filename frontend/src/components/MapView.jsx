@@ -1089,6 +1089,17 @@ export default function MapView({
               opacity={l.opacity}
               pane="overlayPane"
             />
+          ) : l.type === "raster" ? (
+            // a GeoTIFF on disk, tiled on demand by the backend
+            <TileLayer
+              key={l.id}
+              url={`/api/local-rasters/${l.raster_layer_id}/{z}/{x}/{y}`}
+              bounds={l.bounds}
+              minZoom={l.min_zoom}
+              maxNativeZoom={l.max_zoom}
+              opacity={l.opacity}
+              pane="overlayPane"
+            />
           ) : l.type === "vector" ? (
             // drill holes, sample sites, outlines: points as labelled
             // markers, lines and polygons as outlines (markerPane so the
