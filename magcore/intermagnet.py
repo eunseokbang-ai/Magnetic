@@ -401,7 +401,7 @@ def _cache_dir() -> Path:
     if override:
         path = Path(override)
     else:
-        from ..paths import data_dir
+        from .paths import data_dir
         path = data_dir() / "intermagnet_cache"
     path.mkdir(parents=True, exist_ok=True)
     return path
