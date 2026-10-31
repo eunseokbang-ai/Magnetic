@@ -339,7 +339,7 @@ export default function App() {
   const [tileError, setTileError] = useState(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
-  const [showContours, setShowContours] = useState(false);
+  const [showContours, setShowContours] = useState(true);    // display only: contours always come with the grid
   const [contourInterval, setContourInterval] = useState(null);
   const [contourNLevels, setContourNLevels] = useState(10);
   // Off by default. Points are drawn *over* the grid image, and since
@@ -2674,6 +2674,7 @@ export default function App() {
           colorRange={legendRange}
           cmapName={cmapName}
           overlay={overlay}
+          showContours={showContours}
           gridOpacity={gridOpacity}
           confidenceOverlay={showConfidenceOverlay ? confidenceOverlay : null}
           showPointsOverGrid={showPointsOverGrid}

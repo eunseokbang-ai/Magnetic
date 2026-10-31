@@ -1347,11 +1347,11 @@ export default function WorkflowSteps({
           )}
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={showContours} onChange={(e) => setShowContours(e.target.checked)} />
-            <span style={{ color: "#6b5c42" }}>등고선(등자력선) 표시</span>
+            <span style={{ color: "#6b5c42" }}>등고선(등자력선) 표시 — 격자를 만들 때 항상 계산되며, 이 체크는 보이기만 켜고 끕니다</span>
           </label>
-          {showContours && (
+          {(
             <>
-              <Field label="등고선 간격 (nT) — 비워두면 아래 개수로 자동 분할">
+              <Field label="등고선 간격 (nT) — 비워두면 아래 개수로 자동 분할 (바꾸면 그리드 생성을 다시)">
                 <input
                   type="number"
                   style={inputStyle}

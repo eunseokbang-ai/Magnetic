@@ -2161,11 +2161,12 @@ class Project:
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         overlay["striping"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
-        if req.show_contours:
-            overlay["contours"] = compute_contours(
-                grid.values, grid.easting, grid.northing, self.utm_epsg,
-                interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
-            )
+        # contours always come with the grid; the map's checkbox only shows or
+        # hides them, so toggling it never needs a re-grid
+        overlay["contours"] = compute_contours(
+            grid.values, grid.easting, grid.northing, self.utm_epsg,
+            interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
+        )
         self.last_overlay = OverlayState(grid.values, grid.easting, grid.northing, req.value)
         return overlay
 
@@ -2545,11 +2546,10 @@ class Project:
         overlay["equivalent_source"] = self._equivalent_source_report(req, grid)
         overlay["boundary_margin"] = margin_report
         overlay["transform"] = req.transform
-        if req.show_contours:
-            overlay["contours"] = compute_contours(
-                values, grid.easting, grid.northing, self.utm_epsg,
-                interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
-            )
+        overlay["contours"] = compute_contours(
+            values, grid.easting, grid.northing, self.utm_epsg,
+            interval=req.contour_interval_nt, n_levels=req.contour_n_levels,
+        )
         self.last_overlay = OverlayState(values, grid.easting, grid.northing, req.transform)
         return overlay
 

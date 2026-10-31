@@ -979,6 +979,7 @@ export default function MapView({
   colorRange,
   cmapName,
   overlay,
+  showContours = true,
   gridOpacity,
   confidenceOverlay,
   showPointsOverGrid,
@@ -1125,7 +1126,7 @@ export default function MapView({
           // keeps this resilient rather than rendering nothing).
           <ImageOverlay url={overlay.image_data_url} bounds={overlay.bounds} opacity={gridOpacity} />
         ))}
-      {overlay?.contours && <ContourLayer contours={overlay.contours} />}
+      {overlay?.contours && showContours !== false && <ContourLayer contours={overlay.contours} />}
       {overlay?.boundary_margin?.outline?.length > 0 && (
         <BoundaryMarginLayer outline={overlay.boundary_margin.outline} />
       )}

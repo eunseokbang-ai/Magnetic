@@ -238,7 +238,7 @@ def main():
 
     r = client.post(
         f"/api/projects/{project_id}/grid",
-        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "show_contours": True, "contour_n_levels": 8},
+        json={"value": "anomaly", "cell_size_m": 10.0, "method": "nearest", "contour_n_levels": 8},   # no flag: contours always come
     )
     assert r.status_code == 200, r.text
     contours = r.json()["contours"]

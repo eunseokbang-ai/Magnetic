@@ -385,7 +385,9 @@ StretchName = Literal["linear", "equalize", "normal"]
 
 
 class ContourParams(BaseModel):
-    show_contours: bool = False
+    # Contours are always computed with the grid (2026-10-31); this flag is
+    # kept so older clients still validate, and the map toggles display.
+    show_contours: bool = True
     # if None, contour_n_levels evenly-spaced levels are picked from the
     # grid's own min/max range instead of a fixed nT interval.
     contour_interval_nt: Optional[float] = Field(None, gt=0)
