@@ -1,0 +1,217 @@
+{
+ "n_files": 18,
+ "drone": {
+  "n_points": 266672,
+  "n_duplicate_timestamps_removed": 0,
+  "n_invalid_coords_removed": 0,
+  "n_files_using_precompensated_mag": 0,
+  "n_files_total": 18,
+  "median_speed_mps": 4.137932664173123
+ },
+ "intermagnet": {
+  "stations": [
+   {
+    "iaga_code": "CYG",
+    "station_name": "Cheongyang",
+    "distance_km": 147.6025692485422,
+    "bearing_deg": 263.56491601902405
+   },
+   {
+    "iaga_code": "KNY",
+    "station_name": "Kanoya",
+    "distance_km": 608.893208570786,
+    "bearing_deg": 158.12679771402077
+   },
+   {
+    "iaga_code": "KAK",
+    "station_name": "Kakioka",
+    "distance_km": 1046.7307198066217,
+    "bearing_deg": 88.33068655355731
+   },
+   {
+    "iaga_code": "MMB",
+    "station_name": "Memambetsu",
+    "distance_km": 1561.1630678255322,
+    "bearing_deg": 53.45887046552747
+   }
+  ],
+  "n_points": 2880,
+  "time_range": [
+   "2026-10-28T00:00:00",
+   "2026-10-29T23:59:00"
+  ],
+  "dropped": [
+   {
+    "iaga_code": "CNH",
+    "reason": "비행일 자료 미게시"
+   },
+   {
+    "iaga_code": "KHB",
+    "reason": "비행일 자료 미게시"
+   },
+   {
+    "iaga_code": "MZL",
+    "reason": "비행일 자료 미게시"
+   },
+   {
+    "iaga_code": "BMT",
+    "reason": "비행일 자료 미게시"
+   }
+  ]
+ },
+ "process": {
+  "n_points": 266672,
+  "n_lines": 41,
+  "n_kept": 215161,
+  "n_excluded_auto": 51511,
+  "line_spacing_m": 99.10465972323436,
+  "utm_epsg": 32652,
+  "dominant_azimuth_deg": 89.0,
+  "inclination_deg": 53.04445522450804,
+  "declination_deg": -8.820927659244255,
+  "despike": {
+   "enabled": true,
+   "n_spikes_removed": 5156,
+   "pct_spikes_removed": 1.9334613307733846
+  },
+  "heading_correction": {
+   "measured": true,
+   "applied": false,
+   "reason": null,
+   "offset_nt": 3.3989395929411863,
+   "n_matched_pairs": 877,
+   "n_quiet_pairs": 351,
+   "method": "local_plane",
+   "offset_spread_nt": 5.730926516217642,
+   "residual_nt": 9.936707647058675,
+   "warnings": [
+    "구역별 헤딩 오프셋의 산포(5.73nT)가 추정값(3.40nT)보다 큽니다 - 헤딩 오차가 아니라 측선별 레벨 오차일 가능성이 높으니 통계적 레벨링을 함께 쓰세요."
+   ]
+  },
+  "statistical_leveling": {
+   "applied": true,
+   "reason": null,
+   "n_lines": 41,
+   "n_pairs": 37,
+   "trend_window_lines": 9,
+   "max_shift_nt": 24.241932281500272,
+   "rms_shift_nt": 7.855770457328868,
+   "roughness_before_nt": 12.34177405324907,
+   "roughness_after_nt": 3.821019932434473,
+   "warnings": [
+    "인접 측선 40쌍 중 37쌍만 비교할 수 있었습니다 - 겹치지 않는 측선 구간이 있어 일부 측선은 이웃을 통해 간접적으로만 보정됩니다."
+   ]
+  },
+  "diurnal": {
+   "mode": "base_station",
+   "coverage_pct": 100.0,
+   "has_overlap": true,
+   "base_reference_value": 50664.6561867712,
+   "base_time_range": [
+    "2026-10-28 00:01:00",
+    "2026-10-29 23:58:00"
+   ],
+   "drone_time_range": [
+    "2026-10-28 05:13:13.300000",
+    "2026-10-29 04:39:01.700000"
+   ],
+   "n_extrapolated": 0,
+   "pct_extrapolated": 0.0
+  },
+  "anomaly_stats": {
+   "min": -1373.6540027955407,
+   "max": 1740.9904891843464,
+   "mean": 17.69422652265539,
+   "std": 469.72987310374435
+  },
+  "tmi_stats": {
+   "min": 49081.62839923886,
+   "max": 52191.33211290834,
+   "mean": 50469.798113107405,
+   "std": 467.67402512706036
+  }
+ },
+ "noise_qc": {
+  "available": true,
+  "sample_rate_hz": 10.0,
+  "reference_threshold_4th_diff_nt": 0.1,
+  "overall_rms_4th_diff_nt": 0.43263403338636086,
+  "overall_rms_8th_diff_nt": 0.41811228398258876,
+  "n_lines_flagged": 7
+ },
+ "grids": {
+  "grid": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": -1228.8897705078125,
+   "max": 1602.913330078125
+  },
+  "rtp": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": -514.833740234375,
+   "max": 1620.7489013671875
+  },
+  "as": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": 0.022168010473251343,
+   "max": 19.097749710083008
+  },
+  "thdr": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": 0.0,
+   "max": 14.829288482666016
+  },
+  "1vd": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": -12.533086776733398,
+   "max": 18.723045349121094
+  },
+  "tilt": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": -88.03744506835938,
+   "max": 85.65550231933594
+  },
+  "upward_continuation": {
+   "shape": [
+    575,
+    736
+   ],
+   "crs": "EPSG:32652",
+   "min": -807.9428100585938,
+   "max": 1105.7529296875
+  }
+ },
+ "euler": {
+  "n_solutions": 2428,
+  "depth_median_m": 59.81380955898203,
+  "depth_stats": {
+   "min": 1.384929878404364,
+   "max": 512.8574016229832,
+   "mean": 61.3668473737985,
+   "std": 43.342994739638215
+  }
+ }
+}
