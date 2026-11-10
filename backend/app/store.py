@@ -102,6 +102,7 @@ from .project_common import (
     boundary_rings,
 )
 from .project_block_leveling import BlockLevelingMixin
+from .project_report import ReportMixin
 from .project_observatory import ObservatoryMixin
 from magcore.sensor_pair import sensor_pair_report
 from .project_grids import GridMixin
@@ -153,7 +154,7 @@ def _sensor_pair_summary(df: pd.DataFrame, labels: list | None, used: str) -> di
 
 
 @dataclass
-class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
+class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
     id: str
     drone_raw: pd.DataFrame | None = None
     base_raw: pd.DataFrame | None = None

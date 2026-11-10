@@ -785,11 +785,12 @@ export default function App() {
     }
   };
 
-  const handleExportReport = async () => {
+  const handleExportReport = async (format = "md") => {
     try {
       setError(null);
       setExportingReport(true);
-      await api.exportReport(projectId, "processing_report.md");
+      if (format === "md") await api.exportReport(projectId, "processing_report.md");
+      else await api.exportReportDocument(projectId, format, `processing_report.${format}`);
     } catch (e) {
       handleError(e);
     } finally {
@@ -2482,11 +2483,25 @@ export default function App() {
             opacity: processSummary && !exportingReport ? 1 : 0.5,
           }}
           disabled={!processSummary || exportingReport}
-          onClick={handleExportReport}
+          onClick={() => handleExportReport("md")}
           title="지금까지 적용된 보정, 측선/통계 요약, 역산·오일러 결과를 정리한 Markdown 보고서를 다운로드합니다"
         >
           {exportingReport ? "생성 중..." : "📄 처리 보고서 다운로드 (.md)"}
         </button>
+        <div style={{ display: "flex", gap: 6, margin: "6px 0 10px 0" }} role="group" aria-label="그림이 들어간 보고서">
+          {[["docx", "Word"], ["html", "HTML"], ["pdf", "PDF"]].map(([format, name]) => (
+            <button
+              key={format}
+              style={{ flex: 1, padding: "6px 4px", fontSize: 12, borderRadius: 6, border: "1px solid #a9631f", background: "white", color: "#a9631f",
+                       cursor: processSummary && !exportingReport ? "pointer" : "default", opacity: processSummary && !exportingReport ? 1 : 0.5 }}
+              disabled={!processSummary || exportingReport}
+              onClick={() => handleExportReport(format)}
+              title={format === "pdf" ? "지도 그림 모음과 요약 한 장 (보정 내역 전체는 Word·HTML에 있습니다)" : format === "html" ? "그림이 들어간 보고서 한 파일 - 브라우저에서 인쇄하면 PDF가 됩니다" : "그림·표가 들어간 Word 보고서"}
+            >
+              그림 포함 {name}
+            </button>
+          ))}
+        </div>
         <WorkflowSteps
           geologyOpacity={geologyOpacity}
           setGeologyOpacity={setGeologyOpacity}

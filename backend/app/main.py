@@ -987,6 +987,23 @@ def export_report(project_id: str):
     )
 
 
+_REPORT_MEDIA = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "html": "text/html; charset=utf-8",
+    "pdf": "application/pdf",
+}
+
+
+@app.get("/api/projects/{project_id}/report/{fmt}")
+def export_report_document(project_id: str, fmt: str):
+    """The report with its figures (magcore/report_document.py): Word, a
+    self-contained HTML page that prints to PDF, or a PDF of the figures."""
+    if fmt not in _REPORT_MEDIA:
+        raise HTTPException(status_code=404, detail=f"지원하지 않는 보고서 형식입니다: {fmt}")
+    data = store.get(project_id).generate_report_document(fmt)
+    return Response(content=data, media_type=_REPORT_MEDIA[fmt], headers={"Content-Disposition": f"attachment; filename=processing_report.{fmt}"})
+
+
 @app.post("/api/projects/{project_id}/chat")
 def chat(project_id: str, req: ChatRequest):
     project = store.get(project_id)
