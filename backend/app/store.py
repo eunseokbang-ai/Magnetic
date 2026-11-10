@@ -53,6 +53,7 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
+from magcore import local_raster, local_tiles
 from magcore.base_qc import process_base_station
 from magcore.base_segments import level_base_segments
 from magcore.manual_smooth import apply_manual_smoothing
@@ -430,6 +431,10 @@ class Project:
     geology_stats_cache: dict | None = None
     reference_layers: dict = field(default_factory=dict)  # name -> raw GeoTIFF bytes
     reference_vectors: dict = field(default_factory=dict)  # name -> parsed vector layer (magcore.vector_layer)
+    # What the layer manager shows, in its order: [{type, name, opacity,
+    # visible, path?, scheme?}]. The map's own state, mirrored here by the
+    # frontend so a saved project comes back with its layers.
+    reference_layer_state: list = field(default_factory=list)
     last_params: ProcessParams | None = None
     grid_cache: dict = field(default_factory=dict)
     transform_cache: dict = field(default_factory=dict)
@@ -3791,18 +3796,88 @@ class Project:
         if detect_vector_format(name, data) is not None and not name.lower().endswith((".tif", ".tiff")):
             layer = load_vector_layer(data, name)
             self.reference_vectors[layer["name"]] = layer
+            self.mark_changed()
             return layer
         try:
             preview = load_geotiff_overlay(io.BytesIO(data), name=name)
         except OverlayImageError as exc:
             raise ProjectError(str(exc)) from exc
         self.reference_layers[name] = data
+        self.mark_changed()
         return preview
 
     def remove_reference_layer(self, name: str) -> dict:
         self.reference_layers.pop(name, None)
         self.reference_vectors.pop(name, None)
+        self.reference_layer_state = [s for s in self.reference_layer_state if s.get("name") != name]
+        self.mark_changed()
         return {"removed": name}
+
+    def set_reference_layer_state(self, layers: list[dict]) -> dict:
+        """The layer manager's list as the frontend has it now (order,
+        opacity, visibility, and for path-based layers the path). Uploaded
+        content stays where add_reference_layer put it; this is only the
+        list. Re-sending the same list does not count as a change, so an
+        idle screen does not keep the autosave writing."""
+        clean = []
+        for item in layers:
+            entry = {"type": item["type"], "name": str(item["name"]),
+                     "opacity": float(item.get("opacity", 1.0)), "visible": bool(item.get("visible", True))}
+            if item.get("path"):
+                entry["path"] = str(item["path"])
+            if item.get("scheme"):
+                entry["scheme"] = str(item["scheme"])
+            clean.append(entry)
+        if clean != self.reference_layer_state:
+            self.reference_layer_state = clean
+            self.mark_changed()
+        return {"n_layers": len(self.reference_layer_state)}
+
+    def reference_layer_descriptors(self) -> list[dict]:
+        """Everything the map needs to draw the project's reference layers
+        again, in the saved order: uploaded GeoTIFFs re-rendered from their
+        stored bytes, vector layers as parsed, and tile folders / on-disk
+        GeoTIFFs registered again from their paths (ids are per server
+        run). A layer that cannot come back - the folder moved, the file
+        is gone - is returned with `error` instead of being dropped, so
+        the screen can say which one."""
+        state = list(self.reference_layer_state)
+        known = {(s["type"], s["name"]) for s in state}
+        # content that was uploaded but whose list entry never arrived
+        state += [{"type": "image", "name": n, "opacity": 0.8, "visible": True}
+                  for n in self.reference_layers if ("image", n) not in known]
+        state += [{"type": "vector", "name": n, "opacity": 1.0, "visible": True}
+                  for n in self.reference_vectors if ("vector", n) not in known]
+        out = []
+        for s in state:
+            base = {"type": s["type"], "name": s["name"], "opacity": s.get("opacity", 1.0), "visible": s.get("visible", True)}
+            try:
+                if s["type"] == "image":
+                    data = self.reference_layers.get(s["name"])
+                    if data is None:
+                        continue                       # the upload's project copy never landed
+                    preview = load_geotiff_overlay(io.BytesIO(data), name=s["name"])
+                    out.append({**base, "image_data_url": preview["image_data_url"], "bounds": preview["bounds"]})
+                elif s["type"] == "vector":
+                    layer = self.reference_vectors.get(s["name"])
+                    if layer is None:
+                        continue
+                    out.append({**layer, **base})
+                elif s["type"] == "tiles":
+                    layer = local_tiles.register_local_tile_folder(s.get("path") or "", s["name"], s.get("scheme"))
+                    south, west, north, east = layer.bounds
+                    out.append({**base, "tile_layer_id": layer.id, "bounds": [[south, west], [north, east]],
+                                "min_zoom": layer.min_zoom, "max_zoom": layer.max_zoom,
+                                "path": str(layer.path), "scheme": layer.scheme})
+                elif s["type"] == "raster":
+                    layer = local_raster.register_local_raster(s.get("path") or "", s["name"])
+                    south, west, north, east = layer.bounds
+                    out.append({**base, "raster_layer_id": layer.id, "bounds": [[south, west], [north, east]],
+                                "min_zoom": layer.min_zoom, "max_zoom": layer.max_zoom, "path": str(layer.path),
+                                "has_overviews": layer.has_overviews, "size_gb": layer.size_gb, "res_m": layer.res_m})
+            except (OverlayImageError, local_tiles.LocalTileError, local_raster.LocalRasterError) as exc:
+                out.append({**base, "path": s.get("path"), "error": str(exc)})
+        return out
 
     def sample_point(self, lat: float, lon: float) -> dict:
         """Look up everything this project currently knows about a single
@@ -3938,7 +4013,11 @@ class Project:
             meta = self._bundle_meta()
             dem_bytes = self.dem_bytes
             inversion_npz = self.export_inversion_npz() if self.inversion_result is not None else None
-        return _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz)
+            # same order as meta["reference_files"] (dict order is insertion order)
+            reference_files = {f"reference/{i}.tif": data for i, data in enumerate(self.reference_layers.values())}
+            reference_vectors = dict(self.reference_vectors)
+        return _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz,
+                             reference_files, reference_vectors)
 
     def _bundle_meta(self) -> dict:
         meta = {
@@ -3956,6 +4035,12 @@ class Project:
             "has_base": self.base_raw is not None,
             "geology_units": self.geology_units,
             "geology_unit_next_id": self.geology_unit_next_id,
+            # Reference layers (12. 참조 레이어): the list as shown, and
+            # which bundle member holds each uploaded GeoTIFF. Vector layers
+            # are in reference_vectors.json; tile folders and on-disk
+            # GeoTIFFs are paths in the list, registered again on load.
+            "reference_layer_state": self.reference_layer_state,
+            "reference_files": {name: f"reference/{i}.tif" for i, name in enumerate(self.reference_layers)},
         }
         return meta
 
@@ -3988,6 +4073,19 @@ class Project:
 
                 self.geology_units = meta.get("geology_units") or []
                 self.geology_unit_next_id = meta.get("geology_unit_next_id", len(self.geology_units) + 1)
+
+                # Reference layers. A bundle from before they were saved has
+                # no key at all: then whatever the screen shows is left alone
+                # (has_reference_layers False) rather than cleared.
+                has_reference_layers = "reference_layer_state" in meta
+                if has_reference_layers:
+                    self.reference_layer_state = list(meta.get("reference_layer_state") or [])
+                    self.reference_layers = {
+                        name: zf.read(member) for name, member in (meta.get("reference_files") or {}).items() if member in names
+                    }
+                    self.reference_vectors = (
+                        json.loads(zf.read("reference_vectors.json").decode("utf-8")) if "reference_vectors.json" in names else {}
+                    )
 
                 processed = False
                 last_params = meta.get("last_params")
@@ -4061,6 +4159,8 @@ class Project:
             "inversion_restored": inversion_summary is not None,
             "inversion_summary": inversion_summary,
             "params": self.last_params.model_dump() if self.last_params is not None else None,
+            # None = this bundle predates saved reference layers: keep what is on screen
+            "reference_layers": self.reference_layer_descriptors() if has_reference_layers else None,
         }
         if processed:
             result["process_summary"] = self.process_summary()
@@ -4813,7 +4913,8 @@ def _statistical_leveling_summary(result: "StatisticalLevelingResult | None") ->
     }
 
 
-def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz) -> bytes:
+def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz,
+                  reference_files: dict | None = None, reference_vectors: dict | None = None) -> bytes:
     """The project as one zip. The readings go in as binary column arrays
     (bundle_frames.py: an npz read with allow_pickle=False), not CSV:
     measured on the 74-file HaeNam block (965k rows), CSV took 6.9 s to
@@ -4835,6 +4936,13 @@ def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversi
             zf.writestr("dem.tif", dem_bytes)
         if inversion_npz is not None:
             zf.writestr("inversion.npz", inversion_npz)
+        # Uploaded reference GeoTIFFs go in stored, not deflated: they are
+        # usually compressed already, and a second pass over tens of MB is
+        # time the autosave would spend for nothing.
+        for member, data in (reference_files or {}).items():
+            zf.writestr(zipfile.ZipInfo(member), data, compress_type=zipfile.ZIP_STORED)
+        if reference_vectors:
+            zf.writestr("reference_vectors.json", json.dumps(reference_vectors, ensure_ascii=False))
     return buf.getvalue()
 
 

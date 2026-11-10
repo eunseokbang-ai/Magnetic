@@ -314,6 +314,12 @@ export function uploadReferenceLayer(projectId, file) {
   return request(`/projects/${projectId}/reference-layers`, { method: "POST", body: form });
 }
 
+// The layer manager's list (order, opacity, visibility, paths) mirrored to
+// the project, so saving or autosaving the project keeps its layers.
+export function setReferenceLayerState(projectId, layers) {
+  return request(`/projects/${projectId}/reference-layers/state`, { method: "PUT", body: JSON.stringify({ layers }) });
+}
+
 export function deleteReferenceLayer(projectId, name) {
   return request(`/projects/${projectId}/reference-layers/${encodeURIComponent(name)}`, { method: "DELETE" });
 }

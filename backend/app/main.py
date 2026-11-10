@@ -35,6 +35,7 @@ from .models import (
     IntermagnetFetchRequest,
     LineamentRequest,
     LocalRasterRequest,
+    ReferenceLayerStateRequest,
     LocalTileFolderRequest,
     ManualExcludeRequest,
     AutoBoundaryRequest,
@@ -730,6 +731,14 @@ async def upload_reference_layer(project_id: str, file: UploadFile):
     return project.add_reference_layer(name, content)
 
 
+@app.put("/api/projects/{project_id}/reference-layers/state")
+def set_reference_layer_state(project_id: str, req: ReferenceLayerStateRequest):
+    """The layer manager's list (order, opacity, visibility, paths), kept
+    with the project so a saved or autosaved project restores its layers."""
+    project = store.get(project_id)
+    return project.set_reference_layer_state([layer.model_dump() for layer in req.layers])
+
+
 @app.delete("/api/projects/{project_id}/reference-layers/{name}")
 def delete_reference_layer(project_id: str, name: str):
     project = store.get(project_id)
@@ -969,6 +978,7 @@ def register_local_raster(req: LocalRasterRequest):
         "id": layer.id, "label": layer.label, "min_zoom": layer.min_zoom, "max_zoom": layer.max_zoom,
         "bounds": [[south, west], [north, east]], "width": layer.width, "height": layer.height, "bands": layer.bands,
         "crs": layer.crs, "res_m": layer.res_m, "has_overviews": layer.has_overviews, "size_gb": layer.size_gb,
+        "path": str(layer.path),
     }
 
 
@@ -1005,6 +1015,7 @@ def register_local_tile_folder(req: LocalTileFolderRequest):
         "max_zoom": layer.max_zoom,
         "scheme": layer.scheme,
         "bounds": [[south, west], [north, east]],
+        "path": str(layer.path),
     }
 
 

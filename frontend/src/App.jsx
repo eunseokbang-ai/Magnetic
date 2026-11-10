@@ -795,10 +795,50 @@ export default function App() {
     }
   };
 
+  // A saved reference layer as the backend hands it back -> the layer
+  // manager's own row (fresh id; tile/raster ids are per server run).
+  const layerFromDescriptor = (d) => {
+    const base = { id: `${Date.now()}-${Math.random()}`, name: d.name, opacity: d.opacity ?? 1, visible: d.visible ?? true };
+    if (d.type === "vector") {
+      return { ...base, type: "vector", features: d.features, bounds: d.bounds, n_points: d.n_points, n_lines: d.n_lines, n_polygons: d.n_polygons };
+    }
+    if (d.type === "tiles") {
+      return { ...base, type: "tiles", tile_layer_id: d.tile_layer_id, bounds: d.bounds, min_zoom: d.min_zoom, max_zoom: d.max_zoom, path: d.path, scheme: d.scheme };
+    }
+    if (d.type === "raster") {
+      return { ...base, type: "raster", raster_layer_id: d.raster_layer_id, bounds: d.bounds, min_zoom: d.min_zoom, max_zoom: d.max_zoom,
+        has_overviews: d.has_overviews, size_gb: d.size_gb, res_m: d.res_m, path: d.path };
+    }
+    return { ...base, image_data_url: d.image_data_url, bounds: d.bounds };
+  };
+
+  // Mirror the layer list to the project (debounced) so 저장 and the
+  // autosave carry it. Content was already sent when each layer was added;
+  // this is only order / opacity / visibility / paths.
+  useEffect(() => {
+    if (!projectId) return undefined;
+    const timer = setTimeout(() => {
+      api.setReferenceLayerState(
+        projectId,
+        overlayLayers.map((l) => ({ type: l.type || "image", name: l.name, opacity: l.opacity, visible: l.visible, path: l.path || null, scheme: l.scheme || null }))
+      ).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [overlayLayers, projectId]);
+
   // Shared by "프로젝트 불러오기" and by restoring an autosave: both hand
   // back the same payload and have to put the screen back into the same
   // state, so this must not be duplicated between them.
   const applyLoadedProject = async (id, resp) => {
+    // Reference layers saved with the project. Set before the first await
+    // so this lands in the same render as a changed project id - the sync
+    // effect below must never pair the new project with the old list.
+    // null = a bundle from before layers were saved: leave the screen alone.
+    if (Array.isArray(resp.reference_layers)) {
+      setOverlayLayers(resp.reference_layers.filter((d) => !d.error).map(layerFromDescriptor));
+      const lost = resp.reference_layers.filter((d) => d.error);
+      setOverlayError(lost.length ? `다시 연결하지 못한 참조 레이어: ${lost.map((d) => `${d.name} — ${d.error}`).join(" / ")}` : null);
+    }
     setDroneSummary(resp.drone_summary);
     setBaseSummary(resp.base_summary);
     setOverlay(null);
@@ -1507,6 +1547,8 @@ export default function App() {
           bounds: resp.bounds,
           min_zoom: resp.min_zoom,
           max_zoom: resp.max_zoom,
+          path: resp.path,
+          scheme: resp.scheme,
           opacity: 1,
           visible: true,
         },
@@ -1536,6 +1578,7 @@ export default function App() {
           has_overviews: resp.has_overviews,
           size_gb: resp.size_gb,
           res_m: resp.res_m,
+          path: resp.path,
           opacity: 1,
           visible: true,
         },

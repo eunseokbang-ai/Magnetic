@@ -656,6 +656,20 @@ class TileBboxRequest(BaseModel):
     max_zoom: int = Field(ge=0, le=19)
 
 
+class ReferenceLayerState(BaseModel):
+    """One row of the layer manager as the frontend shows it."""
+    type: Literal["image", "vector", "tiles", "raster"]
+    name: str = Field(..., min_length=1, max_length=300)
+    opacity: float = Field(1.0, ge=0.0, le=1.0)
+    visible: bool = True
+    path: Optional[str] = Field(None, max_length=1024)      # tiles / raster: where it lives on this machine
+    scheme: Optional[Literal["xyz", "tms"]] = None            # tiles only
+
+
+class ReferenceLayerStateRequest(BaseModel):
+    layers: list[ReferenceLayerState] = Field(default_factory=list, max_length=200)
+
+
 class LocalRasterRequest(BaseModel):
     """A GeoTIFF on the backend's own disk to serve as map tiles without
     uploading or re-tiling it - see magcore/local_raster.py."""
