@@ -25,7 +25,7 @@ async function request(path, options = {}) {
   }
 }
 
-async function requestInner(path, { untracked, ...options }) {
+async function requestInner(path, { untracked: _untracked, ...options }) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
     ...options,

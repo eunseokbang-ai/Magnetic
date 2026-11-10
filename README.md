@@ -46,6 +46,15 @@ pytest는 `backend/requirements-dev.txt`로 설치합니다. 전체 API를 한 �
 시험으로, 현장 자료(`AnDong_Mag/20261028`, 저장소에 없음)가 없으면 건너뜁니다. 다른 위치에 있으면
 환경 변수 `MAGNETIC_ANDONG_DIR`로 지정합니다.
 
+화면 쪽 시험은 `frontend/` 안에서 실행합니다. React 없이 돌아가는 부분(요청·스트림 처리, 참조 레이어 목록,
+대화 메시지 목록)을 대상으로 합니다.
+
+```bat
+cd frontend && npm test
+```
+
+저장소에 올리면 `.github/workflows/tests.yml`이 두 백엔드의 시험(Windows)과 두 프런트엔드의 시험·빌드를 돌립니다.
+
 ## 기능 (화면 단계 순서)
 
 **1–2. 자료 올리기**

@@ -30,6 +30,9 @@ import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
 import JobProgress from "./components/JobProgress";
+import useChat from "./hooks/useChat";
+import useOfflineTiles from "./hooks/useOfflineTiles";
+import useReferenceLayers from "./hooks/useReferenceLayers";
 import TargetDetectionPanel from "./components/TargetDetectionPanel";
 import QcCertificatePanel from "./components/QcCertificatePanel";
 import LineamentPanel from "./components/LineamentPanel";
@@ -333,11 +336,6 @@ export default function App() {
   const [nearestIntermagnetComparison, setNearestIntermagnetComparison] = useState(null);
   const [nearestIntermagnetComparisonLoading, setNearestIntermagnetComparisonLoading] = useState(false);
   const [mapBounds, setMapBounds] = useState(null);
-  const [tileEstimate, setTileEstimate] = useState(null);
-  const [tileDownloadResult, setTileDownloadResult] = useState(null);
-  const [tileStatus, setTileStatus] = useState(null);
-  const [tileLoading, setTileLoading] = useState(false);
-  const [tileError, setTileError] = useState(null);
   const [leftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [rightSidebarOpen, setRightSidebarOpen] = useState(false);
   const [showContours, setShowContours] = useState(true);    // display only: contours always come with the grid
@@ -353,11 +351,6 @@ export default function App() {
   // does the field look like", which is what the grid is for.
   const [showPointsOverGrid, setShowPointsOverGrid] = useState(false);
   const [showLineLabels, setShowLineLabels] = useState(false);
-  const [overlayLayers, setOverlayLayers] = useState([]);
-  const [overlayUploading, setOverlayUploading] = useState(false);
-  const [overlayError, setOverlayError] = useState(null);
-  const [tileFolderRegistering, setTileFolderRegistering] = useState(false);
-  const [tileFolderError, setTileFolderError] = useState(null);
   const [transformExtraParams, setTransformExtraParams] = useState(DEFAULT_TRANSFORM_EXTRA_PARAMS);
   const [exportingXyz, setExportingXyz] = useState(false);
   const [exportingGrd, setExportingGrd] = useState(false);
@@ -472,9 +465,6 @@ export default function App() {
   // <details> fetches its chunk immediately regardless of open/closed state.
   const [guidelinePanelOpened, setGuidelinePanelOpened] = useState(false);
 
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatSending, setChatSending] = useState(false);
-  const [chatError, setChatError] = useState(null);
 
   // "용도" preset: mineral-exploration workflows want broad, coarse grids
   // and the 3D inversion/Euler panels front and center; near-surface
@@ -566,6 +556,17 @@ export default function App() {
     }
     return projectCreationRef.current;
   }, [projectId]);
+
+  // Self-contained parts of the screen keep their state and handlers in
+  // hooks (src/hooks/), with their list logic in src/lib/.
+  const {
+    overlayLayers, overlayUploading, overlayError, tileFolderRegistering, tileFolderError, restoreReferenceLayers,
+    handleUploadOverlayImage, handleToggleOverlayVisible, handleSetOverlayOpacity, handleRemoveOverlay, handleMoveOverlay,
+    handleRegisterLocalTileFolder, handleRegisterLocalRaster, handlePickRasterFile, handlePickTileFolder,
+  } = useReferenceLayers({ projectId, ensureProject });
+  const { tileEstimate, tileDownloadResult, tileStatus, tileLoading, tileError, handleEstimateTiles, handleDownloadTiles, handleRefreshTileStatus } =
+    useOfflineTiles();
+  const { chatMessages, chatSending, chatError, handleSendChatMessage } = useChat({ ensureProject });
 
   const handleError = (e) => setError(e.message || String(e));
 
@@ -702,41 +703,6 @@ export default function App() {
 
   const handleMapBoundsChange = useCallback((bounds) => setMapBounds(bounds), []);
 
-  const handleEstimateTiles = async (req) => {
-    try {
-      setTileError(null);
-      setTileDownloadResult(null);
-      const resp = await api.estimateOfflineTiles(req);
-      setTileEstimate(resp);
-    } catch (e) {
-      setTileError(e.message || String(e));
-    }
-  };
-
-  const handleDownloadTiles = async (req) => {
-    try {
-      setTileError(null);
-      setTileLoading(true);
-      const resp = await api.downloadOfflineTiles(req);
-      setTileDownloadResult(resp);
-      const status = await api.getOfflineTileStatus();
-      setTileStatus(status);
-    } catch (e) {
-      setTileError(e.message || String(e));
-    } finally {
-      setTileLoading(false);
-    }
-  };
-
-  const handleRefreshTileStatus = async () => {
-    try {
-      const status = await api.getOfflineTileStatus();
-      setTileStatus(status);
-    } catch (e) {
-      setTileError(e.message || String(e));
-    }
-  };
-
   const handleUploadHeadingCalibration = async (files) => {
     try {
       setError(null);
@@ -796,50 +762,13 @@ export default function App() {
     }
   };
 
-  // A saved reference layer as the backend hands it back -> the layer
-  // manager's own row (fresh id; tile/raster ids are per server run).
-  const layerFromDescriptor = (d) => {
-    const base = { id: `${Date.now()}-${Math.random()}`, name: d.name, opacity: d.opacity ?? 1, visible: d.visible ?? true };
-    if (d.type === "vector") {
-      return { ...base, type: "vector", features: d.features, bounds: d.bounds, n_points: d.n_points, n_lines: d.n_lines, n_polygons: d.n_polygons };
-    }
-    if (d.type === "tiles") {
-      return { ...base, type: "tiles", tile_layer_id: d.tile_layer_id, bounds: d.bounds, min_zoom: d.min_zoom, max_zoom: d.max_zoom, path: d.path, scheme: d.scheme };
-    }
-    if (d.type === "raster") {
-      return { ...base, type: "raster", raster_layer_id: d.raster_layer_id, bounds: d.bounds, min_zoom: d.min_zoom, max_zoom: d.max_zoom,
-        has_overviews: d.has_overviews, size_gb: d.size_gb, res_m: d.res_m, path: d.path };
-    }
-    return { ...base, image_data_url: d.image_data_url, bounds: d.bounds };
-  };
-
-  // Mirror the layer list to the project (debounced) so 저장 and the
-  // autosave carry it. Content was already sent when each layer was added;
-  // this is only order / opacity / visibility / paths.
-  useEffect(() => {
-    if (!projectId) return undefined;
-    const timer = setTimeout(() => {
-      api.setReferenceLayerState(
-        projectId,
-        overlayLayers.map((l) => ({ type: l.type || "image", name: l.name, opacity: l.opacity, visible: l.visible, path: l.path || null, scheme: l.scheme || null }))
-      ).catch(() => {});
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [overlayLayers, projectId]);
-
   // Shared by "프로젝트 불러오기" and by restoring an autosave: both hand
   // back the same payload and have to put the screen back into the same
   // state, so this must not be duplicated between them.
   const applyLoadedProject = async (id, resp) => {
-    // Reference layers saved with the project. Set before the first await
-    // so this lands in the same render as a changed project id - the sync
-    // effect below must never pair the new project with the old list.
-    // null = a bundle from before layers were saved: leave the screen alone.
-    if (Array.isArray(resp.reference_layers)) {
-      setOverlayLayers(resp.reference_layers.filter((d) => !d.error).map(layerFromDescriptor));
-      const lost = resp.reference_layers.filter((d) => d.error);
-      setOverlayError(lost.length ? `다시 연결하지 못한 참조 레이어: ${lost.map((d) => `${d.name} — ${d.error}`).join(" / ")}` : null);
-    }
+    // Reference layers saved with the project - before the first await, see
+    // useReferenceLayers.restoreReferenceLayers for why.
+    restoreReferenceLayers(resp.reference_layers);
     setDroneSummary(resp.drone_summary);
     setBaseSummary(resp.base_summary);
     setOverlay(null);
@@ -1529,132 +1458,6 @@ export default function App() {
     }
   };
 
-  const handleUploadOverlayImage = async (file) => {
-    try {
-      setOverlayError(null);
-      setOverlayUploading(true);
-      const id = await ensureProject();
-      const [resp] = await Promise.all([
-        api.isVectorLayerFile(file.name) ? api.uploadVectorLayer(file) : api.uploadOverlayImage(file),
-        // Best-effort: also keep a project-scoped copy so the chat
-        // assistant's sample_point tool can read real pixel values (or
-        // the nearest drill hole) here. Must never block the map display.
-        api.uploadReferenceLayer(id, file).catch(() => null),
-      ]);
-      setOverlayLayers((prev) => [
-        ...prev,
-        resp.type === "vector"
-          ? { id: `${Date.now()}-${Math.random()}`, name: resp.name, type: "vector", features: resp.features, bounds: resp.bounds,
-              n_points: resp.n_points, n_lines: resp.n_lines, n_polygons: resp.n_polygons, opacity: 1, visible: true }
-          : { id: `${Date.now()}-${Math.random()}`, name: resp.name, image_data_url: resp.image_data_url, bounds: resp.bounds, opacity: 0.8, visible: true },
-      ]);
-    } catch (e) {
-      setOverlayError(e.message || String(e));
-    } finally {
-      setOverlayUploading(false);
-    }
-  };
-
-  const handleToggleOverlayVisible = (id, visible) =>
-    setOverlayLayers((prev) => prev.map((l) => (l.id === id ? { ...l, visible } : l)));
-
-  const handleSetOverlayOpacity = (id, opacity) =>
-    setOverlayLayers((prev) => prev.map((l) => (l.id === id ? { ...l, opacity } : l)));
-
-  const handleRemoveOverlay = (id) => {
-    setOverlayLayers((prev) => {
-      const layer = prev.find((l) => l.id === id);
-      if (layer?.type === "tiles") {
-        api.unregisterLocalTileFolder(layer.tile_layer_id).catch(() => {});
-      } else if (layer?.type === "raster") {
-        api.unregisterLocalRaster(layer.raster_layer_id).catch(() => {});
-      } else if (layer && projectId) {
-        api.deleteReferenceLayer(projectId, layer.name).catch(() => {});
-      }
-      return prev.filter((l) => l.id !== id);
-    });
-  };
-
-  const handleRegisterLocalTileFolder = async (path, label, scheme) => {
-    try {
-      setTileFolderError(null);
-      setTileFolderRegistering(true);
-      const resp = await api.registerLocalTileFolder({ path, label, scheme });
-      setOverlayLayers((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random()}`,
-          name: resp.label,
-          type: "tiles",
-          tile_layer_id: resp.id,
-          bounds: resp.bounds,
-          min_zoom: resp.min_zoom,
-          max_zoom: resp.max_zoom,
-          path: resp.path,
-          scheme: resp.scheme,
-          opacity: 1,
-          visible: true,
-        },
-      ]);
-    } catch (e) {
-      setTileFolderError(e.message || String(e));
-    } finally {
-      setTileFolderRegistering(false);
-    }
-  };
-
-  const handleRegisterLocalRaster = async (path, label) => {
-    try {
-      setTileFolderError(null);
-      setTileFolderRegistering(true);
-      const resp = await api.registerLocalRaster({ path, label });
-      setOverlayLayers((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random()}`,
-          name: resp.label,
-          type: "raster",
-          raster_layer_id: resp.id,
-          bounds: resp.bounds,
-          min_zoom: resp.min_zoom,
-          max_zoom: resp.max_zoom,
-          has_overviews: resp.has_overviews,
-          size_gb: resp.size_gb,
-          res_m: resp.res_m,
-          path: resp.path,
-          opacity: 1,
-          visible: true,
-        },
-      ]);
-    } catch (e) {
-      setTileFolderError(e.message || String(e));
-    } finally {
-      setTileFolderRegistering(false);
-    }
-  };
-
-  const handlePickRasterFile = async () => {
-    const resp = await api.pickLocalRasterFile();
-    return resp.path;
-  };
-
-  const handlePickTileFolder = async () => {
-    const resp = await api.pickLocalTileFolder();
-    return resp.path;
-  };
-
-  const handleMoveOverlay = (id, direction) => {
-    setOverlayLayers((prev) => {
-      const idx = prev.findIndex((l) => l.id === id);
-      if (idx === -1) return prev;
-      const swapWith = direction === "up" ? idx + 1 : idx - 1;
-      if (swapWith < 0 || swapWith >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
-      return next;
-    });
-  };
-
   const handleUploadDem = async (file) => {
     try {
       setInversionError(null);
@@ -2134,31 +1937,6 @@ export default function App() {
       handleError(e);
     } finally {
       setStructureScanApplying(false);
-    }
-  };
-
-  const handleSendChatMessage = async (text) => {
-    try {
-      setChatError(null);
-      setChatSending(true);
-      const id = await ensureProject();
-      // only finished turns go back as history: an answer that failed midway is not one
-      const history = chatMessages.filter((m) => !m.pending && m.content).map((m) => ({ role: m.role, content: m.content }));
-      setChatMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", toolCalls: [], pending: true }]);
-      // the answer is the last message; fill it in as the stream arrives
-      const updateAnswer = (fn) => setChatMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
-      const done = await api.streamChatMessage(id, text, history, (event) => {
-        // a lookup stays shown until the model writes again: the wait after it is the model reading the result
-        if (event.type === "text") updateAnswer((m) => ({ ...m, content: m.content + event.delta, activeTool: event.delta.trim() ? null : m.activeTool }));
-        else if (event.type === "tool") updateAnswer((m) => ({ ...m, toolCalls: [...m.toolCalls, { name: event.name, input: event.input }], activeTool: event.name }));
-      });
-      updateAnswer((m) => ({ ...m, content: done.reply, toolCalls: done.tool_calls, pending: false, activeTool: null, stopReason: done.stop_reason }));
-    } catch (e) {
-      setChatError(e.message || String(e));
-      // keep what was written, drop an answer that never started
-      setChatMessages((prev) => prev.filter((m) => !(m.pending && !m.content)).map((m) => (m.pending ? { ...m, pending: false, activeTool: null } : m)));
-    } finally {
-      setChatSending(false);
     }
   };
 

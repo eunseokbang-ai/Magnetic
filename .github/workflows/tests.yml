@@ -1,0 +1,60 @@
+# Runs on every push and pull request: both backends' tests on the platform
+# the programs are developed and used on, and both frontends' tests and
+# production build.
+#
+# What it does not cover: tests/test_regression_andong.py skips here (the
+# field data is not in the repository), and nothing talks to the network -
+# observatory, tile and geology requests are mocked in the tests.
+name: tests
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (pytest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Install
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: DroneMag Studio
+        working-directory: backend
+        run: python -m pytest -q
+      - name: MineMag
+        working-directory: minemag/backend
+        run: python -m pytest -q
+
+  frontend:
+    name: ${{ matrix.app }} (test + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [frontend, minemag/frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm test --if-present
+      - run: npm run build
