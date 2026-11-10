@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.autosave import AutosaveManager
 from app.main import app
-from app.store import store
+from app.store import ProjectStore, store
 
 DRONE_CSV = "tests/fixtures/sample_drone_survey.csv"
 BASE_CSV = "tests/fixtures/sample_base_station.csv"
@@ -91,7 +91,11 @@ def test_an_address_that_leads_nowhere_is_a_404(session):
 
 def test_the_wait_between_writes_follows_what_a_write_costs(session, tmp_path):
     _client, pid, _ = session
-    manager = AutosaveManager(store, directory=tmp_path, interval_seconds=120.0, quiet_seconds=8.0)
+    # a store holding only this project: the shared one carries every other test's projects, and with
+    # more than MAX_SAVED of them the pruning of old bundles would interfere with what is measured here
+    only = ProjectStore()
+    only._projects[pid] = store.get(pid)
+    manager = AutosaveManager(only, directory=tmp_path, interval_seconds=120.0, quiet_seconds=8.0)
     assert manager.interval_for(pid) == 120.0            # nothing known yet (and the first write is not held back anyway)
     for cost, expected in ((0.36, 15.0), (2.2, 66.0), (10.0, 120.0)):   # Andong, HaeNam, the old CSV bundle
         manager._last_cost[pid] = cost
@@ -100,8 +104,8 @@ def test_the_wait_between_writes_follows_what_a_write_costs(session, tmp_path):
     project = store.get(pid)
     project.mark_changed()
     now = project.changed_at
-    assert pid in manager.save_due(now=now + 10)      # first write: settled, nothing to wait for
+    assert manager.save_due(now=now + 10) == [pid]      # first write: settled, nothing to wait for
     assert manager._last_cost[pid] < 0.5                 # a small project: the 15 s minimum applies
     project.changed_at = now + 11
-    assert pid not in manager.save_due(now=now + 20)      # 10 s after the last write
-    assert pid in manager.save_due(now=now + 26)      # 16 s after it - not the two minutes it used to be
+    assert manager.save_due(now=now + 20) == []      # 10 s after the last write
+    assert manager.save_due(now=now + 26) == [pid]      # 16 s after it - not the two minutes it used to be
