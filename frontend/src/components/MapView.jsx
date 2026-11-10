@@ -1041,12 +1041,6 @@ export default function MapView({
         <LayersControl.BaseLayer name="Google 위성 (비공식 타일, ToS 주의)">
           <TileLayer attribution="&copy; Google" url="https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}" />
         </LayersControl.BaseLayer>
-        <LayersControl.BaseLayer name="OpenStreetMap (오프라인 캐시)">
-          <TileLayer
-            attribution="&copy; OpenStreetMap contributors (오프라인 캐시)"
-            url="/api/tiles/osm/{z}/{x}/{y}"
-          />
-        </LayersControl.BaseLayer>
         <LayersControl.BaseLayer name="Esri 위성 (오프라인 캐시)">
           <TileLayer attribution="Tiles &copy; Esri (오프라인 캐시)" url="/api/tiles/esri/{z}/{x}/{y}" />
         </LayersControl.BaseLayer>

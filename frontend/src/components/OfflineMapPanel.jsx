@@ -18,7 +18,7 @@ const buttonStyle = {
 // this app's own backend (see MapView's "(오프라인 캐시)" basemap options),
 // so once cached the browser never needs the public tile servers again.
 export default function OfflineMapPanel({ mapBounds, onEstimate, onDownload, onRefreshStatus, status, estimate, downloadResult, loading, error }) {
-  const [source, setSource] = useState("osm");
+  const [source, setSource] = useState("esri");
   const [minLat, setMinLat] = useState("");
   const [minLon, setMinLon] = useState("");
   const [maxLat, setMaxLat] = useState("");
@@ -57,13 +57,13 @@ export default function OfflineMapPanel({ mapBounds, onEstimate, onDownload, onR
         인터넷이 안 되는 현장에서도 배경지도가 보이도록, 조사 예정 지역의 지도 타일을 미리 받아 저장해둘 수 있습니다.
         한 번 받아두면 오프라인 상태에서도 아래 지도 레이어 목록의 "(오프라인 캐시)" 항목으로 계속 볼 수 있습니다.
         조사 지역처럼 좁은 범위 + 필요한 확대 단계만 받는 것을 권장합니다 (넓은 지역·높은 확대단계는 타일이 매우
-        많아집니다).
+        많아집니다). OpenStreetMap은 미리 받을 수 없습니다 — 타일 이용 정책이 일괄 내려받기를 금지하고 실제로도
+        차단됩니다. 현장용 배경지도는 Esri 위성 영상으로 받으세요.
       </div>
 
       <label style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         <span style={{ color: "#6b5c42" }}>지도 소스</span>
         <select style={inputStyle} value={source} onChange={(e) => setSource(e.target.value)}>
-          <option value="osm">OpenStreetMap</option>
           <option value="esri">Esri 위성 영상</option>
           <option value="kigam_50k">KIGAM 지질도 1:5만</option>
           <option value="kigam_250k">KIGAM 지질도 1:25만</option>

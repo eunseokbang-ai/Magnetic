@@ -13,18 +13,22 @@ pipeline by turning each z/x/y into the Web Mercator bounding box that
 tile covers and asking for exactly that picture (_wms_url), so a geology
 layer caches, pre-downloads and serves offline like any other tile.
 
-Only two sources are offered for bulk pre-download: OpenStreetMap's
-standard tile server and Esri World Imagery. Both are downloaded
-conservatively (a hard cap on tile count per request, a small delay
-between requests, and an identifying User-Agent) out of respect for
-their tile usage policies, which are aimed at normal interactive
-browsing rather than bulk downloading - see
-https://operations.osmfoundation.org/policies/tiles/. This is meant for
-a small, specific survey area at a handful of zoom levels, not for
-downloading whole regions/countries. The unofficial Google tile source
-used elsewhere in this app for live browsing is deliberately NOT
-offered here, since bulk-downloading it is a clearer ToS problem than
-either of the above.
+The one public basemap cached here is Esri World Imagery. It is
+downloaded conservatively (a hard cap on tile count per request, a small
+delay between requests, and an identifying User-Agent): this is meant
+for a small, specific survey area at a handful of zoom levels, not for
+downloading whole regions/countries.
+
+OpenStreetMap is deliberately NOT a source here, and was until 2026-11.
+Its tile policy (https://operations.osmfoundation.org/policies/tiles/)
+forbids bulk downloading and asks that tiles be fetched by the viewer's
+own browser, and tile.openstreetmap.org now answers this cache's
+requests with 403 "Access blocked" - so the "offline" OSM layer showed
+block notices instead of a map (seen in MineMag, 2026-10). The apps load
+OSM straight from the browser, which is the use the policy is written
+for; there is no offline copy of it. The unofficial Google tile source
+used for live browsing is not offered either, for the same kind of
+reason.
 """
 from __future__ import annotations
 
@@ -41,12 +45,6 @@ from . import paths
 CACHE_ROOT = paths.data_dir() / "tile_cache"
 
 TILE_SOURCES = {
-    "osm": {
-        "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        "ext": "png",
-        "media_type": "image/png",
-        "label": "OpenStreetMap",
-    },
     "esri": {
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         "ext": "jpg",

@@ -28,7 +28,7 @@ def _isolated_cache_dir(tmp_path, monkeypatch):
 
 
 _BBOX = {
-    "source": "osm",
+    "source": "esri",
     "min_lat": 46.40,
     "min_lon": 106.20,
     "max_lat": 46.41,
@@ -70,25 +70,25 @@ def test_download_then_status_then_serve_tile(client):
     r = client.get("/api/tiles/status")
     assert r.status_code == 200, r.text
     status = r.json()
-    assert status["osm"]["n_tiles"] == result["n_total"]
+    assert status["esri"]["n_tiles"] == result["n_total"]
 
     tiles = tile_cache.tiles_for_bbox(_BBOX["min_lat"], _BBOX["min_lon"], _BBOX["max_lat"], _BBOX["max_lon"], 14)
     x, y = tiles[0]
-    r = client.get(f"/api/tiles/osm/14/{x}/{y}")
+    r = client.get(f"/api/tiles/esri/14/{x}/{y}")
     assert r.status_code == 200, r.text
     assert r.content == b"fake-tile-bytes"
-    assert r.headers["content-type"] == "image/png"
+    assert r.headers["content-type"] == "image/jpeg"
 
 
 def test_get_tile_falls_back_to_live_fetch_when_not_cached(client):
     fake_resp = MagicMock(status_code=200, content=b"live-fetched")
     with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
-        r = client.get("/api/tiles/osm/9/300/150")
+        r = client.get("/api/tiles/esri/9/300/150")
     assert r.status_code == 200, r.text
     assert r.content == b"live-fetched"
     # now cached, so a second request should not need the network at all
     with patch("magcore.tile_cache.requests.get", side_effect=AssertionError("should not be called")):
-        r2 = client.get("/api/tiles/osm/9/300/150")
+        r2 = client.get("/api/tiles/esri/9/300/150")
     assert r2.status_code == 200, r2.text
     assert r2.content == b"live-fetched"
 
@@ -97,7 +97,7 @@ def test_get_tile_404s_when_uncached_and_unreachable(client):
     import requests as requests_module
 
     with patch("magcore.tile_cache.requests.get", side_effect=requests_module.ConnectionError("offline")):
-        r = client.get("/api/tiles/osm/9/300/150")
+        r = client.get("/api/tiles/esri/9/300/150")
     assert r.status_code == 404
 
 
@@ -114,3 +114,21 @@ def test_download_rejects_bbox_exceeding_tile_cap(client):
 if __name__ == "__main__":
     c = TestClient(app)
     print("Run via pytest for isolated tmp_path fixture support.")
+
+
+def test_openstreetmap_is_never_fetched_through_the_cache(client):
+    """OSM's tile policy forbids bulk downloading and its server blocks
+    this cache (403 "Access blocked"). It is loaded by the browser
+    directly; nothing here may request it on the user's behalf."""
+    assert "osm" not in tile_cache.TILE_SOURCES
+    with patch("magcore.tile_cache.requests.get", side_effect=AssertionError("must not be requested")):
+        assert client.get("/api/tiles/osm/9/300/150").status_code == 404
+        for endpoint in ("estimate", "download"):
+            assert client.post(f"/api/tiles/{endpoint}", json={**_BBOX, "source": "osm"}).status_code == 422
+    assert "osm" not in client.get("/api/tiles/status").json()
+
+
+def test_every_cached_source_can_be_estimated_including_geology(client):
+    for source in tile_cache.TILE_SOURCES:
+        r = client.post("/api/tiles/estimate", json={**_BBOX, "source": source})
+        assert r.status_code == 200, (source, r.text)

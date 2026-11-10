@@ -84,7 +84,9 @@ def test_the_request_is_a_getmap_for_exactly_that_box():
 
 
 def test_an_ordinary_xyz_source_is_untouched():
-    assert tile_cache.tile_url("osm", 7, 109, 50) == "https://tile.openstreetmap.org/7/109/50.png"
+    assert tile_cache.tile_url("esri", 7, 109, 50) == (
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/7/50/109"
+    )
 
 
 def test_the_geology_service_is_asked_as_a_browser(monkeypatch, tmp_path):
@@ -106,10 +108,10 @@ def test_the_geology_service_is_asked_as_a_browser(monkeypatch, tmp_path):
     monkeypatch.setattr(tile_cache.requests, "get", fake_get)
 
     tile_cache.fetch_and_cache_tile("kigam_50k", 12, 3500, 1620)
-    tile_cache.fetch_and_cache_tile("osm", 12, 3500, 1620)
+    tile_cache.fetch_and_cache_tile("esri", 12, 3500, 1620)
 
     assert "Mozilla" in seen["https://data.kigam.re.kr/geoserver/wms"]
-    assert "Magnetic-Survey-App" in seen["https://tile.openstreetmap.org/12/3500/1620.png"]
+    assert "Magnetic-Survey-App" in seen["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/12/1620/3500"]
 
 
 def test_geology_tiles_cache_like_any_other(monkeypatch, tmp_path):

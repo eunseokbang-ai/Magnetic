@@ -12,6 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import pytest
 
+import app  # noqa: F401 - puts the repository root (magcore) on sys.path
 from magcore import tile_cache
 
 
@@ -61,7 +62,7 @@ def test_tiles_for_bbox_covers_expected_grid():
 
 
 def test_count_tiles_matches_sum_across_zoom_levels():
-    n = tile_cache.count_tiles("osm", 46.40, 106.20, 46.60, 106.40, min_zoom=10, max_zoom=12)
+    n = tile_cache.count_tiles("esri", 46.40, 106.20, 46.60, 106.40, min_zoom=10, max_zoom=12)
     expected = sum(len(tile_cache.tiles_for_bbox(46.40, 106.20, 46.60, 106.40, z)) for z in (10, 11, 12))
     assert n == expected
 
@@ -73,26 +74,26 @@ def test_rejects_unknown_source():
 
 def test_rejects_invalid_bbox():
     with pytest.raises(tile_cache.TileCacheError):
-        tile_cache.count_tiles("osm", 46.6, 106.2, 46.4, 106.4, 10, 12)  # min_lat > max_lat
+        tile_cache.count_tiles("esri", 46.6, 106.2, 46.4, 106.4, 10, 12)  # min_lat > max_lat
 
 
 def test_rejects_invalid_zoom_range():
     with pytest.raises(tile_cache.TileCacheError):
-        tile_cache.count_tiles("osm", 46.4, 106.2, 46.6, 106.4, min_zoom=14, max_zoom=10)
+        tile_cache.count_tiles("esri", 46.4, 106.2, 46.6, 106.4, min_zoom=14, max_zoom=10)
 
 
 def test_download_tiles_rejects_over_cap_request():
     with patch.object(tile_cache, "MAX_TILES_PER_REQUEST", 4):
         with pytest.raises(tile_cache.TileCacheError):
-            tile_cache.download_tiles("osm", 46.0, 106.0, 47.0, 108.0, min_zoom=10, max_zoom=14)
+            tile_cache.download_tiles("esri", 46.0, 106.0, 47.0, 108.0, min_zoom=10, max_zoom=14)
 
 
 def test_fetch_and_cache_tile_writes_to_disk_and_returns_content():
     fake_resp = MagicMock(status_code=200, content=b"fake-png-bytes")
     with patch("magcore.tile_cache.requests.get", return_value=fake_resp) as mock_get:
-        content = tile_cache.fetch_and_cache_tile("osm", 12, 100, 200)
+        content = tile_cache.fetch_and_cache_tile("esri", 12, 100, 200)
     assert content == b"fake-png-bytes"
-    assert tile_cache.get_cached_tile("osm", 12, 100, 200) == b"fake-png-bytes"
+    assert tile_cache.get_cached_tile("esri", 12, 100, 200) == b"fake-png-bytes"
     # a real-looking, identifying User-Agent should be sent, not a bare requests default
     assert "User-Agent" in mock_get.call_args.kwargs["headers"]
 
@@ -101,19 +102,19 @@ def test_fetch_and_cache_tile_returns_none_on_network_failure():
     import requests as requests_module
 
     with patch("magcore.tile_cache.requests.get", side_effect=requests_module.RequestException("boom")):
-        content = tile_cache.fetch_and_cache_tile("osm", 12, 100, 200)
+        content = tile_cache.fetch_and_cache_tile("esri", 12, 100, 200)
     assert content is None
-    assert tile_cache.get_cached_tile("osm", 12, 100, 200) is None
+    assert tile_cache.get_cached_tile("esri", 12, 100, 200) is None
 
 
 def test_download_tiles_skips_already_cached_tiles():
     fake_resp = MagicMock(status_code=200, content=b"x")
     with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
-        result1 = tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
+        result1 = tile_cache.download_tiles("esri", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
         assert result1.n_downloaded == result1.n_total
         assert result1.n_already_cached == 0
 
-        result2 = tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
+        result2 = tile_cache.download_tiles("esri", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
         assert result2.n_downloaded == 0
         assert result2.n_already_cached == result2.n_total
 
@@ -122,7 +123,7 @@ def test_download_tiles_counts_failures_separately():
     import requests as requests_module
 
     with patch("magcore.tile_cache.requests.get", side_effect=requests_module.ConnectionError("network down")):
-        result = tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
+        result = tile_cache.download_tiles("esri", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
     assert result.n_failed == result.n_total
     assert result.n_downloaded == 0
 
@@ -130,11 +131,11 @@ def test_download_tiles_counts_failures_separately():
 def test_cache_status_reports_tile_count_and_size():
     fake_resp = MagicMock(status_code=200, content=b"0123456789")  # 10 bytes
     with patch("magcore.tile_cache.requests.get", return_value=fake_resp):
-        tile_cache.download_tiles("osm", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
+        tile_cache.download_tiles("esri", 46.40, 106.20, 46.41, 106.21, min_zoom=14, max_zoom=14)
     status = tile_cache.cache_status()
-    assert status["osm"]["n_tiles"] > 0
-    assert status["osm"]["zoom_levels"] == [14]
-    assert status["esri"]["n_tiles"] == 0
+    assert status["esri"]["n_tiles"] > 0
+    assert status["esri"]["zoom_levels"] == [14]
+    assert status["kigam_50k"]["n_tiles"] == 0   # a source nothing was downloaded for
 
 
 if __name__ == "__main__":

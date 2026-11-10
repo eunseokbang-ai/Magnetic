@@ -646,8 +646,14 @@ class NearestIntermagnetRequest(BaseModel):
 class TileBboxRequest(BaseModel):
     """A bounding box + zoom range to estimate or bulk-download offline
     basemap tiles for - see processing/tile_cache.py. Used for both the
-    /tiles/estimate (dry run) and /tiles/download endpoints."""
-    source: Literal["osm", "esri"]
+    /tiles/estimate (dry run) and /tiles/download endpoints.
+
+    Every source the cache knows (magcore.tile_cache.TILE_SOURCES).
+    OpenStreetMap is not one of them - its tile policy forbids bulk
+    downloading, see tile_cache.py. The KIGAM geology layers were missing
+    here until 2026-11 although the panel offered them, so choosing one
+    answered 422."""
+    source: Literal["esri", "kigam_50k", "kigam_250k", "kigam_1m", "kigam_fault_50k"]
     min_lat: float = Field(ge=-90, le=90)
     min_lon: float = Field(ge=-180, le=180)
     max_lat: float = Field(ge=-90, le=90)
