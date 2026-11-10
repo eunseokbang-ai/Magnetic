@@ -1,4 +1,5 @@
 import { useState } from "react";
+import ExportOptions from "./ExportOptions";
 import InfoIcon from "./InfoIcon";
 import IntermagnetPanel from "./IntermagnetPanel";
 
@@ -181,6 +182,9 @@ export default function WorkflowSteps({
   onExportGrd,
   exportingGrd,
   onExportPointsCsv,
+  onExportGpkg,
+  exportProjectId,
+  onExportError,
   exportingPointsCsv,
   transformExtraParams,
   setTransformExtraParams,
@@ -1679,6 +1683,7 @@ export default function WorkflowSteps({
               )}
             </>
           )}
+          <ExportOptions projectId={exportProjectId} ready={!!processSummary} projectEpsg={processSummary?.utm_epsg} onError={onExportError} />
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <input type="checkbox" checked={exportGeotiffColored} onChange={(e) => setExportGeotiffColored(e.target.checked)} />
             <span>컬러 GeoTIFF로 저장 (화면에 보이는 색상 그대로, 값 아님)</span>
@@ -1705,6 +1710,10 @@ export default function WorkflowSteps({
             {exportingGrd ? "내보내는 중..." : `현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 Surfer GRD로 저장`}
           </button>
           <div style={{ color: "#ab9a78" }}>Surfer 6 Binary Grid(.grd, DSBB) 형식 — Golden Software Surfer에서 바로 열람 가능.</div>
+          <button style={{ ...buttonStyle, background: "white", color: "#a9631f" }} disabled={!processSummary} onClick={() => onExportGpkg()}>
+            {`현재 결과(${activeTransform === "none" ? "그리드" : activeTransform.toUpperCase()})를 GeoPackage 격자로 저장`}
+          </button>
+          <div style={{ color: "#ab9a78" }}>값이 그대로 든 격자(.gpkg) — 점 레이어와 한 종류의 파일로 GIS에 넘길 때.</div>
           <button style={{ ...buttonStyle, background: "white", color: "#a9631f" }} disabled={exportingPointsCsv || !processSummary} onClick={() => onExportPointsCsv()}>
             {exportingPointsCsv ? "내보내는 중..." : "처리된 포인트 전체를 CSV로 저장"}
           </button>

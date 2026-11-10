@@ -1364,6 +1364,28 @@ export default function App() {
     }
   };
 
+  const handleExportGpkg = async () => {
+    try {
+      setError(null);
+      const base = {
+        value: valueField,
+        cell_size_m: gridCellSize,
+        method: gridMethod,
+        max_distance_m: gridMaxDistance,
+        along_line_smooth: alongLineSmooth,
+        along_line_smooth_wavelength_m: alongLineSmoothWavelength,
+        ...transformExtraParams,
+      };
+      if (activeTransform === "none") {
+        await api.exportGridGpkg(projectId, base, `${valueField}_${gridCellSize}m.gpkg`);
+      } else {
+        await api.exportTransformGpkg(projectId, { ...base, transform: activeTransform }, `${activeTransform}_${gridCellSize}m.gpkg`);
+      }
+    } catch (e) {
+      handleError(e);
+    }
+  };
+
   const handleExportPointsCsv = async () => {
     try {
       setError(null);
@@ -2572,6 +2594,9 @@ export default function App() {
           onExportGrd={handleExportGrd}
           exportingGrd={exportingGrd}
           onExportPointsCsv={handleExportPointsCsv}
+          onExportGpkg={handleExportGpkg}
+          exportProjectId={projectId}
+          onExportError={handleError}
           exportingPointsCsv={exportingPointsCsv}
           transformExtraParams={transformExtraParams}
           setTransformExtraParams={setTransformExtraParams}

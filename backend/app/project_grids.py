@@ -53,6 +53,7 @@ from magcore.transforms import (
 )
 from magcore.trend import remove_regional_trend
 from pyproj import Transformer
+from magcore.export_formats import ExportError, geotiff_grid, geotiff_to_gpkg, grid_to_xyz_in_crs, reproject_geotiff
 from magcore.uncertainty import derived_confidence
 from .models import TransformConfidenceRequest
 from .models import DisplayBoundaryRequest, GridConfidenceRequest, GridRequest, TransformRequest
@@ -887,14 +888,68 @@ class GridMixin:
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         if req.colored:
             cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
-            return grid_to_geotiff_bytes_colored(
+            return self._in_export_crs(grid_to_geotiff_bytes_colored(
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
                 cmap_name=cmap, symmetric=(req.value == "anomaly"), vmin=req.vmin, vmax=req.vmax,
                 hillshade=req.hillshade, hillshade_azimuth_deg=req.hillshade_azimuth_deg,
                 hillshade_altitude_deg=req.hillshade_altitude_deg, hillshade_exaggeration=req.hillshade_exaggeration,
                 stretch=req.stretch,
-            )
-        return grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
+            ), req, coloured=True)
+        return self._in_export_crs(grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg), req)
+
+    def _in_export_crs(self, geotiff: bytes, req, coloured: bool = False) -> bytes:
+        """`geotiff` (in the project CRS) warped into the CRS the request
+        asks for, if it asks for another one - see magcore/export_formats.py
+        for what that does to the numbers."""
+        epsg = getattr(req, "export_epsg", None)
+        if epsg is None or int(epsg) == int(self.utm_epsg):
+            return geotiff
+        try:
+            return reproject_geotiff(geotiff, int(epsg), coloured=coloured)
+        except ExportError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    def _export_values(self, req, transform: bool) -> tuple[np.ndarray, GridResult]:
+        """The grid a request describes, as every export of it writes it:
+        boundary applied, and for a derived grid the margin decision too."""
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
+        if transform:
+            values, _symmetric = self._transform_values(grid, req)
+            values = self._apply_display_boundary(values, grid)
+            values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
+            return values, grid
+        grid = self._maybe_pre_level(grid, req)
+        return self._apply_display_boundary(grid.values, grid), grid
+
+    def _xyz_bytes(self, values: np.ndarray, grid: GridResult, req) -> bytes:
+        epsg = getattr(req, "export_epsg", None)
+        if epsg is None:
+            return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)     # lon lat value, as always
+        try:
+            return grid_to_xyz_in_crs(values, grid.easting, grid.northing, self.utm_epsg, int(epsg))
+        except ExportError as exc:
+            raise ProjectError(str(exc)) from exc
+
+    def _grd_bytes(self, values: np.ndarray, grid: GridResult, req) -> bytes:
+        epsg = getattr(req, "export_epsg", None)
+        if epsg is None or int(epsg) == int(self.utm_epsg):
+            return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
+        warped = self._in_export_crs(grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg), req)
+        return grid_to_surfer_grd_bytes(*geotiff_grid(warped))
+
+    @_as_job("그리드 내보내기")
+    def export_gpkg(self, req, transform: bool = False) -> bytes:
+        """The grid (or derived grid) as a GeoPackage raster, in the
+        requested CRS."""
+        values, grid = self._export_values(req, transform)
+        geotiff = self._in_export_crs(grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg), req)
+        try:
+            return geotiff_to_gpkg(geotiff, layer=(req.transform if transform else req.value))
+        except ExportError as exc:
+            raise ProjectError(str(exc)) from exc
 
     @_as_job("파생 그리드 내보내기")
     def export_transform_geotiff(self, req: TransformRequest) -> bytes:
@@ -910,14 +965,14 @@ class GridMixin:
         values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
         if req.colored:
             cmap = req.cmap or DEFAULT_CMAPS["derivative"]
-            return grid_to_geotiff_bytes_colored(
+            return self._in_export_crs(grid_to_geotiff_bytes_colored(
                 values, grid.easting, grid.northing, self.utm_epsg,
                 cmap_name=cmap, symmetric=symmetric, vmin=req.vmin, vmax=req.vmax,
                 hillshade=req.hillshade, hillshade_azimuth_deg=req.hillshade_azimuth_deg,
                 hillshade_altitude_deg=req.hillshade_altitude_deg, hillshade_exaggeration=req.hillshade_exaggeration,
                 stretch=req.stretch,
-            )
-        return grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+            ), req, coloured=True)
+        return self._in_export_crs(grid_to_geotiff_bytes(values, grid.easting, grid.northing, self.utm_epsg), req)
 
     def export_grid_xyz(self, req: GridRequest) -> bytes:
         grid = self._grid_for(
@@ -926,7 +981,7 @@ class GridMixin:
         )
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
-        return grid_to_xyz_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
+        return self._xyz_bytes(grid.values, grid, req)
 
     def export_transform_xyz(self, req: TransformRequest) -> bytes:
         grid = self._grid_for(
@@ -936,7 +991,7 @@ class GridMixin:
         values, _symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
         values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
-        return grid_to_xyz_bytes(values, grid.easting, grid.northing, self.utm_epsg)
+        return self._xyz_bytes(values, grid, req)
 
     def export_grid_surfer_grd(self, req: GridRequest) -> bytes:
         grid = self._grid_for(
@@ -945,7 +1000,7 @@ class GridMixin:
         )
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
-        return grid_to_surfer_grd_bytes(grid.values, grid.easting, grid.northing)
+        return self._grd_bytes(grid.values, grid, req)
 
     def export_transform_surfer_grd(self, req: TransformRequest) -> bytes:
         grid = self._grid_for(
@@ -955,7 +1010,7 @@ class GridMixin:
         values, _symmetric = self._transform_values(grid, req)
         values = self._apply_display_boundary(values, grid)
         values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
-        return grid_to_surfer_grd_bytes(values, grid.easting, grid.northing)
+        return self._grd_bytes(values, grid, req)
 
 
 DEFAULT_CMAPS = {

@@ -533,23 +533,54 @@ export function downloadJson(data, filename) {
   downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }), filename);
 }
 
+// The coordinate system grid and point exports leave in (components/
+// ExportOptions.jsx sets it). null = each format's default: the project's
+// CRS for GeoTIFF / Surfer / GeoPackage, longitude-latitude for XYZ text.
+let exportEpsg = null;
+export function setExportCrs(epsg) {
+  exportEpsg = epsg;
+}
+function withExportCrs(req) {
+  return exportEpsg == null ? req : { ...req, export_epsg: exportEpsg };
+}
+
+export async function exportGridGpkg(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/grid/gpkg`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportTransformGpkg(projectId, req, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/transform/gpkg`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
+  downloadBlob(blob, filename);
+}
+
+export async function exportPointsGeosoftXyz(projectId, epsg, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/points/geosoft-xyz${epsg ? `?epsg=${epsg}` : ""}`);
+  downloadBlob(blob, filename);
+}
+
+export async function exportPointsGpkg(projectId, epsg, filename) {
+  const blob = await requestBlob(`/projects/${projectId}/points/gpkg${epsg ? `?epsg=${epsg}` : ""}`);
+  downloadBlob(blob, filename);
+}
+
 export async function exportGridGeotiff(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/grid/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/grid/geotiff`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 
 export async function exportTransformGeotiff(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/transform/geotiff`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/transform/geotiff`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 
 export async function exportGridXyz(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/grid/xyz`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/grid/xyz`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 
 export async function exportTransformXyz(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/transform/xyz`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/transform/xyz`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 
@@ -569,12 +600,12 @@ export async function exportTargetsShapefile(projectId, filename) {
 }
 
 export async function exportGridGrd(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/grid/grd`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/grid/grd`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 
 export async function exportTransformGrd(projectId, req, filename) {
-  const blob = await requestBlob(`/projects/${projectId}/transform/grd`, { method: "POST", body: JSON.stringify(req) });
+  const blob = await requestBlob(`/projects/${projectId}/transform/grd`, { method: "POST", body: JSON.stringify(withExportCrs(req)) });
   downloadBlob(blob, filename);
 }
 

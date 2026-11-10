@@ -79,6 +79,7 @@ from magcore.statistical_leveling import (
     measure_striping,
 )
 from magcore.noise_qc import compute_difference_qc
+from magcore.export_formats import ExportError, points_to_geosoft_xyz, points_to_gpkg
 from magcore.render import grid_to_png_overlay
 from magcore.repeatability import analyze_repeatability
 from magcore.sampling_qc import compute_sampling_distance_qc
@@ -1500,6 +1501,25 @@ class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMix
             }
         )
         return out.to_csv(index=False).encode("utf-8")
+
+    def export_points(self, fmt: str, epsg: int | None = None) -> bytes:
+        """Every reading on a line as Geosoft XYZ ("geosoft_xyz"), or every
+        processed reading as a GeoPackage point layer ("gpkg"), with
+        coordinates in EPSG:`epsg` (None = the project's CRS)."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        df = self.processed
+        dst = int(epsg) if epsg is not None else int(self.utm_epsg)
+        try:
+            if fmt == "geosoft_xyz":
+                active = self._active_mask()
+                tie = df.loc[active, "tie_line_id"].to_numpy() if "tie_line_id" in df.columns else None
+                return points_to_geosoft_xyz(df.loc[active], self.utm_epsg, dst, tie_line_id=tie)
+            if fmt == "gpkg":
+                return points_to_gpkg(df, self.utm_epsg, dst, active=self._active_mask().to_numpy())
+        except ExportError as exc:
+            raise ProjectError(str(exc)) from exc
+        raise ProjectError(f"알 수 없는 형식입니다: {fmt}")
 
     def generate_qc_certificate(self, req: QcCertificateRequest) -> dict:
         """Standard QC pass/fail certificate - see

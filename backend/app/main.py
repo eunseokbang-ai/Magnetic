@@ -558,6 +558,30 @@ def export_polygon_bln(project_id: str, req: PolygonExportRequest):
     )
 
 
+@app.post("/api/projects/{project_id}/grid/gpkg")
+def export_grid_gpkg(project_id: str, req: GridRequest):
+    data = store.get(project_id).export_gpkg(req, transform=False)
+    return Response(content=data, media_type="application/geopackage+sqlite3", headers={"Content-Disposition": "attachment; filename=grid.gpkg"})
+
+
+@app.post("/api/projects/{project_id}/transform/gpkg")
+def export_transform_gpkg(project_id: str, req: TransformRequest):
+    data = store.get(project_id).export_gpkg(req, transform=True)
+    return Response(content=data, media_type="application/geopackage+sqlite3", headers={"Content-Disposition": "attachment; filename=transform.gpkg"})
+
+
+@app.get("/api/projects/{project_id}/points/geosoft-xyz")
+def export_points_geosoft_xyz(project_id: str, epsg: int | None = None):
+    data = store.get(project_id).export_points("geosoft_xyz", epsg)
+    return Response(content=data, media_type="text/plain", headers={"Content-Disposition": "attachment; filename=points.xyz"})
+
+
+@app.get("/api/projects/{project_id}/points/gpkg")
+def export_points_gpkg(project_id: str, epsg: int | None = None):
+    data = store.get(project_id).export_points("gpkg", epsg)
+    return Response(content=data, media_type="application/geopackage+sqlite3", headers={"Content-Disposition": "attachment; filename=points.gpkg"})
+
+
 @app.get("/api/projects/{project_id}/points/csv")
 def export_points_csv(project_id: str):
     project = store.get(project_id)

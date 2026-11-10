@@ -403,7 +403,16 @@ class ContourParams(BaseModel):
     contour_n_levels: int = Field(10, ge=2, le=50)
 
 
-class GridRequest(HillshadeParams, ContourParams):
+class _ExportCrs(BaseModel):
+    """Mixed into the grid requests: the CRS an *export* should leave in.
+    None = the project's own projected CRS for GeoTIFF / Surfer / GeoPackage,
+    and longitude-latitude for the XYZ text grid (what it has always
+    written). Ignored by the map overlays, which are drawn in the
+    project CRS. See magcore/export_formats.py."""
+    export_epsg: Optional[int] = Field(None, ge=1024, le=998999)
+
+
+class GridRequest(_ExportCrs, HillshadeParams, ContourParams):
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
     method: GridMethod = DEFAULT_GRID_METHOD
@@ -439,7 +448,7 @@ class GridRequest(HillshadeParams, ContourParams):
     microlevel_cutoff_factor: float = Field(4.0, gt=1, le=20)
 
 
-class TransformRequest(HillshadeParams, ContourParams):
+class TransformRequest(_ExportCrs, HillshadeParams, ContourParams):
     transform: TransformName
     value: ValueField = "anomaly"
     cell_size_m: float = Field(10.0, gt=0)
