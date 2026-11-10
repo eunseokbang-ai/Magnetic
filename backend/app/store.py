@@ -1163,13 +1163,23 @@ class Project:
         # processing/line_resolution.py for why this is the number that
         # explains line-parallel striping on the Haenam block, after six
         # processing-side explanations were measured and ruled out.
+        #
+        # Until 2026-11 this block never ran in the app: `on_lines` was an
+        # undefined name, the except below turned the NameError into
+        # "진단 실패", and behind it the azimuth was passed in the wrong
+        # convention - this method keeps atan2(dy, dx) (from east), the
+        # diagnostic wants the flight direction from north. On the Andong
+        # block (N-S lines, 89 deg here) the wrong one makes every line
+        # look 13 m long. tests/test_regression_andong.py pins the result.
+        on_lines = df["line_id"] >= 0
+        azimuth_from_north = None if self.dominant_azimuth_deg is None else (90.0 - self.dominant_azimuth_deg) % 180.0
         try:
             self.line_resolution_info = assess_line_resolution(
-                df.loc[active, "x"].to_numpy(),
-                df.loc[active, "y"].to_numpy(),
-                df.loc[active, "anomaly"].to_numpy(),
-                df.loc[active, "line_id"].to_numpy(),
-                self.dominant_azimuth_deg,
+                df.loc[on_lines, "x"].to_numpy(),
+                df.loc[on_lines, "y"].to_numpy(),
+                df.loc[on_lines, "anomaly"].to_numpy(),
+                df.loc[on_lines, "line_id"].to_numpy(),
+                azimuth_from_north,
             )
         except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail a run
             self.line_resolution_info = {"available": False, "reason": f"측선 분해능 진단 실패: {exc}"}

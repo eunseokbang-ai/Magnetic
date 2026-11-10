@@ -1,7 +1,13 @@
-"""End-to-end smoke test of the full API against the real sample survey.
+"""End-to-end smoke test of the full API against the sample survey.
 
-Not a pytest suite (no pytest in requirements) - run directly:
-    python3 tests/test_pipeline_e2e.py
+One long scenario in which each step builds on the one before (upload,
+process with several settings, grid, transforms, exports, inversion,
+report, save/load), so it is a single pytest test rather than many:
+    python -m pytest tests/test_pipeline_e2e.py
+Until 2026-11 it was a script only, which pytest collected as zero tests -
+so the one check that walks the whole API was not part of "the tests
+pass". It still runs directly, printing each step's result:
+    python tests/test_pipeline_e2e.py
 """
 from __future__ import annotations
 
@@ -85,6 +91,9 @@ def main():
     assert summary["diurnal"]["n_extrapolated"] == summary["n_points"]
     assert abs(summary["diurnal"]["pct_extrapolated"] - 100.0) < 1e-6
     assert summary["line_spacing_m"] is not None and summary["line_spacing_m"] > 0
+    # every diagnostic ran: none of them swallowed an exception into its "reason"
+    assert summary["line_resolution"]["available"] is True, summary["line_resolution"]
+    assert "진단 실패" not in str(summary)
     assert summary["heading_correction"]["applied"] is True, summary["heading_correction"]
     assert summary["heading_correction"]["offset_nt"] is not None
     assert all(l["heading_group"] in ("A", "B") for l in summary["lines"])
@@ -650,6 +659,10 @@ def _check_overlay_image_upload(client):
     assert resp["image_data_url"].startswith("data:image/png;base64,")
     assert resp["name"] == "geology.tif"
     assert len(resp["bounds"]) == 2 and len(resp["bounds"][0]) == 2
+
+
+def test_pipeline_end_to_end():
+    main()
 
 
 if __name__ == "__main__":

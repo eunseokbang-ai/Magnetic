@@ -41,6 +41,11 @@ backend\venv\Scripts\python.exe -m PyInstaller packaging\magnetic.spec --noconfi
 cd backend && python -m pytest tests -q
 ```
 
+pytest는 `backend/requirements-dev.txt`로 설치합니다. 전체 API를 한 시나리오로 도는 `test_pipeline_e2e.py`도
+이 안에 들어 있습니다. `test_regression_andong.py`는 안동 2026-10-28 실자료의 처리 결과 수치를 고정한 회귀
+시험으로, 현장 자료(`AnDong_Mag/20261028`, 저장소에 없음)가 없으면 건너뜁니다. 다른 위치에 있으면
+환경 변수 `MAGNETIC_ANDONG_DIR`로 지정합니다.
+
 ## 기능 (화면 단계 순서)
 
 **1–2. 자료 올리기**
