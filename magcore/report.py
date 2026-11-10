@@ -313,6 +313,8 @@ def generate_report_markdown(
         lines.append(f"- 탐사 심도: {_fmt(inversion_summary.get('depth_extent_m'))} m")
         if inversion_summary.get("resolution_warning"):
             lines.append(f"- ⚠ {inversion_summary['resolution_warning']}")
+        if (inversion_summary.get("remanence_check") or {}).get("warning"):
+            lines.append(f"- ⚠ {inversion_summary['remanence_check']['warning']}")
         lines.append("")
 
     if euler_summary:

@@ -311,6 +311,23 @@ export default function InversionPanel({
               ⚠ {summary.resolution_warning}
             </div>
           )}
+          {summary.remanence_check?.warning && (
+            <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>
+              ⚠ {summary.remanence_check.warning}
+              <div style={{ marginTop: 3, color: "#6b5c42" }}>
+                {summary.remanence_check.sources
+                  .filter((s) => s.verdict === "remanent")
+                  .map((s) => `${s.lat.toFixed(5)}, ${s.lon.toFixed(5)} (${s.peak_anomaly_nt > 0 ? "+" : ""}${Math.round(s.peak_anomaly_nt)} nT, ${Math.round(s.angle_from_induced_deg)}°)`)
+                  .join(" · ")}
+              </div>
+            </div>
+          )}
+          {summary.remanence_check?.available && !summary.remanence_check.warning && summary.remanence_check.n_checked > 0 && (
+            <div style={{ marginTop: 4, color: "#6b5c42" }}>
+              잔류자화 확인: 가장 강한 이상 {summary.remanence_check.n_checked}곳의 자화 방향이 유도 방향과 어긋나지 않습니다
+              {summary.remanence_check.n_unclear > 0 && ` (판단 보류 ${summary.remanence_check.n_unclear}곳)`}.
+            </div>
+          )}
           {summary.depth_resolution_warning && (
             <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>
               ⚠ {summary.depth_resolution_warning}

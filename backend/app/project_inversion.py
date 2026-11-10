@@ -37,6 +37,7 @@ from magcore.terrain import TerrainError, estimate_ground_elevation, load_dem_ge
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
 from .models import (
+    AnomalyCandidateRequest,
     GeologyUnitInput,
     GeologyUnitUpdate,
     InversionParams,
@@ -47,7 +48,68 @@ from .models import (
 from .project_common import ProjectError, _as_job, _stats
 
 
+# How many of the block's strongest anomalies the inversion's remanence check looks at.
+REMANENCE_CHECK_CANDIDATES = 6
+
+
 class InversionMixin:
+    def _remanence_check(self, n_candidates: int = REMANENCE_CHECK_CANDIDATES) -> dict:
+        """Whether the inversion's one assumption about magnetization holds
+        where it matters most.
+
+        The inversion solves for susceptibility: every cell is magnetized
+        along today's field, in proportion to it. A source carrying
+        remanence is not, and the solver then explains its anomaly with
+        susceptibility in the wrong place - shifted sideways and in
+        depth, with a halo of compensating cells around it - while still
+        fitting the data. Nothing in the misfit shows it.
+
+        What can be checked without a second inversion: the strongest
+        anomalies of the block are each fitted with a dipole whose
+        direction is free and with one held to the induced direction
+        (magnetization.py, the same test the candidate scan shows per
+        candidate). Sources whose direction is far from the field's, with
+        the freedom buying a real drop in misfit, are reported, and the
+        summary carries a warning naming how many and how far off. It is
+        a warning about where not to trust the model, not a correction;
+        a magnetization-vector inversion would be the correction.
+        """
+        if self.processed is None or self.inclination_deg is None:
+            return {"available": False, "reason": "자기장 방향을 알 수 없어 확인하지 못했습니다."}
+        cell = max(2.0, float(self.line_spacing_m or 20.0) / 4.0)
+        try:
+            scan = self.scan_anomaly_candidates(AnomalyCandidateRequest(n_candidates=n_candidates, cell_size_m=cell))
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail the inversion it describes
+            return {"available": False, "reason": f"잔류자화 확인 실패: {exc}"}
+        sources = []
+        for c in scan["candidates"]:
+            m = c.get("magnetization")
+            if not m:
+                continue
+            sources.append({
+                "rank": c["rank"], "lat": c["lat"], "lon": c["lon"], "peak_anomaly_nt": c["peak_anomaly_nt"],
+                "angle_from_induced_deg": m["angle_from_induced_deg"], "improvement": m["improvement"],
+                "verdict": m["verdict"], "label": m["label"],
+            })
+        remanent = [s for s in sources if s["verdict"] == "remanent"]
+        warning = None
+        if remanent:
+            angles = [s["angle_from_induced_deg"] for s in remanent]
+            span = f"{min(angles):.0f}°" if len(angles) == 1 else f"{min(angles):.0f}~{max(angles):.0f}°"
+            warning = (
+                f"가장 강한 이상 {len(sources)}곳 중 {len(remanent)}곳의 자화 방향이 현재 지자기장 방향과 {span} 어긋납니다(잔류자화). "
+                "이 역산은 유도자화만 가정하므로 그 주변에서는 자화율의 크기·위치·심도를 믿기 어렵습니다. "
+                "잔류자화를 띤 암체일 수도, 인공 구조물일 수도 있습니다 - 구조물이라면 7-1에서 제거한 뒤 다시 역산하세요."
+            )
+        return {
+            "available": True,
+            "n_checked": len(sources),
+            "n_remanent": len(remanent),
+            "n_unclear": sum(1 for s in sources if s["verdict"] == "unclear"),
+            "sources": sources,
+            "warning": warning,
+        }
+
     def load_dem(self, data: bytes, name: str) -> dict:
         try:
             with rasterio.open(io.BytesIO(data)) as src:
@@ -279,6 +341,7 @@ class InversionMixin:
             "geology_reference_coverage": geology_coverage_frac,
             "n_geology_units": len(self.geology_units),
         }
+        summary["remanence_check"] = self._remanence_check()
         self.inversion_summary_cache = summary
         self.mark_changed()
         return summary
@@ -610,6 +673,7 @@ class InversionMixin:
         # still has its inversion on screen and available to the chat
         # assistant (get_inversion_summary used to answer "아직 역산을
         # 실행하지 않았습니다" after a restore that had just restored one).
+        summary["remanence_check"] = self._remanence_check()
         self.inversion_summary_cache = summary
         return summary
 
