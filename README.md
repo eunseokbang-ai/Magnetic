@@ -15,9 +15,27 @@
 |---|---|
 | `magcore/` | 자력탐사 처리 라이브러리(처리 모듈 68개). DroneMag Studio와 지뢰탐지 전용 프로그램이 함께 쓴다 |
 | `backend/` | FastAPI 처리 서버(`app/`)와 자동화 시험(`tests/`). 처리는 전부 `magcore`를 부른다 |
-| `frontend/` | React + Leaflet 지도 화면 |
+| `frontend/` | React + Leaflet 지도 화면. 구조는 아래 "화면 코드의 구성" 참조 |
 | `docs/` | 기술 매뉴얼(Markdown, PDF)과 PDF 빌드 스크립트 |
 | `packaging/` | PyInstaller 사양(`magnetic.spec`)과 Inno Setup 스크립트(`installer.iss`) |
+
+### 화면 코드의 구성
+
+`frontend/src/App.jsx`는 조립만 한다(320줄). 상태와 핸들러는 영역별 훅에, 화면은 props 없이 `useApp()`으로 필요한
+것을 읽는 컴포넌트에 있다.
+
+| 경로 | 내용 |
+|---|---|
+| `src/App.jsx` | 훅을 순서대로 불러 묶고, 여러 영역에 걸친 핸들러(프로젝트 불러오기, 그리기 모드 전환)만 가진다 |
+| `src/hooks/` | 영역별 상태와 핸들러: 프로젝트(`useProjectSession`), 자료 올리기, 그리드·표시, 처리·편집, 역산, 해석 도구, 구조물 제거, 거리 재기, 참조 레이어, 오프라인 지도, 대화 도우미 |
+| `src/AppContext.js` | App이 가진 것을 화면 컴포넌트에 넘기는 통로(`useApp()`) |
+| `src/components/layout/` | 화면의 구역: 왼쪽 단(`LeftSidebar`), 지도(`MapArea`), 오른쪽 단 세 부분(`EditingPanels`, `AnalysisPanels`, `MapReadout`) |
+| `src/components/workflow/` | 왼쪽 단의 처리 단계 1~11을 절마다 한 파일로 |
+| `src/components/` | 개별 패널과 지도 |
+| `src/lib/`, `src/appDefaults.js` | React 없이 도는 목록 로직, 입력 폼의 기본값 |
+
+훅은 앞에서 부른 훅이 돌려준 것만 읽을 수 있다. 이 순서와, 화면 컴포넌트가 `useApp()`에서 읽는 이름이 실제로
+제공되는지는 `src/appStructure.test.js`가 소스에서 직접 검사한다(빌드와 린트는 이 종류의 오류를 잡지 못한다).
 
 ## 실행
 

@@ -1745,14 +1745,17 @@ Surfer 격자가 그 좌표계로만 나갔다. 이제 내보내기 영역의 "�
 | 측선 | `lines`, `line_grouping`, `line_resolution` |
 | QC | `noise_qc`, `sampling_qc`, `sway`, `repeatability`, `qc_certificate`, `spectrum` |
 | 배경장 | `diurnal`, `base_qc`, `base_segments`, `intermagnet`(관측소 수집·캐시·IDW 합성), `intermagnet_stations`, `igrf`, `trend` |
-| 레벨링 | `leveling`, `crossover_leveling`, `statistical_leveling`, `repeat_passes`, `microlevel`, `heading_calibration` |
+| 레벨링 | `leveling`, `crossover_leveling`, `statistical_leveling`, `repeat_passes`, `block_leveling`, `microlevel`, `heading_calibration` |
 | 고도 정규화 | `height_normalization`(3층 등가 쌍극자층, numba matrix-free CGLS) |
 | 격자 | `gridding`, `grid_diagnostics`, `boundary`, `boundary_export`, `contours` |
 | 변환 | `transforms`, `continuation`(경계 연속·등가층 대체), `edge_margin` |
 | 해석 | `depth_estimation`, `euler_deconvolution`, `multiscale_edges`, `lineaments`, `contacts`, `dipole_fit`, `prospectivity` |
 | 역산 | `inversion`, `inversion_auto`, `terrain` |
 | 표출 | `render`, `colormaps`, `overlay_image`, `local_tiles`, `tile_cache`(배경지도 + KIGAM 지질도 WMS), `geology_sample`, `osm_structures` |
-| 보고 | `report` |
+| 보고·내보내기 | `report`, `report_document`(Word·HTML·PDF), `export_formats`(좌표계 변환, Geosoft XYZ, GeoPackage) |
+| 자료 읽기 | `magdrone_r3`, `log_drone_csv`, `survey_files`, `sensor_pair`(MineMag와 공용) |
+| 설계·신뢰도 | `survey_design`(측선 간격·비행 계획), `uncertainty`(신뢰도 전파) |
+| 운용 | `progress`(진행률·취소) |
 | 상태 보존 | `autosave` |
 | 지질 연계 | `geology_stats`(KIGAM WFS 폴리곤 집계) |
 

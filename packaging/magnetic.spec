@@ -14,7 +14,8 @@ The collect_all() calls are not defensive padding: each of those packages
 loads something at runtime that a static import scan cannot see -
 coordinate and datum tables (pyproj), GDAL's own data directory
 (rasterio), the IGRF coefficient files (ppigrf), matplotlib's fonts and
-style sheets, and numba/choclo's JIT machinery. Without them the program
+style sheets, numba/choclo's JIT machinery, and python-docx's blank
+template that every Word report starts from. Without them the program
 builds cleanly and then fails on first use.
 """
 from pathlib import Path
@@ -58,7 +59,7 @@ hiddenimports = []
 
 for package in ("pyproj", "rasterio", "ppigrf", "verde", "matplotlib",
                 "choclo", "numba", "llvmlite", "shapely", "certifi",
-                "anthropic", "pyogrio"):
+                "anthropic", "pyogrio", "docx"):
     try:
         pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     except Exception:
