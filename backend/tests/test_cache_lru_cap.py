@@ -87,7 +87,10 @@ def test_transform_cache_no_collision_between_auto_and_explicit_max_distance():
 
 def test_transform_cache_respects_entry_cap(monkeypatch):
     project = _make_processed_project()
-    monkeypatch.setattr(store_module, "_TRANSFORM_CACHE_MAX_ENTRIES", 2)
+    # the limit is read where the cache is filled (project_grids, since the 2026-11 split of store.py)
+    import app.project_grids as grids_module
+
+    monkeypatch.setattr(grids_module, "_TRANSFORM_CACHE_MAX_ENTRIES", 2)
 
     grid = project._grid_for("anomaly", 20.0, method="nearest")
     for transform in ["thdr", "1vd", "as"]:
