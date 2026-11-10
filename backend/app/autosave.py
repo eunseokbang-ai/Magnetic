@@ -22,10 +22,15 @@ things make it safe to run unattended:
   interrupted half-way leaves the older, complete bundle intact rather
   than a truncated zip that cannot be opened.
 
-Restoring is deliberately not automatic. Re-running the pipeline on a
-restored project takes seconds to minutes, and the user may well have
-opened the app to do something else entirely, so the saved projects are
-offered as a list and restored on request.
+Restoring is deliberately not automatic when the app is opened afresh.
+Re-running the pipeline on a restored project takes seconds to minutes,
+and the user may well have opened the app to do something else entirely,
+so the saved projects are offered as a list and restored on request. The
+one exception is an address that names a project (?project=<id>, which
+the screen keeps in the address bar): opening that is itself the
+request, so main.py's /open endpoint answers it from memory if the
+project is still loaded and from the bundle here if the server was
+restarted in between.
 """
 from __future__ import annotations
 
@@ -43,6 +48,18 @@ from .paths import data_dir
 # smoothing brush into one save instead of thirty.
 DEFAULT_INTERVAL_SECONDS = 120.0
 DEFAULT_QUIET_SECONDS = 8.0
+# The interval exists because writing a bundle holds the GIL and the
+# screen stutters while it does; 120 s was set when a bundle took 13.9 s
+# (CSV frames, HaeNam 965k rows). It now takes 2.2 s there and a fraction
+# of a second on an ordinary survey, so a fixed 120 s leaves two minutes
+# of edits exposed to a crash for no reason. The wait between writes is
+# therefore tied to what a write costs: SAVE_COST_FACTOR times the last
+# write's duration (the write then takes ~1/30 of the time, 3 %), never
+# under MIN_INTERVAL_SECONDS and never over the configured interval.
+# HaeNam: 30 x 2.2 s = 66 s. Andong (266,672 rows, 12.2 MB bundle): 0.36 s
+# measured, 30 x 0.36 = 11 s, so the 15 s minimum applies.
+SAVE_COST_FACTOR = 30.0
+MIN_INTERVAL_SECONDS = 15.0
 # Saved projects kept. Older ones are removed oldest-first: this is a
 # safety net for the session in progress, not a project archive - the
 # 저장 button is still how a project is kept deliberately.
@@ -82,12 +99,15 @@ class AutosaveManager:
         directory: Path | None = None,
         interval_seconds: float = DEFAULT_INTERVAL_SECONDS,
         quiet_seconds: float = DEFAULT_QUIET_SECONDS,
+        min_interval_seconds: float = MIN_INTERVAL_SECONDS,
     ) -> None:
         self._store = store
         self._directory = directory
         self._interval = interval_seconds
         self._quiet = quiet_seconds
+        self._min_interval = min_interval_seconds
         self._last_saved: dict[str, float] = {}
+        self._last_cost: dict[str, float] = {}       # seconds the last write of each project took
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -113,6 +133,7 @@ class AutosaveManager:
         """
         if getattr(project, "drone_raw", None) is None:
             return None
+        started = time.perf_counter()
         try:
             data = project.save_project_bundle()
         except Exception:
@@ -132,8 +153,23 @@ class AutosaveManager:
             return None
         with self._lock:
             self._last_saved[project.id] = time.time() if now is None else now
+            self._last_cost[project.id] = time.perf_counter() - started
         self._prune()
         return target
+
+    def interval_for(self, project_id: str) -> float:
+        """How long to leave between two writes of this project - see
+        SAVE_COST_FACTOR. Before the first write nothing is known about
+        its cost, and nothing needs to be: the first write is not held
+        back by an interval at all."""
+        with self._lock:
+            cost = self._last_cost.get(project_id)
+        if cost is None:
+            return self._interval
+        return min(self._interval, max(self._min_interval, SAVE_COST_FACTOR * cost))
+
+    def has_saved(self, project_id: str) -> bool:
+        return self._bundle_path(project_id).exists()
 
     @staticmethod
     def _describe(project) -> dict:
@@ -195,6 +231,7 @@ class AutosaveManager:
         self._meta_path(project_id).unlink(missing_ok=True)
         with self._lock:
             self._last_saved.pop(project_id, None)
+            self._last_cost.pop(project_id, None)
 
     # ------------------------------------------------------------ thread
     def start(self) -> None:
@@ -233,7 +270,7 @@ class AutosaveManager:
                 continue                       # nothing new since the last write
             if now - changed_at < self._quiet:
                 continue                       # still being edited
-            if now - last < self._interval:
+            if now - last < self.interval_for(project.id):
                 continue                       # written recently enough
             if self.save_project(project, now=now) is not None:
                 written.append(project.id)

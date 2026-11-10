@@ -874,6 +874,23 @@ def restore_autosave(project_id: str):
     return {"project_id": project.id, **summary}
 
 
+@app.post("/api/projects/{project_id}/open")
+def open_project(project_id: str):
+    """Pick a project up again by its id - what the screen does when its
+    address names one (a browser refresh, a reopened tab, a bookmark).
+    Answered from memory when this server still has the project loaded,
+    which costs nothing, and from its autosaved bundle when the server
+    was restarted in between. `source` says which."""
+    project = store.peek(project_id)
+    if project is not None and (project.drone_raw is not None or not autosave.has_saved(project_id)):
+        return {"project_id": project.id, "source": "memory", **project.session_summary()}
+    try:
+        project, summary = autosave.restore(project_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"프로젝트 {project_id}을(를) 찾을 수 없습니다 - 저장된 사본도 없습니다.")
+    return {"project_id": project.id, "source": "disk", **summary}
+
+
 @app.delete("/api/projects/autosaves/{project_id}")
 def delete_autosave(project_id: str):
     autosave.delete(project_id)

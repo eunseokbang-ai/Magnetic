@@ -878,6 +878,48 @@ export default function App() {
     }
   };
 
+  // The address names the project (?project=<id>), so a refresh, a
+  // reopened tab or a bookmark comes back to it instead of to an empty
+  // screen. Written whenever the id changes; read once, on load.
+  useEffect(() => {
+    if (!projectId) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("project") !== projectId) {
+      url.searchParams.set("project", projectId);
+      window.history.replaceState(null, "", url);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("project");
+    if (!wanted) return;
+    let cancelled = false;
+    (async () => {
+      setLoadingProject(true);
+      try {
+        const resp = await api.openProject(wanted);
+        if (cancelled) return;
+        projectCreationRef.current = Promise.resolve(resp.project_id);
+        setProjectId(resp.project_id);
+        await applyLoadedProject(resp.project_id, resp);
+      } catch (e) {
+        if (cancelled) return;
+        // gone from memory and from disk: start clean rather than keep pointing at it
+        const url = new URL(window.location.href);
+        url.searchParams.delete("project");
+        window.history.replaceState(null, "", url);
+        setError(`주소가 가리키는 이전 작업을 찾지 못해 새로 시작합니다. (${e.message || e})`);
+      } finally {
+        if (!cancelled) setLoadingProject(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // once, on load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleRestoreAutosave = async (autosaveProjectId) => {
     setError(null);
     setLoadingProject(true);

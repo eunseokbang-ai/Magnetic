@@ -4235,19 +4235,31 @@ class Project:
         except KeyError as exc:
             raise ProjectError(f"프로젝트 파일 내용이 올바르지 않습니다: {exc}") from exc
 
+        result = self.session_summary()
+        if not has_reference_layers:
+            # this bundle predates saved reference layers: keep what is on screen
+            result["reference_layers"] = None
+        self.mark_changed()
+        return result
+
+    def session_summary(self) -> dict:
+        """Everything the screen needs to pick this project up where it
+        is now: what a bundle load answers with, and what reopening a
+        project that is still in memory answers with (a browser refresh,
+        a second tab) - so both paths put the same state on screen."""
+        processed = self.processed is not None
+        inversion_summary = self.inversion_summary_cache if self.inversion_result is not None else None
         result = {
             "drone_summary": self.drone_summary(),
             "base_summary": self.base_summary(),
             "processed": processed,
             "inversion_restored": inversion_summary is not None,
-            "inversion_summary": inversion_summary,
+            "inversion_summary": inversion_summary or None,
             "params": self.last_params.model_dump() if self.last_params is not None else None,
-            # None = this bundle predates saved reference layers: keep what is on screen
-            "reference_layers": self.reference_layer_descriptors() if has_reference_layers else None,
+            "reference_layers": self.reference_layer_descriptors(),
         }
         if processed:
             result["process_summary"] = self.process_summary()
-        self.mark_changed()
         return result
 
     @_as_job("3차원 역산")
@@ -4707,7 +4719,7 @@ class Project:
         self.inversion_obs_grid = obs_grid
 
         active_chi = result.susceptibility[result.susceptibility > 0]
-        return {
+        summary = {
             "n_obs": result.n_obs,
             "n_active_cells": result.n_active_cells,
             "rms_misfit_nt": result.rms_misfit_nt,
@@ -4730,6 +4742,12 @@ class Project:
             "resolution_warning": None,
             "imported": True,
         }
+        # Kept like a fresh run's summary, so a restored or reopened project
+        # still has its inversion on screen and available to the chat
+        # assistant (get_inversion_summary used to answer "아직 역산을
+        # 실행하지 않았습니다" after a restore that had just restored one).
+        self.inversion_summary_cache = summary
+        return summary
 
     def export_inversion_csv(self) -> bytes:
         """Active-cell (x, y, z, susceptibility) point cloud - a portable
@@ -5078,6 +5096,11 @@ class ProjectStore:
                 project = Project(id=project_id)
                 self._projects[project_id] = project
         return project
+
+    def peek(self, project_id: str) -> Project | None:
+        """The project if this server has it in memory, without raising."""
+        with self._lock:
+            return self._projects.get(project_id)
 
     def all_projects(self) -> list[Project]:
         with self._lock:

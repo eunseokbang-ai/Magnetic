@@ -614,6 +614,12 @@ export function listAutosaves() {
   return request(`/projects/autosaves`);
 }
 
+// Pick a project up by id: from the server's memory if it is still
+// loaded, from its autosaved bundle if the server was restarted.
+export function openProject(projectId) {
+  return request(`/projects/${encodeURIComponent(projectId)}/open`, { method: "POST" });
+}
+
 export function restoreAutosave(projectId) {
   return request(`/projects/autosaves/${projectId}/restore`, { method: "POST" });
 }
