@@ -159,13 +159,15 @@ class AutosaveManager:
 
     def interval_for(self, project_id: str) -> float:
         """How long to leave between two writes of this project - see
-        SAVE_COST_FACTOR. Before the first write nothing is known about
-        its cost, and nothing needs to be: the first write is not held
-        back by an interval at all."""
+        SAVE_COST_FACTOR. Until a write has been timed, the minimum: that
+        is the case right after a restore or a reopen from disk, where
+        waiting the full interval left the first two minutes of edits
+        unsaved (measured in the browser: 115 s to the first write). One
+        early write of a large project is the price of knowing its cost."""
         with self._lock:
             cost = self._last_cost.get(project_id)
         if cost is None:
-            return self._interval
+            return min(self._interval, self._min_interval)
         return min(self._interval, max(self._min_interval, SAVE_COST_FACTOR * cost))
 
     def has_saved(self, project_id: str) -> bool:

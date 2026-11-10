@@ -96,7 +96,7 @@ def test_the_wait_between_writes_follows_what_a_write_costs(session, tmp_path):
     only = ProjectStore()
     only._projects[pid] = store.get(pid)
     manager = AutosaveManager(only, directory=tmp_path, interval_seconds=120.0, quiet_seconds=8.0)
-    assert manager.interval_for(pid) == 120.0            # nothing known yet (and the first write is not held back anyway)
+    assert manager.interval_for(pid) == 15.0             # not timed yet (e.g. just restored): the minimum, not two minutes
     for cost, expected in ((0.36, 15.0), (2.2, 66.0), (10.0, 120.0)):   # Andong, HaeNam, the old CSV bundle
         manager._last_cost[pid] = cost
         assert manager.interval_for(pid) == pytest.approx(expected)
