@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
-from app.io_.loaders import detect_format, load_survey_files
-from app.io_.log_drone_csv import load_log_drone_csv, parse_filename, segment_tracks
+from magcore.survey_files import detect_format, load_survey_files
+from magcore.log_drone_csv import load_log_drone_csv, parse_filename, segment_tracks
 from app.main import app
 from conftest import FIXTURES, R3_FIXTURE
 

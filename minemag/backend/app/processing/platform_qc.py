@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt, find_peaks, welch
 
-from .sensor_pair import sensor_pair_report
+from magcore.sensor_pair import sensor_pair_report
 
 DEFAULT_QUIET_THRESHOLD_NT = 60.0
 # Below this, the probe difference does not remove the noise.

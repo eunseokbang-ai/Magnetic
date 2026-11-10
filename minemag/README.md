@@ -16,7 +16,6 @@ SENSYS MagDrone R3(2탐침 플럭스게이트 어레이) 자료로 지뢰·불�
 minemag/
   backend/
     app/
-      io_/magdrone_r3.py          R3 ASC 적재 — 두 탐침·트랙·3축·고도 보존, 파일명 날짜 + ms-since-midnight → 시각
       processing/platform_qc.py   플랫폼 잡음 QC — 조용한 구간 잡음, 두 탐침 상관, 스펙트럼(보행·회전익 주기)
       processing/preprocess.py    논문 2.6.1~2.6.2 — 리샘플링, 적응형 Hampel, 영위상 가우시안 LPF, 경로 편집, 헤딩 보정
       processing/gridding.py      논문 2.6.3 — 장력 최소곡률 격자(0.125 m), 추세 제거, 덮임 공백; 반복 측정 비교(블록 평균)
@@ -26,6 +25,13 @@ minemag/
     tests/                        합성자료(정답 기준)와 시험장 실자료 두 트랙
     launcher.py                   포트 8100부터 빈 포트를 골라 띄우고 브라우저를 연다
   frontend/                       Vite + React + Leaflet
+
+자료를 읽는 부분과 센서 쌍 진단은 DroneMag Studio와 같이 쓰는 `magcore/`에 있다(2026-11에 이곳에서 옮김):
+
+  magcore/magdrone_r3.py        R3 ASC 적재 — 두 탐침·트랙·3축·고도 보존, 파일명 날짜 + ms-since-midnight → 시각
+  magcore/log_drone_csv.py      Log_Drone(광펌핑 J1/J2) CSV 적재 — GPS 주간 초 + 파일명 날짜, 경로에서 트랙 구성
+  magcore/survey_files.py       형식 판별과 여러 파일 묶어 읽기
+  magcore/sensor_pair.py        두 센서의 차이로 보는 시스템 오차 — 오프셋, 방향 효과, 배경 산포, 자세 결합
 ```
 
 ## 실행

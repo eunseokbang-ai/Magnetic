@@ -1,4 +1,9 @@
-"""The "Log_Drone" CSV of the two-sensor optically pumped scalar
+"""Shared by MineMag and DroneMag Studio (moved here from MineMag in
+2026-11; DroneMag Studio had its own parser for this logger, which read
+one sensor, stamped the readings with the processing day, and could not
+open the Gongju files at all - see _CANONICAL).
+
+The "Log_Drone" CSV of the two-sensor optically pumped scalar
 magnetometer flown at the Gongju ADD site (2026-10-19), read into the
 same long-format frame as the MagDrone R3 export.
 
@@ -51,7 +56,7 @@ import re
 import numpy as np
 import pandas as pd
 
-from magcore.igrf import compute_igrf_total_field
+from .igrf import compute_igrf_total_field
 
 from .magdrone_r3 import FileInfo, MagDroneLoadError
 
@@ -79,6 +84,17 @@ def is_log_drone_csv(data: bytes | str) -> bool:
 
 def _norm(name: str) -> str:
     return re.sub(r"\s*\[.*?\]\s*", "", name).strip()
+
+
+# The same logger has written these names in two spellings: "Lat[deg]" on
+# the 2026-10 Gongju files and "lat[deg]" on earlier ones (the firmware
+# DroneMag Studio's own parser was written against, which therefore could
+# not read the Gongju files). Matched without regard to case.
+_CANONICAL = {name.lower(): name for name in ("TOW", "Lat", "Lon", "Alt", "Roll", "Pitch", "Yaw", "SeqNum")}
+
+
+def _canonical(name: str) -> str:
+    return _CANONICAL.get(name.lower(), name)
 
 
 def segment_tracks(x, y, t, *, smooth_s=TRACK_SMOOTH_S, min_speed=TRACK_MIN_SPEED_M_S,
@@ -156,7 +172,7 @@ def load_log_drone_csv(data: bytes | str, filename: str = "") -> pd.DataFrame:
         raw = pd.read_csv(io.StringIO(text), skipinitialspace=True)
     except Exception as exc:                     # noqa: BLE001 - any parse failure is a format error
         raise LogDroneLoadError(f"Log_Drone CSV를 읽지 못했습니다: {exc}") from exc
-    raw.columns = [_norm(c) for c in raw.columns]
+    raw.columns = [_canonical(_norm(c)) for c in raw.columns]
     mag_cols = {m.group(1).upper(): c for c in raw.columns for m in [_SENSOR_RE.match(c)] if m}
     needed = {"TOW", "Lat", "Lon"}
     if not mag_cols or not needed.issubset(raw.columns):
@@ -220,4 +236,11 @@ def load_log_drone_csv(data: bytes | str, filename: str = "") -> pd.DataFrame:
     info.columns_present = ["t_ms", "sensor", "lat", "lon", "alt", "tfa", "roll", "pitch", "yaw"]
     info.columns_missing = ["track", "bx", "by", "bz"]
     df.attrs["file_info"] = info.to_dict()
+    # For callers that need UTC (DroneMag Studio's diurnal correction): the
+    # timestamps above are local, as the file name is; None = the name
+    # carried no date, so the date is a placeholder and only the spacing
+    # of the timestamps means anything.
+    df.attrs["start_date"] = start_date
+    df.attrs["utc_offset_hours"] = float(utc_offset_h)
+    df.attrs["sensor_labels"] = sorted(mag_cols)
     return df

@@ -249,7 +249,24 @@ export default function WorkflowSteps({
                   인식된 파일 형식: {droneSummary.source_formats.join(", ")}
                 </>
               )}
-              {droneSummary.n_files_total > 0 && (
+              {droneSummary.sensor_labels && (
+                <>
+                  <br />
+                  <span style={{ color: "#166534" }}>
+                    센서 2개({droneSummary.sensor_labels.join(" · ")})가 함께 기록된 자료입니다 - 처리에 쓸 센서는 3번 자료 처리에서 고릅니다.
+                  </span>
+                </>
+              )}
+              {droneSummary.n_files_placeholder_date > 0 && (
+                <>
+                  <br />
+                  <span style={{ color: "#b45309" }}>
+                    {droneSummary.n_files_placeholder_date}개 파일은 이름에 날짜가 없어 오늘 날짜로 시각을 매겼습니다 - 베이스 자료와 시각이 맞지
+                    않으니, 원래 파일명(Log_Drone_YYYYMMDD_HHMMSS.csv)으로 다시 올리세요.
+                  </span>
+                </>
+              )}
+              {droneSummary.n_files_total > 0 && !droneSummary.sensor_labels && (
                 <>
                   <br />
                   {droneSummary.n_files_using_precompensated_mag > 0 ? (
@@ -573,6 +590,23 @@ export default function WorkflowSteps({
             </select>
           </Field>
           <div style={{ color: "#ab9a78" }}>{FILTER_METHOD_INFO[processParams.filter_method || "butterworth"]}</div>
+
+          {droneSummary?.sensor_labels && (
+            <Field label="처리에 쓸 센서 (센서 2개 기록 자료)">
+              <select
+                style={inputStyle}
+                value={processParams.sensor_channel || "1"}
+                onChange={(e) => setProcessParams((p) => ({ ...p, sensor_channel: e.target.value }))}
+              >
+                <option value="1">{droneSummary.sensor_labels[0]} (기본)</option>
+                <option value="2">{droneSummary.sensor_labels[1]}</option>
+                <option value="mean">두 센서 평균</option>
+              </select>
+              <div style={{ color: "#ab9a78" }}>
+                어느 쪽이 나은지는 처리 후 QC의 "센서 쌍 진단"에 나옵니다(센서별 왕복 방향 효과와 배경 산포).
+              </div>
+            </Field>
+          )}
 
           {(processParams.filter_method || "butterworth") === "butterworth" ? (
             <>

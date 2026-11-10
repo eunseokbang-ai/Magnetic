@@ -99,10 +99,53 @@ from .project_common import (
     boundary_rings,
 )
 from .project_observatory import ObservatoryMixin
+from magcore.sensor_pair import sensor_pair_report
 from .project_grids import GridMixin
 from .project_interpretation import InterpretationMixin
 from .project_inversion import InversionMixin
 from .project_persistence import PersistenceMixin
+
+
+def _sensor_pair_summary(df: pd.DataFrame, labels: list | None, used: str) -> dict:
+    """What the two sensors say about each other on this survey, from
+    magcore.sensor_pair (the report MineMag shows): their offset, how
+    much their difference scatters in flight, each one's direction effect
+    (mean reading on the lines flown one way against the other way) and
+    background scatter - the numbers that say which channel to process.
+    Needs the lines, so it runs after line detection."""
+    labels = list(labels or ["1", "2"])[:2]
+    both = df["mag_ch1"].notna() & df["mag_ch2"].notna()
+    sub = df.loc[both]
+    if len(sub) < 100:
+        return {"available": False, "labels": labels, "used": used, "reason": "두 센서가 함께 기록된 측점이 부족합니다."}
+    t_ms = (sub["timestamp"] - sub["timestamp"].min()).dt.total_seconds().to_numpy() * 1000.0
+    long = pd.concat([
+        pd.DataFrame({"sensor": k, "t_ms": t_ms, "tfa": (sub[f"mag_ch{k}"] - sub["mag_ch1"].median()).to_numpy(),
+                      "x": sub["x"].to_numpy(), "y": sub["y"].to_numpy(), "line_id": sub["line_id"].to_numpy()})
+        for k in (1, 2)
+    ], ignore_index=True)
+    try:
+        report = sensor_pair_report(long)
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail a run
+        return {"available": False, "labels": labels, "used": used, "reason": f"센서 쌍 진단 실패: {exc}"}
+    if report is None:
+        return {"available": False, "labels": labels, "used": used, "reason": "두 센서가 함께 기록된 측점이 부족합니다."}
+    name = {"1": labels[0], "2": labels[1]}
+    direction = report.get("direction") or {}
+    effect = direction.get("forward_minus_backward_nt")
+    background = report.get("background_std_nt")
+    cleaner = min(background, key=lambda k: background[k]) if background and all(v is not None for v in background.values()) else None
+    return {
+        "available": True,
+        "labels": labels,
+        "used": used,
+        "n_paired": report["n_paired"],
+        "offset_nt": report["offset_nt"],                                   # sensor 2 minus sensor 1
+        "difference_std_flight_nt": report["difference_std_flight_nt"],
+        "direction_effect_nt": {name[k]: v for k, v in effect.items()} if effect else None,
+        "background_std_nt": {name[k]: v for k, v in background.items()} if background else None,
+        "cleaner": name[cleaner] if cleaner else None,
+    }
 
 
 @dataclass
@@ -168,6 +211,7 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
     statistical_leveling: StatisticalLevelingResult | None = None
     striping_info: dict | None = None
     line_resolution_info: dict | None = None
+    sensor_pair_info: dict | None = None      # two-sensor loggers only - see _sensor_pair_summary
     inclination_deg: float | None = None
     declination_deg: float | None = None
     diurnal_info: dict | None = None
@@ -347,6 +391,10 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
             "n_files_using_precompensated_mag": d.attrs.get("n_files_using_precompensated_mag", 0),
             "n_files_total": d.attrs.get("n_files_total", 0),
             "median_speed_mps": _median_speed_mps(d),
+            # a second sensor on the carrier (None for single-sensor data), and
+            # files stamped with a made-up date because their name had none
+            "sensor_labels": d.attrs.get("sensor_labels") if "mag_ch2" in d.columns else None,
+            "n_files_placeholder_date": d.attrs.get("n_files_placeholder_date", 0),
             "flight_dates": [dt.isoformat() for dt in self._survey_dates() or []],
         }
 
@@ -413,6 +461,13 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
 
         progress.report("전처리 (스파이크 제거·필터)", _PIPELINE_PROGRESS["P0"])
         df = self.drone_raw.copy()
+        # Two sensors on the carrier: process the one the user chose. Rows
+        # from a single-sensor file in a mixed upload keep their own reading.
+        two_sensors = "mag_ch2" in df.columns and df["mag_ch2"].notna().any()
+        if two_sensors and params.sensor_channel != "1":
+            both = df["mag_ch1"].notna() & df["mag_ch2"].notna()
+            chosen = df["mag_ch2"] if params.sensor_channel == "2" else 0.5 * (df["mag_ch1"] + df["mag_ch2"])
+            df.loc[both, "mag_raw"] = chosen[both]
 
         n_before_lag = len(df)
         if params.gps_mag_lag_seconds != 0.0:
@@ -501,6 +556,7 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
         else:
             self.noise_qc_info = {"available": False}
         progress.report("잡음·표본 간격 진단", _PIPELINE_PROGRESS["P2"])
+        self.sensor_pair_info = _sensor_pair_summary(df, self.drone_raw.attrs.get("sensor_labels"), params.sensor_channel) if two_sensors else None
         self.sampling_qc_info = compute_sampling_distance_qc(df)
 
         sp = params.sway_detection
@@ -1019,6 +1075,7 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
             "statistical_leveling": _statistical_leveling_summary(self.statistical_leveling),
             "striping": self.striping_info,
             "line_resolution": self.line_resolution_info,
+            "sensor_pair": self.sensor_pair_info,
             "noise_qc": self.noise_qc_info,
             "sampling_qc": self.sampling_qc_info,
             "file_level_check": self.file_level_info,

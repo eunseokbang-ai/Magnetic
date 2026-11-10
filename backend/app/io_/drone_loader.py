@@ -24,6 +24,9 @@ import re
 import numpy as np
 import pandas as pd
 
+from magcore.log_drone_csv import load_log_drone_csv
+from magcore.magdrone_r3 import MagDroneLoadError
+
 REQUIRED_COLUMNS = ["Date", "Time", "Latitude", "Longitude", "Mag"]
 SPARSE_NUMERIC_COLUMNS = ["Altitude", "HeightOverEllipsoid", "Hdop", "SpeedOverGround"]
 
@@ -201,46 +204,56 @@ def _parse_sensys_r1(text: str) -> pd.DataFrame:
     )
 
 
-def _parse_microinfinity(text: str) -> pd.DataFrame:
-    """MicroInfinity Mag: 22-column CSV, dual-channel (MagField_J1/J2[uT])
-    with a GPS time-of-week (TOW, seconds) column instead of a calendar
-    date/time pair.
+def _parse_microinfinity(text: str, filename: str = "") -> pd.DataFrame:
+    """MicroInfinity Mag / "Log_Drone": dual-sensor optically pumped
+    magnetometer (MagField_J1/J2 in microtesla) with GPS time of week
+    instead of a calendar date. Read by magcore.log_drone_csv, the loader
+    MineMag uses for the same files.
 
-    Uses channel 1 alone (MagField_J1) as mag_raw, matching DroneMagAdv's
-    default "Use Channel" setting. Since the format carries no calendar
-    date, a placeholder reference date (the processing day) is used to
-    build timestamps - inter-sample spacing (from TOW) is exact, but the
-    absolute date is only a best-effort estimate, same as DroneMagAdv's
-    own "infer from file modification time" fallback for this format.
-    This means diurnal correction against a base-station log recorded on
-    a different calendar day will not line up in absolute time.
+    - mag_raw is sensor J1, as before (the vendor's default channel, and
+      on the Gongju flights the cleaner of the two). Both sensors are
+      kept as mag_ch1 / mag_ch2 so the pipeline can use the other one or
+      their mean without the file being uploaded again
+      (ProcessParams.sensor_channel).
+    - The date comes from the file name (Log_Drone_YYYYMMDD_HHMMSS.csv),
+      and the local time in that name against the GPS time gives the UTC
+      offset, so the timestamps are real UTC and line up with a base
+      station log. A file whose name carries no date gets today's date as
+      a placeholder (the UTC time of day is still real, from the GPS time
+      of week), and attrs["placeholder_date"] says so.
     """
-    df = pd.read_csv(io.StringIO(text), skipinitialspace=True, index_col=False, low_memory=False)
-    df.columns = [c.strip() for c in df.columns]
-
-    required = ["MagField_J1[uT]", "TOW", "lat[deg]", "lon[deg]"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise DroneLoadError(f"MicroInfinity Mag 파일에 필수 컬럼이 없습니다: {missing}")
-
-    for col in ["MagField_J1[uT]", "TOW", "lat[deg]", "lon[deg]", "alt[m]"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    ref_date = pd.Timestamp.utcnow().tz_localize(None).normalize()
-    timestamp = ref_date + pd.to_timedelta(df["TOW"], unit="s")
-
-    return pd.DataFrame(
+    try:
+        long = load_log_drone_csv(text, filename)
+    except MagDroneLoadError as exc:
+        raise DroneLoadError(f"MicroInfinity Mag 파일을 읽지 못했습니다: {exc}") from exc
+    sensors = sorted(int(v) for v in long["sensor"].unique())
+    first = long[long["sensor"] == sensors[0]].reset_index(drop=True)
+    timestamp = first["timestamp"]
+    placeholder = long.attrs.get("start_date") is None
+    if placeholder:
+        # GPS time of week gives the true UTC time of day whatever the week;
+        # only the date is unknown, so only the date is made up.
+        ref_date = pd.Timestamp.utcnow().tz_localize(None).normalize()
+        timestamp = ref_date + (timestamp - timestamp.iloc[0].normalize())
+    else:
+        timestamp = timestamp - pd.to_timedelta(long.attrs.get("utc_offset_hours", 0.0), unit="h")
+    out = pd.DataFrame(
         {
             "timestamp": timestamp,
-            "lat": df["lat[deg]"],
-            "lon": df["lon[deg]"],
-            "mag_raw": df["MagField_J1[uT]"] * _UT_TO_NT,
-            "altitude_msl_m": df["alt[m]"] if "alt[m]" in df.columns else np.nan,
+            "lat": first["lat"],
+            "lon": first["lon"],
+            "mag_raw": first["b_total"],
+            "altitude_msl_m": first["alt"],
             "geoid_separation_m": np.nan,
             "speed_over_ground": np.nan,
         }
     )
+    for k, sensor in enumerate(sensors[:2], start=1):
+        out[f"mag_ch{k}"] = long.loc[long["sensor"] == sensor, "b_total"].to_numpy()
+    out.attrs["sensor_labels"] = list(long.attrs.get("sensor_labels") or [])[:2]
+    out.attrs["placeholder_date"] = placeholder
+    out.attrs["utc_offset_hours"] = None if placeholder else long.attrs.get("utc_offset_hours")
+    return out
 
 
 _R3_DATE_RE = re.compile(r"^Date:\s*(\d{2})\.(\d{2})\.(\d{4})", re.MULTILINE)
@@ -458,6 +471,15 @@ def _finalize(raw: pd.DataFrame) -> pd.DataFrame:
             "compass_z": df["compass_z"].astype(float).values,
         }
     )
+    # A second sensor on the same carrier, when the format has one (see
+    # _parse_microinfinity). Only present then, so single-sensor projects
+    # carry no empty columns.
+    for col in ("mag_ch1", "mag_ch2"):
+        if col in df.columns:
+            out[col] = pd.to_numeric(df[col], errors="coerce").astype(float).values
+    for key in ("sensor_labels", "placeholder_date", "utc_offset_hours"):
+        if key in raw.attrs:
+            out.attrs[key] = raw.attrs[key]
     out.attrs["n_invalid_coords_removed"] = n_invalid_coords_removed
     out.attrs["n_restamped_removed"] = n_restamped_removed
     out.attrs["source_format"] = raw.attrs.get("source_format", "generic")
@@ -489,7 +511,12 @@ def load_drone_csv(path_or_buffer) -> pd.DataFrame:
     """
     text = _read_text(path_or_buffer)
     fmt = _detect_format(text)
-    raw = _FORMAT_PARSERS[fmt](text)
+    if fmt == "microinfinity":
+        # the only format whose date is in the file name
+        name = path_or_buffer if isinstance(path_or_buffer, str) else getattr(path_or_buffer, "name", "")
+        raw = _parse_microinfinity(text, re.split(r"[\\/]", str(name or ""))[-1])
+    else:
+        raw = _FORMAT_PARSERS[fmt](text)
     raw.attrs["source_format"] = fmt
     return _finalize(raw)
 
@@ -548,4 +575,10 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
         1 for p in parts if p.attrs.get("mag_source_column") == "MagComp"
     )
     combined.attrs["n_files_total"] = len(parts)
+    # A second sensor (see _parse_microinfinity), and files whose date had
+    # to be made up because their name did not carry one.
+    labels = next((p.attrs["sensor_labels"] for p in parts if p.attrs.get("sensor_labels")), None)
+    if labels and "mag_ch2" in combined.columns:
+        combined.attrs["sensor_labels"] = labels
+    combined.attrs["n_files_placeholder_date"] = sum(1 for p in parts if p.attrs.get("placeholder_date"))
     return combined

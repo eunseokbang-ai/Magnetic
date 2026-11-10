@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from app.processing.platform_qc import GAIT_BAND_HZ, platform_qc
-from app.io_.magdrone_r3 import load_magdrone_r3_files
+from magcore.magdrone_r3 import load_magdrone_r3_files
 from conftest import R3_FIXTURE
 
 

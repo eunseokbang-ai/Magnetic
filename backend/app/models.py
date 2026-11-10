@@ -283,6 +283,15 @@ FilterMethod = Literal["butterworth", "savgol", "moving_average"]
 
 
 class ProcessParams(BaseModel):
+    # Which sensor's reading is processed when the logger carries two
+    # (the Log_Drone / MicroInfinity optically pumped pair): "1", "2", or
+    # "mean". Ignored for single-sensor data. "1" is the vendor's default
+    # channel and what this program always used; on the Gongju 2026-10-19
+    # flights it is also the cleaner sensor (background 2.4 vs 3.5 nT,
+    # direction effect -2 vs +9 nT), and the mean gains 0.07 nT over it -
+    # see magcore/sensor_pair.py. The other choices are for a survey where
+    # the pair diagnostic in the processing summary says otherwise.
+    sensor_channel: Literal["1", "2", "mean"] = "1"
     filter_method: FilterMethod = "butterworth"
     filter_cutoff_hz: float = Field(1.0, gt=0)  # used when filter_method="butterworth"
     filter_window_seconds: float = Field(1.0, gt=0)  # used when filter_method="savgol" or "moving_average"

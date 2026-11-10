@@ -6,11 +6,11 @@ import numpy as np
 import pandas as pd
 from fastapi.testclient import TestClient
 
-from app.io_.loaders import load_survey_files
+from magcore.survey_files import load_survey_files
 from app.main import app
 from app.processing.gridding import auto_max_distance, estimate_line_spacing, grid_survey
 from app.processing.preprocess import PreprocessParams, preprocess
-from app.processing.sensor_pair import sensor_pair_report
+from magcore.sensor_pair import sensor_pair_report
 from conftest import FIXTURES, R3_FIXTURE
 from magcore.lines import project_to_local_xy
 

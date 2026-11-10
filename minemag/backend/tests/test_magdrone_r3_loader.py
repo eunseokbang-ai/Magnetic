@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.io_.magdrone_r3 import (
+from magcore.magdrone_r3 import (
     MagDroneLoadError,
     load_magdrone_r3,
     load_magdrone_r3_files,

@@ -18,8 +18,8 @@ from magcore.render import grid_to_geotiff_bytes, grid_to_png_overlay, grid_to_s
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 
-from .io_.loaders import load_survey_files
-from .io_.magdrone_r3 import MagDroneLoadError, summarize
+from magcore.survey_files import load_survey_files
+from magcore.magdrone_r3 import MagDroneLoadError, summarize
 from matplotlib.path import Path as MplPath
 
 from .models import AreaRequest, GridRequest, PreprocessRequest, QcRequest, RepeatRequest, SampleRequest, TargetRequest
@@ -38,7 +38,7 @@ class ProjectError(ValueError):
 @dataclass
 class Project:
     id: str
-    raw: pd.DataFrame | None = None       # long format, one row per probe per sample (see io_/magdrone_r3.py)
+    raw: pd.DataFrame | None = None       # long format, one row per probe per sample (see magcore/magdrone_r3.py)
     proc: pd.DataFrame | None = None      # after preprocess(): resampled, despiked, filtered, line-tagged
     preprocess_report: dict | None = None
     utm_epsg: int | None = None

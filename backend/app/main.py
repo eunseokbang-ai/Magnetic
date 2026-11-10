@@ -272,7 +272,11 @@ def create_project():
 @app.post("/api/projects/{project_id}/upload/drone")
 async def upload_drone(project_id: str, files: list[UploadFile] = File(...)):
     project = store.get(project_id)
-    buffers = [io.BytesIO(await f.read()) for f in files]
+    buffers = []
+    for f in files:
+        buf = io.BytesIO(await f.read())
+        buf.name = f.filename or ""        # one format keeps its date in the file name (see drone_loader)
+        buffers.append(buf)
     summary = project.load_drone(buffers)
     return summary
 
