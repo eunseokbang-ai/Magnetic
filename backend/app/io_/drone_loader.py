@@ -575,6 +575,9 @@ def load_drone_csvs(buffers: list) -> pd.DataFrame:
         1 for p in parts if p.attrs.get("mag_source_column") == "MagComp"
     )
     combined.attrs["n_files_total"] = len(parts)
+    # File names in upload order (source_file_index), for anything that has
+    # to show the user which file is which - block levelling does.
+    combined.attrs["source_files"] = [re.split(r"[\\/]", str(getattr(b, "name", "") or ""))[-1] for b in buffers]
     # A second sensor (see _parse_microinfinity), and files whose date had
     # to be made up because their name did not carry one.
     labels = next((p.attrs["sensor_labels"] for p in parts if p.attrs.get("sensor_labels")), None)

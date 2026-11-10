@@ -98,6 +98,7 @@ from .project_common import (
     _stats,
     boundary_rings,
 )
+from .project_block_leveling import BlockLevelingMixin
 from .project_observatory import ObservatoryMixin
 from magcore.sensor_pair import sensor_pair_report
 from .project_grids import GridMixin
@@ -149,7 +150,7 @@ def _sensor_pair_summary(df: pd.DataFrame, labels: list | None, used: str) -> di
 
 
 @dataclass
-class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
+class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
     id: str
     drone_raw: pd.DataFrame | None = None
     base_raw: pd.DataFrame | None = None
@@ -268,6 +269,9 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
     # One level offset per flight, solved on the ground the survey flew
     # twice - see processing/repeat_passes.py and _flight_levelled_base.
     repeat_pass_offsets: dict = field(default_factory=dict)
+    # Shifts that bring one block of files onto another's level: [{files, model, constant_nt, ...}]
+    # - see project_block_leveling.py. Applied with the repeat-pass offsets, first in the edit chain.
+    block_shifts: list = field(default_factory=list)
     # The equivalent layers that restate every reading at one altitude -
     # see processing/height_normalization.py and _height_normalized_base.
     # The per-point correction they imply for processed_base is cached
@@ -823,6 +827,7 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
         self.manual_smooth_point_ids = set()
         self.source_removals = []
         self.repeat_pass_offsets = {}
+        self.block_shifts = []
         self.height_normalization = None
         self._height_correction_cache = None
         self.grid_cache = {}
@@ -1057,6 +1062,7 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
                 "applied": bool(self.repeat_pass_offsets),
                 "offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
             },
+            "block_leveling": {"applied": bool(self.block_shifts), "shifts": self._block_shift_summaries()},
             "height_normalization": self._height_normalization_summary(),
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "utm_epsg": self.utm_epsg,
@@ -1262,10 +1268,15 @@ class Project(ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, 
         return {**self.process_summary(), "exclusion": self.get_exclusion_state()}
 
     def _flight_levelled_base(self) -> pd.DataFrame:
-        """processed_base with the per-flight offsets solved on repeated
-        ground subtracted (see analyze_repeat_passes). First in the chain,
-        because it is a levelling correction: a structure model fitted on
-        unlevelled data would absorb part of the level difference."""
+        """processed_base with the levelling corrections subtracted: the
+        per-flight offsets solved on repeated ground (see
+        analyze_repeat_passes), then the block shifts (see
+        project_block_leveling.py). First in the chain, because a
+        structure model fitted on unlevelled data would absorb part of
+        the level difference."""
+        return self._block_shifted(self._repeat_levelled_base())
+
+    def _repeat_levelled_base(self) -> pd.DataFrame:
         base = self.processed_base
         if not self.repeat_pass_offsets or base is None:
             return base

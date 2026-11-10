@@ -634,6 +634,20 @@ export function analyzeRepeatPasses(projectId, req) {
   return request(`/projects/${projectId}/repeat-passes`, { method: "POST", body: JSON.stringify(req || {}) });
 }
 
+// Block levelling: the uploaded files as blocks, the difference between two
+// blocks over their shared ground, and applying / removing it.
+export function getBlockFiles(projectId) {
+  return request(`/projects/${projectId}/block-leveling/files`);
+}
+
+export function estimateBlockShift(projectId, req) {
+  return request(`/projects/${projectId}/block-leveling/estimate`, { method: "POST", body: JSON.stringify(req) });
+}
+
+export function applyBlockShift(projectId, req) {
+  return request(`/projects/${projectId}/block-leveling/apply`, { method: "POST", body: JSON.stringify(req) });
+}
+
 export function applyRepeatPassLeveling(projectId, req) {
   return request(`/projects/${projectId}/repeat-passes/apply`, { method: "POST", body: JSON.stringify(req || {}) });
 }

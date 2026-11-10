@@ -261,6 +261,7 @@ class PersistenceMixin:
             "source_removals": [r.to_dict() for r in self.source_removals],
             "candidate_notes": self.candidate_notes,
             "repeat_pass_offsets": {str(k): float(v) for k, v in self.repeat_pass_offsets.items()},
+            "block_shifts": self.block_shifts,
             "height_normalization": (
                 self.height_normalization.to_dict() if self.height_normalization is not None else None
             ),
@@ -352,6 +353,7 @@ class PersistenceMixin:
                     self.repeat_pass_offsets = {
                         int(k): float(v) for k, v in (meta.get("repeat_pass_offsets") or {}).items()
                     }
+                    self.block_shifts = [dict(s) for s in (meta.get("block_shifts") or [])]
                     # Likewise the fitted layers, not a refit.
                     saved_hn = meta.get("height_normalization")
                     self.height_normalization = HeightNormalization.from_dict(saved_hn) if saved_hn else None
@@ -363,7 +365,7 @@ class PersistenceMixin:
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
-                    elif self.source_removals or self.height_normalization is not None:
+                    elif self.source_removals or self.height_normalization is not None or self.block_shifts or self.repeat_pass_offsets:
                         self._rebuild_processed()
                     # Restore the saved boundary state exactly, including
                     # "none". The run_pipeline replay above regenerates an

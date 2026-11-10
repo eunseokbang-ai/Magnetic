@@ -45,6 +45,8 @@ from .models import (
     GeologyStatsRequest,
     HeightNormalizationApplyRequest,
     RepeatPassApplyRequest,
+    BlockShiftApplyRequest,
+    BlockShiftRequest,
     RepeatPassRequest,
     SourceRemovalRequest,
     ManualSmoothRequest,
@@ -610,6 +612,21 @@ def source_removal(project_id: str, req: SourceRemovalRequest):
 @app.post("/api/projects/{project_id}/repeat-passes")
 def analyze_repeat_passes(project_id: str, req: RepeatPassRequest):
     return store.get(project_id).analyze_repeat_passes(req)
+
+
+@app.get("/api/projects/{project_id}/block-leveling/files")
+def block_leveling_files(project_id: str):
+    return store.get(project_id).block_files()
+
+
+@app.post("/api/projects/{project_id}/block-leveling/estimate")
+def block_leveling_estimate(project_id: str, req: BlockShiftRequest):
+    return store.get(project_id).estimate_block_shift(req)
+
+
+@app.post("/api/projects/{project_id}/block-leveling/apply")
+def block_leveling_apply(project_id: str, req: BlockShiftApplyRequest):
+    return store.get(project_id).apply_block_shift(req)
 
 
 @app.post("/api/projects/{project_id}/repeat-passes/apply")

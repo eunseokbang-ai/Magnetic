@@ -994,6 +994,27 @@ class RepeatPassApplyRequest(BaseModel):
     across_tolerance_m: Optional[float] = Field(None, gt=0)
 
 
+class BlockShiftRequest(BaseModel):
+    """Measure what one block of files reads above another over their
+    shared ground - see magcore/block_leveling.py. Files are named by
+    their upload order (source_file_index)."""
+    reference_files: list[int] = Field(default_factory=list, max_length=2000)
+    target_files: list[int] = Field(default_factory=list, max_length=2000)
+    # "auto" = a plane only when its gradient is significant, else a constant
+    model: Literal["auto", "constant", "plane"] = "auto"
+    # Mesh the two blocks are compared on. None = the survey's line spacing.
+    cell_size_m: Optional[float] = Field(None, gt=0)
+
+
+class BlockShiftApplyRequest(BlockShiftRequest):
+    """Level the target block (mode "apply": from the overlap; "manual":
+    by a known constant, e.g. a sensor offset from a ground comparison),
+    or remove its shift ("reset"; no target files = remove all)."""
+    mode: Literal["apply", "manual", "reset"] = "apply"
+    # target minus reference, nT: what is subtracted from the target block
+    manual_constant_nt: Optional[float] = None
+
+
 class HeightNormalizationApplyRequest(BaseModel):
     """Restate every reading at one altitude with equivalent layers fitted
     at the readings' true 3D positions, or undo that - see

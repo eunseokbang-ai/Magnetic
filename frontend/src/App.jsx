@@ -6,6 +6,7 @@ import Legend from "./components/Legend";
 import WorkflowSteps from "./components/WorkflowSteps";
 import AutosaveBanner from "./components/AutosaveBanner";
 import RepeatPassPanel from "./components/RepeatPassPanel";
+import BlockLevelingPanel from "./components/BlockLevelingPanel";
 import HeightNormalizationPanel from "./components/HeightNormalizationPanel";
 import LineEditor from "./components/LineEditor";
 import FlightPathEditor from "./components/FlightPathEditor";
@@ -2749,6 +2750,16 @@ export default function App() {
           canExportBln={!!lastDrawnPolygon}
           showRampPoints={showRampPoints}
           onToggleShowRampPoints={setShowRampPoints}
+        />
+
+        <BlockLevelingPanel
+          projectId={projectId}
+          processSummary={processSummary}
+          onApplied={async (summary) => {
+            setProcessSummary(summary);
+            await refreshPoints(projectId, valueField);
+          }}
+          onError={handleError}
         />
 
         <RepeatPassPanel
