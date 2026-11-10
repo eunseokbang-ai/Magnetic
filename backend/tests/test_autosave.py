@@ -168,11 +168,13 @@ def test_a_bundle_written_as_csv_by_an_earlier_version_still_loads(saved):
 
 
 def test_the_new_bundle_is_written_fast_enough_to_autosave(saved):
-    """The reason for the format change, kept as a test: the frame goes
-    in as a pickle, not CSV."""
+    """The reason for leaving CSV, kept as a test: the frame goes in as
+    binary column arrays - and, since 2026-11, not as a pickle either
+    (see tests/test_bundle_frames.py)."""
     import zipfile
     import io
 
     _client, _pid, project, _manager = saved
     names = zipfile.ZipFile(io.BytesIO(project.save_project_bundle())).namelist()
-    assert "drone_raw.pkl" in names and "drone_raw.csv" not in names
+    assert "drone_raw.npz" in names and "drone_raw.csv" not in names
+    assert not [n for n in names if n.endswith(".pkl")]

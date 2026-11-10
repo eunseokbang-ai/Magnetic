@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import io
 import json
-import pickle
 import threading
 import time
 import uuid
@@ -19,6 +18,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 from .io_.base_loader import load_base_csvs
 from .io_.drone_loader import load_drone_csvs
+from .bundle_frames import BundleFrameError, frame_from_bytes, frame_from_legacy_pickle, frame_to_bytes
 from .models import (
     AnalyticSignalDepthRequest,
     AnomalyCandidateRequest,
@@ -3970,7 +3970,7 @@ class Project:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 names = set(zf.namelist())
-                if "meta.json" not in names or not ({"drone_raw.pkl", "drone_raw.csv"} & names):
+                if "meta.json" not in names or not ({"drone_raw.npz", "drone_raw.pkl", "drone_raw.csv"} & names):
                     raise ProjectError("올바른 프로젝트 저장 파일이 아닙니다.")
 
                 self.drone_raw = _read_frame(zf, names, "drone_raw")
@@ -4049,6 +4049,8 @@ class Project:
                     inversion_summary = self.import_inversion_npz(zf.read("inversion.npz"))
         except zipfile.BadZipFile as exc:
             raise ProjectError(f"프로젝트 파일을 열 수 없습니다 (손상되었거나 zip 형식이 아닙니다): {exc}") from exc
+        except BundleFrameError as exc:
+            raise ProjectError(str(exc)) from exc
         except KeyError as exc:
             raise ProjectError(f"프로젝트 파일 내용이 올바르지 않습니다: {exc}") from exc
 
@@ -4812,19 +4814,22 @@ def _statistical_leveling_summary(result: "StatisticalLevelingResult | None") ->
 
 
 def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversion_npz) -> bytes:
-    """The project as one zip. The readings go in as pickled frames, not
-    CSV: measured on the 74-file HaeNam block (965k rows), CSV took 6.9 s
-    to write and the bundle 13.9 s, and the autosave ran that every two
-    minutes with the GIL held, so the screen stalled with it. A pickle of
-    the same frame writes in 0.1 s. Bundles written as CSV by earlier
-    versions are still read (_read_frame)."""
+    """The project as one zip. The readings go in as binary column arrays
+    (bundle_frames.py: an npz read with allow_pickle=False), not CSV:
+    measured on the 74-file HaeNam block (965k rows), CSV took 6.9 s to
+    write and the bundle 13.9 s, and the autosave ran that every two
+    minutes with the GIL held, so the screen stalled with it. They are not
+    pickled frames either (the format from 2026-09 to 2026-11): a pickle
+    runs the code it names when opened, which a file people pass around
+    must not. Bundles written as CSV or as pickle by earlier versions are
+    still read (_read_frame) - the pickles through an allowlist."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
-        zf.writestr("drone_raw.pkl", pickle.dumps(drone_raw, protocol=pickle.HIGHEST_PROTOCOL))
+        zf.writestr("drone_raw.npz", frame_to_bytes(drone_raw))
         if base_raw is not None:
-            zf.writestr("base_raw.pkl", pickle.dumps(base_raw, protocol=pickle.HIGHEST_PROTOCOL))
+            zf.writestr("base_raw.npz", frame_to_bytes(base_raw))
         if calibration_raw is not None:
-            zf.writestr("calibration_raw.pkl", pickle.dumps(calibration_raw, protocol=pickle.HIGHEST_PROTOCOL))
+            zf.writestr("calibration_raw.npz", frame_to_bytes(calibration_raw))
         zf.writestr("meta.json", json.dumps(meta))
         if dem_bytes is not None:
             zf.writestr("dem.tif", dem_bytes)
@@ -4834,10 +4839,13 @@ def _write_bundle(drone_raw, base_raw, calibration_raw, meta, dem_bytes, inversi
 
 
 def _read_frame(zf: zipfile.ZipFile, names: set, stem: str) -> pd.DataFrame | None:
-    """A frame from a bundle, whichever way it was written: pickled by this
-    version, or CSV by the versions before it."""
+    """A frame from a bundle, whichever way it was written: column arrays
+    by this version, a pickle (read through LegacyFrameUnpickler's
+    allowlist, never unpickled freely) or CSV by the versions before it."""
+    if f"{stem}.npz" in names:
+        return frame_from_bytes(zf.read(f"{stem}.npz"))
     if f"{stem}.pkl" in names:
-        return pickle.loads(zf.read(f"{stem}.pkl"))
+        return frame_from_legacy_pickle(zf.read(f"{stem}.pkl"))
     if f"{stem}.csv" in names:
         frame = pd.read_csv(io.BytesIO(zf.read(f"{stem}.csv")))
         frame["timestamp"] = pd.to_datetime(frame["timestamp"])
