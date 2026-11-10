@@ -322,6 +322,10 @@ def generate_report_markdown(
         lines.append("")
         lines.append(f"- 구조지수: {euler_summary.get('structural_index')}")
         lines.append(f"- 해의 개수: {euler_summary.get('n_solutions')}")
+        if euler_summary.get("n_low_confidence"):
+            lines.append(f"- 그중 보간에 기댄 해(신뢰도 {euler_summary.get('low_confidence_threshold')} 미만): {euler_summary['n_low_confidence']}개")
+        if euler_summary.get("altitude_warning"):
+            lines.append(f"- ⚠ {euler_summary['altitude_warning']}")
         ds = euler_summary.get("depth_stats")
         if ds:
             lines.append(f"- 추정 심도 범위: {_fmt(ds.get('min'))} ~ {_fmt(ds.get('max'))} m (평균 {_fmt(ds.get('mean'))} m)")

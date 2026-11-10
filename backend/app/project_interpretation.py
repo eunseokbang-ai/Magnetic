@@ -180,6 +180,8 @@ class InterpretationMixin:
         confidence = self._euler_confidence(grid, solutions, req)
         summary = {
             "n_solutions": len(solutions),
+            # the method assumes a level observation plane - said when the survey is not on one
+            "altitude_warning": self._altitude_warning(),
             # how many solutions sit where the derivatives they were solved from rest on interpolation
             "n_low_confidence": int(sum(1 for c in confidence if c is not None and c < LOW_CONFIDENCE)),
             "low_confidence_threshold": LOW_CONFIDENCE,

@@ -89,6 +89,9 @@ export default function EulerPanel({
           {running ? "계산 중..." : "오일러 디컨볼루션 실행"}
         </button>
         {error && <div style={{ color: "#dc2626" }}>{error}</div>}
+        {result?.altitude_warning && (
+          <div style={{ padding: "6px 8px", color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>⚠ {result.altitude_warning}</div>
+        )}
         {result && (
           <div style={{ color: "#4a3d28" }}>
             해 {result.n_solutions}개

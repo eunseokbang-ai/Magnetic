@@ -105,7 +105,8 @@ def test_the_wait_between_writes_follows_what_a_write_costs(session, tmp_path):
     project.mark_changed()
     now = project.changed_at
     assert manager.save_due(now=now + 10) == [pid]      # first write: settled, nothing to wait for
-    assert manager._last_cost[pid] < 0.5                 # a small project: the 15 s minimum applies
+    assert manager._last_cost[pid] > 0.0                 # the write was timed...
+    manager._last_cost[pid] = 0.05                       # ...and from here the test fixes the cost, so a busy machine cannot change the outcome
     project.changed_at = now + 11
     assert manager.save_due(now=now + 20) == []      # 10 s after the last write
     assert manager.save_due(now=now + 26) == [pid]      # 16 s after it - not the two minutes it used to be

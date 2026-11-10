@@ -72,6 +72,12 @@ from .project_common import (
 # confidence layers' "low" share and the Euler solutions' flag are drawn at.
 LOW_CONFIDENCE = 0.5
 
+# Products computed as if the readings lay on one horizontal plane - see
+# GridMixin._altitude_warning for why that matters and when it is said.
+_LEVEL_PLANE_TRANSFORMS = frozenset({"rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta", "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz", "upward_continuation"})
+ALTITUDE_SPREAD_FRACTION = 0.1
+ALTITUDE_SPREAD_FLOOR_M = 3.0
+
 
 class GridMixin:
     def set_display_boundary(self, req: DisplayBoundaryRequest) -> dict:
@@ -349,6 +355,50 @@ class GridMixin:
         )
         _lru_put(self.grid_cache, key, result, _GRID_CACHE_MAX_ENTRIES)
         return result
+
+    def _altitude_warning(self, transform: str | None = None) -> str | None:
+        """Said when a product that assumes the readings lie on one level
+        plane is made from readings that do not, and the height
+        normalisation that would put them on one has not been applied.
+
+        The FFT transforms (RTP, derivatives, continuation and what is
+        built from them) and Euler deconvolution all take the grid to be
+        the field on a horizontal plane. A drone following the terrain is
+        not on one: over relief its altitude changes by tens of metres
+        along a line, and since an anomaly's amplitude and width depend on
+        the distance to its source, those changes are written into the
+        grid as if they were the field's. The products then sharpen them.
+        (The 3D inversion is not on this list: it places every
+        observation at its own altitude.)
+
+        The test is the 5th-95th percentile spread of the sensor altitude
+        against a tenth of the distance that sets the anomalies' scale -
+        the flying height above the DEM when one is loaded, the line
+        spacing otherwise - with a 3 m floor so GPS scatter on a level
+        flight never trips it. Measured spreads: Andong 2026-10-28 171 m
+        (line spacing 99 m), the sample survey 37 m (80 m)."""
+        if transform is not None and transform not in _LEVEL_PLANE_TRANSFORMS:
+            return None
+        if self.processed is None or self.height_normalization is not None:
+            return None
+        df = self.processed
+        if "altitude_ellipsoidal_m" not in df.columns:
+            return None
+        active = self._active_mask()
+        z = df.loc[active, "altitude_ellipsoidal_m"].to_numpy(dtype=float)
+        z = z[np.isfinite(z)]
+        if len(z) < 50:
+            return None
+        spread = float(np.percentile(z, 95) - np.percentile(z, 5))
+        agl = self._agl_stats(df.loc[active]) if self.dem_bytes is not None else None
+        reference = float(agl["median_m"]) if agl and agl.get("median_m") else float(self.line_spacing_m or 0.0)
+        if spread <= max(ALTITUDE_SPREAD_FLOOR_M, ALTITUDE_SPREAD_FRACTION * reference):
+            return None
+        return (
+            f"측점 고도가 {spread:.0f} m 범위로 달라지는데(5~95 백분위) 비행 고도 정규화를 적용하지 않았습니다. "
+            "이 산출물은 측점이 한 수평면 위에 있다고 가정하므로, 지형을 따라 난 비행에서는 고도 변화가 이상의 모양에 섞여 들어갑니다. "
+            "5-1 비행 고도 정규화를 먼저 적용하는 것을 권장합니다."
+        )
 
     def _rtp_latitude_warning(self, transform: str) -> str | None:
         """RTP's operator diverges toward the magnetic equator (see
@@ -865,6 +915,7 @@ class GridMixin:
         overlay["striping"] = self._striping_diagnostic(values, grid.cell_size_m)
         overlay["striping_base_grid"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
         overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
+        overlay["altitude_warning"] = self._altitude_warning(req.transform)
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
         overlay["boundary_continuation"] = self._continuation_report(req, grid)
