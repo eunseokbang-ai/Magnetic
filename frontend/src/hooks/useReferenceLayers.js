@@ -36,6 +36,12 @@ export default function useReferenceLayers({ projectId, ensureProject }) {
     setOverlayError(message);
   };
 
+  // A layer made by the program itself (a flight plan preview): shown like
+  // an uploaded vector file, replacing an earlier one of the same kind so
+  // re-planning does not pile lines on the map. `kind` is its "format".
+  const showGeneratedLayer = (layer) =>
+    setOverlayLayers((prev) => [...prev.filter((l) => !(l.generated && l.generated === layer.format)), { ...uploadedLayer(layer), generated: layer.format }]);
+
   const handleUploadOverlayImage = async (file) => {
     try {
       setOverlayError(null);
@@ -105,6 +111,7 @@ export default function useReferenceLayers({ projectId, ensureProject }) {
     tileFolderRegistering,
     tileFolderError,
     restoreReferenceLayers,
+    showGeneratedLayer,
     handleUploadOverlayImage,
     handleToggleOverlayVisible,
     handleSetOverlayOpacity,

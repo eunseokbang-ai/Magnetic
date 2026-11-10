@@ -75,7 +75,7 @@ export function layersFromDescriptors(descriptors) {
 // order, opacity, visibility and, for path-based layers, the path. The
 // content itself was sent when each layer was added.
 export function layerSyncState(layers) {
-  return layers.map((l) => ({ type: l.type || "image", name: l.name, opacity: l.opacity, visible: l.visible, path: l.path || null, scheme: l.scheme || null }));
+  return layers.filter((l) => !l.generated).map((l) => ({ type: l.type || "image", name: l.name, opacity: l.opacity, visible: l.visible, path: l.path || null, scheme: l.scheme || null }));
 }
 
 // "up" moves a row toward the end of the list: the list is drawn bottom

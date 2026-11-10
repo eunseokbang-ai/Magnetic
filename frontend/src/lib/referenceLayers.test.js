@@ -87,3 +87,10 @@ describe("reordering", () => {
     expect(layers.map((l) => l.id)).toEqual(["a", "b", "c"]);
   });
 });
+
+describe("layers the program makes itself (a flight plan preview)", () => {
+  it("are not mirrored to the project", () => {
+    const layers = [{ id: "1", name: "drill", type: "vector", opacity: 1, visible: true }, { id: "2", name: "비행 계획 (50 m)", type: "vector", generated: "plan", opacity: 1, visible: true }];
+    expect(layerSyncState(layers).map((l) => l.name)).toEqual(["drill"]);
+  });
+});

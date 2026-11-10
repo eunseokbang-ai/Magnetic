@@ -994,6 +994,36 @@ class RepeatPassApplyRequest(BaseModel):
     across_tolerance_m: Optional[float] = Field(None, gt=0)
 
 
+class SurveyDesignRequest(BaseModel):
+    """Line spacing and detectability for a planned survey - see
+    magcore/survey_design.py. Not tied to a project: this is used before
+    there is any data."""
+    target_depth_m: float = Field(..., ge=0)             # shallowest source of interest, below ground
+    flight_height_m: float = Field(..., gt=0)            # sensor above ground
+    product: Literal["field", "first_derivative", "second_derivative"] = "first_derivative"
+    alias_tolerance: float = Field(0.05, gt=0, lt=1)
+    speed_mps: float = Field(5.0, gt=0)
+    sample_rate_hz: float = Field(10.0, gt=0)
+    noise_nt: float = Field(0.5, gt=0)
+    target_radius_m: Optional[float] = Field(None, gt=0)
+    susceptibility_si: Optional[float] = Field(None, gt=0)
+    field_nt: float = Field(50000.0, gt=0)
+    min_snr: float = Field(3.0, gt=0)
+
+
+class FlightPlanRequest(BaseModel):
+    """Survey lines, tie lines and a repeated line over a polygon."""
+    polygon: list[list[float]] = Field(..., min_length=3, max_length=2000)     # [[lat, lon], ...]
+    line_spacing_m: float = Field(..., gt=0)
+    azimuth_deg: Optional[float] = None                  # clockwise from north; None = along the longer side
+    tie_spacing_m: Optional[float] = Field(None, gt=0)   # None = 10 x the line spacing (at least three tie lines)
+    lead_in_m: float = Field(30.0, ge=0)
+    speed_mps: float = Field(5.0, gt=0)
+    endurance_min: float = Field(25.0, gt=0)
+    turn_time_s: float = Field(20.0, ge=0)
+    repeat_line: bool = True
+
+
 class BlockShiftRequest(BaseModel):
     """Measure what one block of files reads above another over their
     shared ground - see magcore/block_leveling.py. Files are named by

@@ -7,6 +7,7 @@ import WorkflowSteps from "./components/WorkflowSteps";
 import AutosaveBanner from "./components/AutosaveBanner";
 import RepeatPassPanel from "./components/RepeatPassPanel";
 import BlockLevelingPanel from "./components/BlockLevelingPanel";
+import SurveyDesignPanel from "./components/SurveyDesignPanel";
 import HeightNormalizationPanel from "./components/HeightNormalizationPanel";
 import LineEditor from "./components/LineEditor";
 import FlightPathEditor from "./components/FlightPathEditor";
@@ -594,7 +595,7 @@ export default function App() {
   // Self-contained parts of the screen keep their state and handlers in
   // hooks (src/hooks/), with their list logic in src/lib/.
   const {
-    overlayLayers, overlayUploading, overlayError, tileFolderRegistering, tileFolderError, restoreReferenceLayers,
+    overlayLayers, overlayUploading, overlayError, tileFolderRegistering, tileFolderError, restoreReferenceLayers, showGeneratedLayer,
     handleUploadOverlayImage, handleToggleOverlayVisible, handleSetOverlayOpacity, handleRemoveOverlay, handleMoveOverlay,
     handleRegisterLocalTileFolder, handleRegisterLocalRaster, handlePickRasterFile, handlePickTileFolder,
   } = useReferenceLayers({ projectId, ensureProject });
@@ -3021,6 +3022,13 @@ export default function App() {
             api.exportGeologyStatsCsv(projectId, `${saveFilename || "project"}_geology_units.csv`).catch(handleError)
           }
         />
+
+        <details style={{ marginBottom: 10 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#4a3d28" }}>
+            0. 탐사 설계 도우미 (권장 측선 간격 · 표적 탐지 가능성 · 비행 계획 KML)
+          </summary>
+          <SurveyDesignPanel mapBounds={mapBounds} boundaryPolygon={boundaryPolygon} onPreview={showGeneratedLayer} />
+        </details>
 
         <details style={{ marginBottom: 10 }} onToggle={(e) => e.target.open && setGuidelinePanelOpened(true)}>
           <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "#4a3d28" }}>

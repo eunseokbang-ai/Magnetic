@@ -47,6 +47,8 @@ from .models import (
     RepeatPassApplyRequest,
     BlockShiftApplyRequest,
     BlockShiftRequest,
+    FlightPlanRequest,
+    SurveyDesignRequest,
     RepeatPassRequest,
     SourceRemovalRequest,
     ManualSmoothRequest,
@@ -65,7 +67,7 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from magcore import local_raster, local_tiles, progress, tile_cache
+from magcore import local_raster, local_tiles, progress, survey_design, tile_cache
 from magcore.local_raster import LocalRasterError
 from magcore.colormaps import register_custom_colormaps
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
@@ -207,6 +209,11 @@ async def vector_layer_error_handler(request, exc: VectorLayerError):
 async def overlay_image_error_handler(request, exc: OverlayImageError):
     from fastapi.responses import JSONResponse
 
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(survey_design.SurveyDesignError)
+async def survey_design_error_handler(request, exc: survey_design.SurveyDesignError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
@@ -982,6 +989,32 @@ def chat_stream(project_id: str, req: ChatRequest):
 # blocking requests; these two let another request watch one and stop it.
 # See magcore/progress.py. Not project-scoped: restoring an autosave runs
 # before the screen knows the restored project's id.
+# Survey design (magcore/survey_design.py): used before there is any data,
+# so not project-scoped.
+@app.post("/api/survey-design/recommend")
+def survey_design_recommend(req: SurveyDesignRequest):
+    return survey_design.recommend(**req.model_dump())
+
+
+def _flight_plan(req: FlightPlanRequest) -> dict:
+    args = req.model_dump()
+    return survey_design.plan_flight(args.pop("polygon"), **args)
+
+
+@app.post("/api/survey-design/plan")
+def survey_design_plan(req: FlightPlanRequest):
+    return _flight_plan(req)
+
+
+@app.post("/api/survey-design/plan/kml")
+def survey_design_plan_kml(req: FlightPlanRequest):
+    return Response(
+        content=survey_design.plan_to_kml(_flight_plan(req)),
+        media_type="application/vnd.google-earth.kml+xml",
+        headers={"Content-Disposition": "attachment; filename=flight_plan.kml"},
+    )
+
+
 @app.get("/api/jobs")
 def list_jobs():
     return {"jobs": progress.active_jobs()}

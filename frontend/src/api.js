@@ -634,6 +634,21 @@ export function analyzeRepeatPasses(projectId, req) {
   return request(`/projects/${projectId}/repeat-passes`, { method: "POST", body: JSON.stringify(req || {}) });
 }
 
+// Survey design (before there is any data, so not project-scoped): line
+// spacing and detectability for a target, and a flight plan over an area.
+export function recommendSurveyDesign(req) {
+  return request("/survey-design/recommend", { method: "POST", body: JSON.stringify(req), untracked: true });
+}
+
+export function planFlight(req) {
+  return request("/survey-design/plan", { method: "POST", body: JSON.stringify(req), untracked: true });
+}
+
+export async function downloadFlightPlanKml(req, filename) {
+  const blob = await requestBlob("/survey-design/plan/kml", { method: "POST", body: JSON.stringify(req) });
+  downloadBlob(blob, filename);
+}
+
 // Block levelling: the uploaded files as blocks, the difference between two
 // blocks over their shared ground, and applying / removing it.
 export function getBlockFiles(projectId) {
