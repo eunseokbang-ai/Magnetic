@@ -1,6 +1,9 @@
 """In-memory per-project state and pipeline orchestration."""
 from __future__ import annotations
 
+import functools
+from contextlib import contextmanager
+
 import io
 import json
 import threading
@@ -53,7 +56,7 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from magcore import local_raster, local_tiles
+from magcore import local_raster, local_tiles, progress
 from magcore.base_qc import process_base_station
 from magcore.base_segments import level_base_segments
 from magcore.manual_smooth import apply_manual_smoothing
@@ -335,6 +338,46 @@ def _lru_put(cache: dict, key, value, max_entries: int) -> None:
         cache.pop(next(iter(cache)))
 
 
+# Where each pipeline stage starts on the progress bar: the share of the
+# run's wall time that had passed when it began. Measured on the Andong
+# 2026-10-28 survey (266,672 samples, 41 lines, 1.58 s in all; two runs
+# agreed to 0.01): 0.00, 0.15, 0.30, 0.33, 0.49, 0.71, 0.77, 0.86. A
+# different survey shifts them a little, which only makes the bar move
+# at a slightly uneven speed.
+_PIPELINE_PROGRESS = {"P0": 0.01, "P1": 0.15, "P2": 0.30, "P3": 0.33, "P4": 0.49, "P5": 0.71, "P6": 0.77, "P7": 0.86}
+
+
+def _as_job(name: str, rollback: bool = False):
+    """Run a Project method as a visible, cancellable job (magcore.progress).
+
+    rollback=True is for methods that change the project as they go: if
+    the user cancels halfway, every attribute is put back to what it was
+    when the method started, so a cancelled run leaves the previous
+    result on screen rather than half of a new one. It is a shallow
+    restore - these methods replace their results (new frames, new
+    dicts) instead of editing the old ones in place, which is what makes
+    that sufficient. Such a method must already hold the edit lock when
+    it is entered (decorate the *_unlocked variant), or an edit made
+    between the snapshot and the lock would be undone with it."""
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(self, *args, **kwargs):
+            snapshot = dict(self.__dict__) if rollback else None
+            try:
+                with progress.job(name, self.id):
+                    return fn(self, *args, **kwargs)
+            except progress.JobCancelled:
+                if snapshot is not None:
+                    self.__dict__.clear()
+                    self.__dict__.update(snapshot)
+                raise
+
+        return wrapper
+
+    return decorate
+
+
 @dataclass
 class Project:
     id: str
@@ -478,6 +521,7 @@ class Project:
         with self._edit_lock:
             return self._load_drone_unlocked(buffers)
 
+    @_as_job("드론 자료 읽기", rollback=True)
     def _load_drone_unlocked(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
         self.mark_changed()
@@ -853,6 +897,7 @@ class Project:
         with self._edit_lock:
             return self._run_pipeline_unlocked(params)
 
+    @_as_job("자료 처리", rollback=True)
     def _run_pipeline_unlocked(self, params: ProcessParams) -> dict:
         if self.drone_raw is None:
             raise ProjectError("드론 자료를 먼저 업로드하세요.")
@@ -862,6 +907,7 @@ class Project:
                 "일변화 보정 방식을 '베이스 자료 없음(지구자기장 일정 가정)'으로 설정하세요."
             )
 
+        progress.report("전처리 (스파이크 제거·필터)", _PIPELINE_PROGRESS["P0"])
         df = self.drone_raw.copy()
 
         n_before_lag = len(df)
@@ -920,6 +966,7 @@ class Project:
         overlap_resolution = params.line_params.overlap_resolution
         overlap_overrides = params.line_params.overlap_overrides or {}
         line_params = _detection_params(params.line_params)
+        progress.report("측선 판별", _PIPELINE_PROGRESS["P1"])
         df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
@@ -949,6 +996,7 @@ class Project:
             self.noise_qc_info = compute_difference_qc(df, "mag_filtered")
         else:
             self.noise_qc_info = {"available": False}
+        progress.report("잡음·표본 간격 진단", _PIPELINE_PROGRESS["P2"])
         self.sampling_qc_info = compute_sampling_distance_qc(df)
 
         sp = params.sway_detection
@@ -970,6 +1018,7 @@ class Project:
         else:
             self.sway_info = {"enabled": False, "available": False, "n_points_excluded": 0}
 
+        progress.report("일변화·기준장 보정", _PIPELINE_PROGRESS["P3"])
         self.line_spacing_m = estimate_line_spacing_m(df, self.dominant_azimuth_deg)
 
         if params.diurnal_params.mode == "assume_constant":
@@ -1109,6 +1158,7 @@ class Project:
         # striping - they should not have to turn a correction on and
         # compare two maps by eye to get the number. Cheap enough to do
         # unconditionally: ~0.4s on a 120k-point, 40-line survey.
+        progress.report("헤딩 차이 측정", _PIPELINE_PROGRESS["P4"])
         self.heading_leveling = compute_heading_correction(
             df,
             "anomaly",
@@ -1154,6 +1204,7 @@ class Project:
         # the survey as flown - the number to compare between flights,
         # settings, or aircraft. Always computed, including when the
         # correction below declines.
+        progress.report("줄무늬·측선 분해능 진단", _PIPELINE_PROGRESS["P5"])
         self.striping_info = measure_striping(df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m)
 
         # Whether the line spacing resolves this field at all. Measured on
@@ -1187,6 +1238,7 @@ class Project:
         # Last of the three leveling steps, so it only has to explain what
         # the direction-based and tie-line corrections above could not.
         slp = params.statistical_leveling
+        progress.report("통계적 레벨링", _PIPELINE_PROGRESS["P6"])
         if slp.enabled:
             self.statistical_leveling = compute_statistical_leveling(
                 df, "anomaly", self.dominant_azimuth_deg, self.line_spacing_m,
@@ -1207,6 +1259,7 @@ class Project:
         self.processed = df
         self.processed_base = df.copy()
         self.manual_overrides = {}
+        progress.report("경계·품질 요약 정리", _PIPELINE_PROGRESS["P7"])
         self.manual_smooth_point_ids = set()
         self.source_removals = []
         self.repeat_pass_offsets = {}
@@ -2065,6 +2118,7 @@ class Project:
         along_line_smooth: bool = True,
         along_line_smooth_wavelength_m: float | None = None,
     ) -> GridResult:
+        progress.report("격자 보간", None)
         resolved_max_distance = self._resolve_max_distance(cell_size_m, max_distance_m)
         # None (auto) = the estimated cross-line spacing itself: cross-line
         # interpolation cannot resolve anything finer than that anyway, so
@@ -2152,6 +2206,7 @@ class Project:
             )
         return None
 
+    @_as_job("그리드 생성")
     def get_grid_overlay(self, req: GridRequest) -> dict:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
@@ -2529,12 +2584,15 @@ class Project:
         except Exception as exc:  # noqa: BLE001 - diagnostics must not break rendering
             return {"available": False, "reason": f"줄무늬 분석 실패: {exc}"}
 
+    @_as_job("파생 그리드 계산")
     def get_transform_overlay(self, req: TransformRequest) -> dict:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        progress.report("변환 계산", None)
         values, symmetric = self._transform_values(grid, req)
+        progress.report("그림 만들기", None)
         values = self._apply_display_boundary(values, grid)
         # Before the colour stretch, so a masked margin cannot stretch the
         # scale around values the user has just said not to trust.
@@ -2573,6 +2631,7 @@ class Project:
         self.last_overlay = OverlayState(values, grid.easting, grid.northing, req.transform)
         return overlay
 
+    @_as_job("그리드 내보내기")
     def export_grid_geotiff(self, req: GridRequest) -> bytes:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
@@ -2591,6 +2650,7 @@ class Project:
             )
         return grid_to_geotiff_bytes(grid.values, grid.easting, grid.northing, self.utm_epsg)
 
+    @_as_job("파생 그리드 내보내기")
     def export_transform_geotiff(self, req: TransformRequest) -> bytes:
         grid = self._grid_for(
             req.value, req.cell_size_m, req.method, req.max_distance_m,
@@ -2772,6 +2832,7 @@ class Project:
         self.qc_certificate_cache = result
         return result
 
+    @_as_job("오일러 디컨볼루션")
     def run_euler_deconvolution(self, req: EulerDeconvolutionRequest) -> dict:
         # Defaults to along-line smoothing on (see _grid_for) - Euler
         # solutions are as sensitive to corrugation-driven spurious
@@ -3133,6 +3194,7 @@ class Project:
         self.target_summary_cache = summary
         return summary
 
+    @_as_job("지상구조물 왜곡 탐지")
     def scan_structure_distortion(self, req: StructureScanRequest) -> dict:
         """Combine an OpenStreetMap building/road location prior with the
         same compact-anomaly signal detector used for near-surface target
@@ -3522,6 +3584,7 @@ class Project:
         with self._edit_lock:
             return self._apply_height_normalization_unlocked(req)
 
+    @_as_job("비행 고도 정규화", rollback=True)
     def _apply_height_normalization_unlocked(self, req: HeightNormalizationApplyRequest) -> dict:
         """Fit the equivalent layers to the flight-levelled readings at
         their true altitudes and restate every reading at z_ref, or undo
@@ -4063,6 +4126,7 @@ class Project:
         with self._edit_lock:
             return self._load_project_bundle_unlocked(data)
 
+    @_as_job("프로젝트 불러오기", rollback=True)
     def _load_project_bundle_unlocked(self, data: bytes) -> dict:
         """Restore a project saved by save_project_bundle. Returns the
         same shape as process_summary() (plus a couple of extra flags) so
@@ -4073,6 +4137,7 @@ class Project:
                 if "meta.json" not in names or not ({"drone_raw.npz", "drone_raw.pkl", "drone_raw.csv"} & names):
                     raise ProjectError("올바른 프로젝트 저장 파일이 아닙니다.")
 
+                progress.report("측점 자료 읽기", 0.02)
                 self.drone_raw = _read_frame(zf, names, "drone_raw")
                 self.base_raw = _read_frame(zf, names, "base_raw")
                 self.calibration_raw = _read_frame(zf, names, "calibration_raw")
@@ -4115,7 +4180,9 @@ class Project:
                 )
                 if can_replay:
                     params = ProcessParams(**last_params)
-                    self.run_pipeline(params)
+                    with progress.span(0.10, 0.80):
+                        self.run_pipeline(params)
+                    progress.report("편집 내용 복원", 0.82)
                     overrides = meta.get("manual_overrides") or {}
                     if overrides:
                         self.manual_overrides = {int(k): v for k, v in overrides.items()}
@@ -4158,6 +4225,7 @@ class Project:
                     processed = True
 
                 inversion_summary = None
+                progress.report("역산 결과 복원", 0.92)
                 if "inversion.npz" in names and processed:
                     inversion_summary = self.import_inversion_npz(zf.read("inversion.npz"))
         except zipfile.BadZipFile as exc:
@@ -4182,6 +4250,7 @@ class Project:
         self.mark_changed()
         return result
 
+    @_as_job("3차원 역산")
     def run_inversion(self, params: InversionParams) -> dict:
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
@@ -4238,6 +4307,7 @@ class Project:
 
         growth_factor = params.depth_growth_factor or DEFAULT_DEPTH_GROWTH_FACTOR
         try:
+            progress.report("메시 구성", 0.05)
             mesh = build_mesh(
                 obs_grid.easting, obs_grid.northing, ground_elev,
                 cell_size_m=obs_cell_size_m, depth_extent_m=depth_extent_m, n_layers=n_layers,
@@ -4269,6 +4339,7 @@ class Project:
         m_ref_flat = None
         geology_coverage_frac = None
         try:
+            progress.report("감도 행렬 계산", 0.10)
             G, rows, cols, layers = build_sensitivity_matrix(
                 obs_x, obs_y, obs_z, mesh, self.inclination_deg, self.declination_deg, field_intensity_nt
             )
@@ -4282,16 +4353,18 @@ class Project:
                 ref_at_cells = geology_ref_2d[rows, cols]
                 m_ref_flat = np.where(np.isfinite(ref_at_cells), ref_at_cells, 0.0)
                 geology_coverage_frac = float(np.mean(np.isfinite(ref_at_cells))) if ref_at_cells.size else 0.0
-            result = invert(
-                G, data_nt, mesh, rows, cols, layers,
-                regularization_strength=params.regularization_strength,
-                n_irls_iterations=params.n_irls_iterations,
-                assumed_noise_nt=params.assumed_noise_nt,
-                m_ref=m_ref_flat,
-            )
+            with progress.span(0.35, 0.95):
+                result = invert(
+                    G, data_nt, mesh, rows, cols, layers,
+                    regularization_strength=params.regularization_strength,
+                    n_irls_iterations=params.n_irls_iterations,
+                    assumed_noise_nt=params.assumed_noise_nt,
+                    m_ref=m_ref_flat,
+                )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
 
+        progress.report("결과 정리", 0.96)
         self.inversion_result = result
         self.inversion_params = params
         self.inversion_obs_grid = obs_grid

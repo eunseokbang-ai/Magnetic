@@ -1,6 +1,31 @@
 const BASE = "/api";
 
+// How many state-changing requests are in flight. The progress bar
+// (components/JobProgress.jsx) only asks the backend what it is doing
+// while this is above zero, instead of polling for the whole session.
+let busyCount = 0;
+const busyListeners = new Set();
+function setBusy(delta) {
+  busyCount += delta;
+  busyListeners.forEach((fn) => fn(busyCount > 0));
+}
+export function subscribeBusy(fn) {
+  busyListeners.add(fn);
+  fn(busyCount > 0);
+  return () => busyListeners.delete(fn);
+}
+
 async function request(path, options = {}) {
+  const tracked = options.method && options.method !== "GET" && !options.untracked;
+  if (tracked) setBusy(+1);
+  try {
+    return await requestInner(path, options);
+  } finally {
+    if (tracked) setBusy(-1);
+  }
+}
+
+async function requestInner(path, { untracked, ...options }) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
     ...options,
@@ -31,8 +56,10 @@ async function request(path, options = {}) {
 // progress bar go through XMLHttpRequest instead - the rest of the app
 // still uses the plain fetch-based request() above.
 function uploadWithProgress(path, form, onProgress) {
+  setBusy(+1);
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    xhr.addEventListener("loadend", () => setBusy(-1));
     xhr.open("POST", `${BASE}${path}`);
     if (onProgress) {
       xhr.upload.onprogress = (e) => {
@@ -317,7 +344,18 @@ export function uploadReferenceLayer(projectId, file) {
 // The layer manager's list (order, opacity, visibility, paths) mirrored to
 // the project, so saving or autosaving the project keeps its layers.
 export function setReferenceLayerState(projectId, layers) {
-  return request(`/projects/${projectId}/reference-layers/state`, { method: "PUT", body: JSON.stringify({ layers }) });
+  return request(`/projects/${projectId}/reference-layers/state`, { method: "PUT", body: JSON.stringify({ layers }), untracked: true });
+}
+
+// Long operations the backend is running, and a request to stop one
+// (magcore/progress.py). Cancelling is itself untracked so it does not
+// keep the progress bar alive.
+export function listJobs() {
+  return request("/jobs");
+}
+
+export function cancelJob(jobId) {
+  return request(`/jobs/${jobId}/cancel`, { method: "POST", untracked: true });
 }
 
 export function deleteReferenceLayer(projectId, name) {
@@ -437,6 +475,17 @@ export function getInversionSlice3D(projectId, req) {
 }
 
 async function requestBlob(path, options = {}) {
+  // exports recompute the grid, so they count as work in progress too
+  const tracked = options.method && options.method !== "GET";
+  if (tracked) setBusy(+1);
+  try {
+    return await requestBlobInner(path, options);
+  } finally {
+    if (tracked) setBusy(-1);
+  }
+}
+
+async function requestBlobInner(path, options) {
   const res = await fetch(`${BASE}${path}`, {
     headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
     ...options,

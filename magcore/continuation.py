@@ -53,6 +53,8 @@ from collections import OrderedDict
 
 import numpy as np
 
+from . import progress
+
 __all__ = ["source_continuation_fill", "continuation_report"]
 
 # Depth of the source layer, in cells. Measured optimum on the ground-truth
@@ -158,6 +160,7 @@ def _fit_source_layer(grid: np.ndarray, depth_cells: float, damping: float, max_
     direction = z.copy()
     rz = float((residual * z).sum())
     for _ in range(max_iter):
+        progress.check()                     # stop here if the user cancelled
         if rz <= 0.0:
             break
         op_d = operator(direction)

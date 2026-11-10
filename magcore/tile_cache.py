@@ -40,7 +40,7 @@ from pathlib import Path
 
 import requests
 
-from . import paths
+from . import paths, progress
 
 CACHE_ROOT = paths.data_dir() / "tile_cache"
 
@@ -279,6 +279,8 @@ def download_tiles(
     n_already = n_downloaded = n_failed = 0
     for z in range(min_zoom, max_zoom + 1):
         for x, y in tiles_for_bbox(min_lat, min_lon, max_lat, max_lon, z):
+            # one report per tile: the bar counts tiles, and a cancel stops before the next request
+            progress.report(f"타일 받기 (확대 {z})", (n_already + n_downloaded + n_failed) / max(total, 1))
             if _tile_path(source, z, x, y).exists():
                 n_already += 1
                 continue

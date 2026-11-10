@@ -63,7 +63,7 @@ from .models import (
     TiltDepthRequest,
     TransformRequest,
 )
-from magcore import local_raster, local_tiles, tile_cache
+from magcore import local_raster, local_tiles, progress, tile_cache
 from magcore.local_raster import LocalRasterError
 from magcore.colormaps import register_custom_colormaps
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
@@ -206,6 +206,13 @@ async def overlay_image_error_handler(request, exc: OverlayImageError):
     from fastapi.responses import JSONResponse
 
     return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(progress.JobCancelled)
+async def job_cancelled_handler(request, exc: progress.JobCancelled):
+    # 409: the request was fine, the user withdrew it. `cancelled` lets the
+    # screen tell this apart from a failure.
+    return JSONResponse(status_code=409, content={"detail": str(exc), "cancelled": True})
 
 
 @app.exception_handler(ChatError)
@@ -933,6 +940,20 @@ def chat_stream(project_id: str, req: ChatRequest):
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
 
 
+# Long operations (processing, gridding, inversion, restoring a project) are
+# blocking requests; these two let another request watch one and stop it.
+# See magcore/progress.py. Not project-scoped: restoring an autosave runs
+# before the screen knows the restored project's id.
+@app.get("/api/jobs")
+def list_jobs():
+    return {"jobs": progress.active_jobs()}
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    return {"cancel_requested": progress.cancel(job_id)}
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -957,7 +978,9 @@ def estimate_tiles(req: TileBboxRequest):
 
 @app.post("/api/tiles/download")
 def download_tiles(req: TileBboxRequest):
-    result = tile_cache.download_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
+    # Cancelling keeps what was already fetched: tiles are cached one by one.
+    with progress.job("오프라인 지도 받기"):
+        result = tile_cache.download_tiles(req.source, req.min_lat, req.min_lon, req.max_lat, req.max_lon, req.min_zoom, req.max_zoom)
     return {
         "n_total": result.n_total,
         "n_already_cached": result.n_already_cached,

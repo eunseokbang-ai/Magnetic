@@ -81,6 +81,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
+
+from . import progress
 from numba import njit, prange
 from scipy.spatial import cKDTree
 
@@ -529,6 +531,7 @@ def _cgls(a_mv, a_rmv, d, n_unknowns: int, lam: float, max_iter: int):
     if gamma0 == 0.0:
         return m, 0, True
     for it in range(1, max_iter + 1):
+        progress.check()                     # stop here if the user cancelled
         q = a_mv(p)
         denom = float(q @ q) + lam2 * float(p @ p)
         if denom <= 0.0:

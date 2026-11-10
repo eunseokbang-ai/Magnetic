@@ -33,6 +33,8 @@ from io import BytesIO
 import matplotlib
 import matplotlib.patches
 import numpy as np
+
+from . import progress
 from choclo.prism import magnetic_field
 from numba import njit, prange
 from scipy.interpolate import RegularGridInterpolator
@@ -317,7 +319,11 @@ def _select_regularization_strength(
     # log-spaced scan, then bisect only within the reliably-monotonic
     # increasing branch from there upward.
     grid = np.geomspace(1e-3, 1e3, num=13)
-    misfits = np.array([misfit_at(float(g)) for g in grid])
+    misfits = []
+    for k, g in enumerate(grid):
+        progress.report("정규화 강도 탐색", 0.5 * k / len(grid))
+        misfits.append(misfit_at(float(g)))
+    misfits = np.array(misfits)
     i_min = int(np.argmin(misfits))
 
     if misfits[i_min] > target_rms_nt:
@@ -472,6 +478,7 @@ def invert(
     eps = None
     n_iter = max(1, int(n_irls_iterations))
     for it in range(n_iter):
+        progress.report("반복 역산 (IRLS)", 0.5 + 0.5 * it / n_iter)
         wm2 = (depth_weight ** 2) * compact_weight
         p = 1.0 / wm2
         m = _ridge_solve(Gw, dw, p, alpha0, chi_max, m_ref_arr)

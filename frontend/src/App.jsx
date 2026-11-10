@@ -29,6 +29,7 @@ const GuidelinePanel = lazy(() => import("./components/GuidelinePanel"));
 import EulerPanel from "./components/EulerPanel";
 import WorkflowProgress from "./components/WorkflowProgress";
 import ChatPanel from "./components/ChatPanel";
+import JobProgress from "./components/JobProgress";
 import TargetDetectionPanel from "./components/TargetDetectionPanel";
 import QcCertificatePanel from "./components/QcCertificatePanel";
 import LineamentPanel from "./components/LineamentPanel";
@@ -2441,6 +2442,7 @@ export default function App() {
 
   return (
     <div style={{ display: "flex", height: "100%", fontFamily: '"Pretendard", system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif' }}>
+      <JobProgress />
       <div
         className={`app-sidebar-backdrop${leftSidebarOpen || rightSidebarOpen ? " visible" : ""}`}
         onClick={() => {
