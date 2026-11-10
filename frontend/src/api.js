@@ -328,6 +328,53 @@ export function sendChatMessage(projectId, message, history) {
   return request(`/projects/${projectId}/chat`, { method: "POST", body: JSON.stringify({ message, history }) });
 }
 
+// The same turn as a stream: onEvent gets {type: "text", delta},
+// {type: "tool", name, input} and finally {type: "done", reply, tool_calls,
+// stop_reason, usage}. The body is newline-delimited JSON, read as it
+// arrives so the answer appears while it is being written. Resolves with
+// the "done" event; an "error" event or a non-2xx status rejects.
+export async function streamChatMessage(projectId, message, history, onEvent) {
+  const res = await fetch(`${BASE}/projects/${projectId}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message, history }),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = await res.json();
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      // keep statusText
+    }
+    throw new Error(detail);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let done = null;
+  const handle = (line) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line);
+    if (event.type === "error") throw new Error(event.message);
+    if (event.type === "done") done = event;
+    onEvent?.(event);
+  };
+  for (;;) {
+    const { value, done: finished } = await reader.read();
+    if (finished) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf("\n")) >= 0) {
+      handle(buffer.slice(0, newline));
+      buffer = buffer.slice(newline + 1);
+    }
+  }
+  handle(buffer + decoder.decode());
+  if (!done) throw new Error("응답이 중간에 끊겼습니다. 다시 시도하세요.");
+  return done;
+}
+
 export function sampleOverlayValue(projectId, lat, lon) {
   return request(`/projects/${projectId}/overlay/sample`, { method: "POST", body: JSON.stringify({ lat, lon }) });
 }

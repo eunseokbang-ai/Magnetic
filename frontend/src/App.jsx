@@ -2099,12 +2099,21 @@ export default function App() {
       setChatError(null);
       setChatSending(true);
       const id = await ensureProject();
-      const history = chatMessages.map((m) => ({ role: m.role, content: m.content }));
-      setChatMessages((prev) => [...prev, { role: "user", content: text }]);
-      const resp = await api.sendChatMessage(id, text, history);
-      setChatMessages((prev) => [...prev, { role: "assistant", content: resp.reply, toolCalls: resp.tool_calls }]);
+      // only finished turns go back as history: an answer that failed midway is not one
+      const history = chatMessages.filter((m) => !m.pending && m.content).map((m) => ({ role: m.role, content: m.content }));
+      setChatMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: "", toolCalls: [], pending: true }]);
+      // the answer is the last message; fill it in as the stream arrives
+      const updateAnswer = (fn) => setChatMessages((prev) => prev.map((m, i) => (i === prev.length - 1 ? fn(m) : m)));
+      const done = await api.streamChatMessage(id, text, history, (event) => {
+        // a lookup stays shown until the model writes again: the wait after it is the model reading the result
+        if (event.type === "text") updateAnswer((m) => ({ ...m, content: m.content + event.delta, activeTool: event.delta.trim() ? null : m.activeTool }));
+        else if (event.type === "tool") updateAnswer((m) => ({ ...m, toolCalls: [...m.toolCalls, { name: event.name, input: event.input }], activeTool: event.name }));
+      });
+      updateAnswer((m) => ({ ...m, content: done.reply, toolCalls: done.tool_calls, pending: false, activeTool: null, stopReason: done.stop_reason }));
     } catch (e) {
       setChatError(e.message || String(e));
+      // keep what was written, drop an answer that never started
+      setChatMessages((prev) => prev.filter((m) => !(m.pending && !m.content)).map((m) => (m.pending ? { ...m, pending: false, activeTool: null } : m)));
     } finally {
       setChatSending(false);
     }

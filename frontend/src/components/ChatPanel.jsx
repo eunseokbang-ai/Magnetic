@@ -12,6 +12,16 @@ const bubbleStyle = (role) => ({
   wordBreak: "break-word",
 });
 
+// What each project lookup is called on screen (backend/app/chat.py TOOLS).
+const TOOL_LABELS = {
+  get_survey_summary: "처리 요약",
+  get_inversion_summary: "역산 결과",
+  get_euler_solutions_summary: "오일러 해",
+  get_target_detection_summary: "표적탐지 결과",
+  list_reference_layers: "참조 레이어 목록",
+  sample_point: "지점 조회",
+};
+
 export default function ChatPanel({ ready, messages, onSend, sending, error }) {
   const [input, setInput] = useState("");
   const scrollRef = useRef(null);
@@ -55,14 +65,18 @@ export default function ChatPanel({ ready, messages, onSend, sending, error }) {
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} style={bubbleStyle(m.role)}>
-            {m.content}
-            {m.toolCalls && m.toolCalls.length > 0 && (
-              <div style={{ marginTop: 4, fontSize: 10, opacity: 0.75 }}>조회: {m.toolCalls.map((t) => t.name).join(", ")}</div>
+          <div key={i} style={{ ...bubbleStyle(m.role), opacity: m.pending && !m.content ? 0.6 : 1 }}>
+            {m.content || (m.pending ? (m.activeTool ? `${TOOL_LABELS[m.activeTool] || m.activeTool} 조회 후 답변 작성 중...` : "답변 생성 중...") : "")}
+            {m.pending && m.content && m.activeTool && (
+              <div style={{ marginTop: 4, fontSize: 10, opacity: 0.75 }}>{TOOL_LABELS[m.activeTool] || m.activeTool} 조회 후 답변 작성 중...</div>
+            )}
+            {m.toolCalls && m.toolCalls.length > 0 && !m.pending && (
+              <div style={{ marginTop: 4, fontSize: 10, opacity: 0.75 }}>
+                조회: {[...new Set(m.toolCalls.map((t) => TOOL_LABELS[t.name] || t.name))].join(", ")}
+              </div>
             )}
           </div>
         ))}
-        {sending && <div style={{ ...bubbleStyle("assistant"), opacity: 0.6 }}>답변 생성 중...</div>}
       </div>
       {error && <div style={{ fontSize: 11, color: "#dc2626" }}>{error}</div>}
       <div style={{ display: "flex", gap: 6 }}>

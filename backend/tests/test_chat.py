@@ -1,8 +1,7 @@
 """Tests for the tool-calling chat assistant: verifies the tool-execution
 functions return correct data grounded in a real processed project (no
 network calls), the store-level API endpoints for reference layers and
-the chat error path, and - via a mocked Anthropic client - that the
-manual tool-use loop in chat.py drives the conversation correctly.
+the chat error path. The tool-use loop is in test_chat_stream.py.
 Does not require ANTHROPIC_API_KEY or network access.
 """
 import io
@@ -150,58 +149,8 @@ def test_chat_endpoint_without_api_key_returns_400():
     print("CHAT MISSING-KEY ERROR PATH OK")
 
 
-class _FakeToolUseBlock:
-    type = "tool_use"
-
-    def __init__(self, id_, name, input_):
-        self.id = id_
-        self.name = name
-        self.input = input_
-
-
-class _FakeTextBlock:
-    type = "text"
-
-    def __init__(self, text):
-        self.text = text
-
-
-def test_run_chat_turn_tool_loop_with_mocked_client():
-    """Verifies the manual agentic loop in chat.py: on a tool_use response
-    it executes the real tool against a real project and feeds the result
-    back, then returns the model's final text - without any network call."""
-    client, project_id = _make_processed_project()
-    project = project_store.get(project_id)
-
-    call_log = []
-
-    def fake_create(**kwargs):
-        call_log.append(kwargs)
-        if len(call_log) == 1:
-            assert kwargs["messages"][-1]["content"] == "이 측선탐사는 측선이 몇 개인가요?"
-            return SimpleNamespace(
-                stop_reason="tool_use",
-                content=[_FakeToolUseBlock("toolu_1", "get_survey_summary", {})],
-            )
-        # second call: tool result should be present in the message history
-        last_msg = kwargs["messages"][-1]
-        assert last_msg["role"] == "user"
-        assert last_msg["content"][0]["type"] == "tool_result"
-        assert last_msg["content"][0]["tool_use_id"] == "toolu_1"
-        payload = json.loads(last_msg["content"][0]["content"])
-        assert payload["n_lines"] == 6
-        return SimpleNamespace(stop_reason="end_turn", content=[_FakeTextBlock("측선은 4개입니다.")])
-
-    fake_client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
-
-    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
-        with patch("app.chat.anthropic.Anthropic", return_value=fake_client):
-            result = run_chat_turn(project, "이 측선탐사는 측선이 몇 개인가요?", [])
-
-    assert result["reply"] == "측선은 4개입니다."
-    assert result["tool_calls"] == [{"name": "get_survey_summary", "input": {}}]
-    assert len(call_log) == 2
-    print("MOCKED TOOL-USE LOOP CHECKS PASSED")
+# The tool-use loop itself (streaming, stop reasons, caching) is tested with a
+# mocked client in test_chat_stream.py.
 
 
 if __name__ == "__main__":
@@ -212,5 +161,4 @@ if __name__ == "__main__":
         # stands in for pytest's tmp_path when this file is run as a script
         test_reference_layer_upload_list_sample_remove(pathlib.Path(_tmp))
     test_chat_endpoint_without_api_key_returns_400()
-    test_run_chat_turn_tool_loop_with_mocked_client()
     print("\nALL CHECKS PASSED")

@@ -11,14 +11,14 @@ from datetime import date, timedelta
 import orjson
 from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import paths
 from .io_.base_loader import BaseLoadError
 from .io_.drone_loader import DroneLoadError
-from .chat import ChatError
+from .chat import ChatError, require_api_key
 from .models import (
     AnalyticSignalDepthRequest,
     ChatRequest,
@@ -905,6 +905,32 @@ def chat(project_id: str, req: ChatRequest):
     project = store.get(project_id)
     history = [m.model_dump() for m in req.history]
     return project.run_chat(req.message, history)
+
+
+@app.post("/api/projects/{project_id}/chat/stream")
+def chat_stream(project_id: str, req: ChatRequest):
+    """The same turn as newline-delimited JSON events, so the answer shows
+    as it is written instead of after a silent wait: text deltas, a line
+    per project lookup, then one "done" (or "error") line. A missing key is
+    still a plain 400 - once the stream has started the status is spent, so
+    later failures arrive as an "error" event."""
+    project = store.get(project_id)
+    history = [m.model_dump() for m in req.history]
+    require_api_key()
+
+    def events():
+        try:
+            for event in project.stream_chat(req.message, history):
+                yield json.dumps(event, ensure_ascii=False, default=str) + "\n"
+        except ChatError as exc:
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
+
+    # Content-Encoding is set so the GZip middleware leaves this response
+    # alone: its compressor holds small chunks back, and the whole answer
+    # then arrived at once at the end - measured in the browser, the first
+    # text showed only when the turn was already over.
+    return StreamingResponse(events(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Content-Encoding": "identity"})
 
 
 @app.get("/api/health")

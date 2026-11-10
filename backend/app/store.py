@@ -1478,6 +1478,11 @@ class Project:
 
         return run_chat_turn(self, message, history)
 
+    def stream_chat(self, message: str, history: list[dict]):
+        from .chat import stream_chat_turn
+
+        return stream_chat_turn(self, message, history)
+
     def generate_report(self) -> str:
         return generate_report_markdown(
             self.drone_summary() if self.drone_raw is not None else None,
