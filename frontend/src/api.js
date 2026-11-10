@@ -174,6 +174,18 @@ export function getGridConfidence(projectId, req) {
   return request(`/projects/${projectId}/grid/confidence`, { method: "POST", body: JSON.stringify(req) });
 }
 
+// The grid's confidence carried through a transform (magcore/uncertainty.py):
+// the same request as the transform, answered with a 0-1 support layer.
+export function getTransformConfidence(projectId, req) {
+  return request(`/projects/${projectId}/transform/confidence`, { method: "POST", body: JSON.stringify(req) });
+}
+
+// Where the survey flew the same ground twice, how far the two passes
+// differ once their level offset is out - as a map layer and one figure.
+export function getRepeatPassMap(projectId, req) {
+  return request(`/projects/${projectId}/repeat-passes/map`, { method: "POST", body: JSON.stringify(req || {}) });
+}
+
 export function runQcCertificate(projectId, req) {
   return request(`/projects/${projectId}/qc-certificate`, { method: "POST", body: JSON.stringify(req) });
 }

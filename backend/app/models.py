@@ -1207,6 +1207,12 @@ class ProspectivityRequest(BaseModel):
     colormap: str = "viridis"
 
 
+class TransformConfidenceRequest(TransformRequest):
+    """The confidence layer of a derived grid: the same request as the
+    transform itself, plus how to colour it - see magcore/uncertainty.py."""
+    colormap: str = "RdYlGn"
+
+
 class GridConfidenceRequest(BaseModel):
     """Requests a companion "how much should I trust this cell" layer for
     an already-gridded result - see processing/gridding.py::grid_confidence

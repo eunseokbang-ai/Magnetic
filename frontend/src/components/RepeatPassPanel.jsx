@@ -20,10 +20,11 @@ const buttonStyle = {
  * when there are no repeats either, the honest answer is a survey-design
  * one, which is what the backend returns instead of a correction.
  */
-export default function RepeatPassPanel({ projectId, processSummary, onApplied, onError }) {
+export default function RepeatPassPanel({ projectId, processSummary, onApplied, onError, onShowMap }) {
   const [open, setOpen] = useState(false);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [map, setMap] = useState(null);
 
   const ready = !!processSummary;
 
@@ -31,6 +32,21 @@ export default function RepeatPassPanel({ projectId, processSummary, onApplied, 
     try {
       setBusy(true);
       setResult(await api.analyzeRepeatPasses(projectId, {}));
+    } catch (e) {
+      onError && onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Where the two passes differ, once their level offset is out - drawn
+  // on the map as a layer, with the survey's repeatability as one figure.
+  const showMap = async () => {
+    try {
+      setBusy(true);
+      const resp = await api.getRepeatPassMap(projectId, {});
+      setMap(resp);
+      onShowMap && onShowMap({ name: "재현성 지도 (재비행 구간의 차이)", format: "repeat-map", image_data_url: resp.image_data_url, bounds: resp.bounds });
     } catch (e) {
       onError && onError(e);
     } finally {
@@ -96,6 +112,17 @@ export default function RepeatPassPanel({ projectId, processSummary, onApplied, 
               </div>
               <div title="상수 보정으로는 설명되지 않는 성분입니다. 이 탐사의 실제 반복도로 보고하세요.">
                 상수 보정 후 남는 차이(반복도): <b>{result.median_residual_rms_nt} nT rms</b>
+              </div>
+              <div>
+                <button style={{ ...buttonStyle, opacity: busy ? 0.5 : 1 }} disabled={busy} onClick={showMap}>
+                  재현성 지도 보기
+                </button>
+                {map && (
+                  <div style={{ marginTop: 4, color: "#4a3d28" }} title="두 번 지나간 구간에서, 레벨 차이를 뺀 뒤 남는 차이의 크기를 지나간 자리에 그렸습니다. 색이 진할수록 차이가 큽니다(색 범위 상한은 95 백분위).">
+                    한 측점의 재현성 <b>±{map.repeatability_nt} nT</b> (차이 rms {map.difference_rms_nt} nT ÷ √2, 5 m 구간 중앙값 기준) · 95%가{" "}
+                    {map.difference_p95_nt} nT 이내 · 지도에 "재현성 지도" 레이어로 추가했습니다 ⓘ
+                  </div>
+                )}
               </div>
               <div style={{ maxHeight: 140, overflow: "auto", border: "1px solid #eee4cd", borderRadius: 6 }}>
                 {result.pairs.map((p, i) => (

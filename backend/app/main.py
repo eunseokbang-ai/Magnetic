@@ -47,6 +47,7 @@ from .models import (
     RepeatPassApplyRequest,
     BlockShiftApplyRequest,
     BlockShiftRequest,
+    TransformConfidenceRequest,
     FlightPlanRequest,
     SurveyDesignRequest,
     RepeatPassRequest,
@@ -634,6 +635,16 @@ def block_leveling_estimate(project_id: str, req: BlockShiftRequest):
 @app.post("/api/projects/{project_id}/block-leveling/apply")
 def block_leveling_apply(project_id: str, req: BlockShiftApplyRequest):
     return store.get(project_id).apply_block_shift(req)
+
+
+@app.post("/api/projects/{project_id}/repeat-passes/map")
+def repeat_pass_map(project_id: str, req: RepeatPassRequest):
+    return store.get(project_id).repeat_pass_map(req)
+
+
+@app.post("/api/projects/{project_id}/transform/confidence")
+def transform_confidence(project_id: str, req: TransformConfidenceRequest):
+    return store.get(project_id).get_transform_confidence_overlay(req)
 
 
 @app.post("/api/projects/{project_id}/repeat-passes/apply")

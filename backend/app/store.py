@@ -79,9 +79,11 @@ from magcore.statistical_leveling import (
     measure_striping,
 )
 from magcore.noise_qc import compute_difference_qc
+from magcore.render import grid_to_png_overlay
 from magcore.repeatability import analyze_repeatability
 from magcore.sampling_qc import compute_sampling_distance_qc
 from .project_common import (
+    azimuth_from_north,
     OverlayState,
     ProjectError,
     _GRID_CACHE_MAX_ENTRIES,
@@ -787,14 +789,13 @@ class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMix
         # block (N-S lines, 89 deg here) the wrong one makes every line
         # look 13 m long. tests/test_regression_andong.py pins the result.
         on_lines = df["line_id"] >= 0
-        azimuth_from_north = None if self.dominant_azimuth_deg is None else (90.0 - self.dominant_azimuth_deg) % 180.0
         try:
             self.line_resolution_info = assess_line_resolution(
                 df.loc[on_lines, "x"].to_numpy(),
                 df.loc[on_lines, "y"].to_numpy(),
                 df.loc[on_lines, "anomaly"].to_numpy(),
                 df.loc[on_lines, "line_id"].to_numpy(),
-                azimuth_from_north,
+                azimuth_from_north(self.dominant_azimuth_deg),
             )
         except Exception as exc:  # noqa: BLE001 - a diagnostic must never fail a run
             self.line_resolution_info = {"available": False, "reason": f"측선 분해능 진단 실패: {exc}"}
@@ -1525,7 +1526,7 @@ class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMix
         df = self.processed.loc[self._active_mask()]
         return find_repeat_passes(
             df,
-            self.dominant_azimuth_deg,
+            azimuth_from_north(self.dominant_azimuth_deg),
             self.line_spacing_m,
             value=getattr(req, "value", "anomaly"),
             min_overlap_m=req.min_overlap_m,
@@ -1546,6 +1547,54 @@ class Project(BlockLevelingMixin, ObservatoryMixin, GridMixin, InterpretationMix
             "applied_offsets": {str(k): round(float(v), 3) for k, v in self.repeat_pass_offsets.items()},
             **summarize_repeat_passes(pairs, offsets),
         }
+
+    def repeat_pass_map(self, req: RepeatPassRequest) -> dict:
+        """How well the survey repeats itself, as a picture: over every
+        stretch flown twice, the difference between the two passes after
+        their level offset is taken out, drawn where it was measured.
+
+        The level offset is what flight levelling removes; what is left is
+        what no levelling removes - positioning, height, sensor noise, the
+        field changing between the passes - and is the survey's own
+        measure of how far to trust a single reading. `repeatability_nt`
+        is that as one number: the rms of the differences over root two,
+        the standard deviation of one reading on the assumption that the
+        two passes are equally noisy."""
+        pairs = [p for p in self._repeat_pairs(req) if p.profile is not None and len(p.profile)]
+        if not pairs:
+            raise ProjectError("같은 구간을 두 번 비행한 자료가 없어 재현성 지도를 만들 수 없습니다.")
+        xyz = np.vstack([p.profile for p in pairs])
+        cell = float(max(5.0, (self.line_spacing_m or 20.0) / 4.0))
+        x0, y0 = float(xyz[:, 0].min()) - 2 * cell, float(xyz[:, 1].min()) - 2 * cell
+        nx = int(np.ceil((xyz[:, 0].max() - x0) / cell)) + 3
+        ny = int(np.ceil((xyz[:, 1].max() - y0) / cell)) + 3
+        ix = np.floor((xyz[:, 0] - x0) / cell).astype(int)
+        iy = np.floor((xyz[:, 1] - y0) / cell).astype(int)
+        total = np.zeros((ny, nx))
+        count = np.zeros((ny, nx))
+        np.add.at(total, (iy, ix), np.abs(xyz[:, 2]))
+        np.add.at(count, (iy, ix), 1.0)
+        # a repeated line is one cell wide: widen it by a cell each way so it can be seen
+        from scipy.ndimage import uniform_filter
+
+        total_wide, count_wide = uniform_filter(total, 3, mode="constant") * 9.0, uniform_filter(count, 3, mode="constant") * 9.0
+        values = np.where(count_wide > 0.5, total_wide / np.maximum(count_wide, 1e-9), np.nan)
+        rms = float(np.sqrt(np.mean(xyz[:, 2] ** 2)))
+        p95 = float(np.percentile(np.abs(xyz[:, 2]), 95))
+        overlay = grid_to_png_overlay(
+            values, x0 + (np.arange(nx) + 0.5) * cell, y0 + (np.arange(ny) + 0.5) * cell, self.utm_epsg,
+            cmap_name="magma_r", symmetric=False, vmin=0.0, vmax=max(p95, 1e-6), cell_size_m=cell,
+        )
+        overlay.update({
+            "n_pairs": len(pairs),
+            "n_bins": int(len(xyz)),
+            "difference_rms_nt": round(rms, 3),
+            "repeatability_nt": round(rms / np.sqrt(2.0), 3),
+            "difference_p95_nt": round(p95, 3),
+            "total_overlap_m": round(float(sum(p.overlap_m for p in pairs)), 1),
+            "cell_size_m": cell,
+        })
+        return overlay
 
     def apply_repeat_pass_leveling(self, req: RepeatPassApplyRequest) -> dict:
         with self._edit_lock:

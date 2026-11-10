@@ -67,6 +67,10 @@ from .project_common import ProjectError, _as_job, _stats
 from .models import CandidateNoteRequest
 
 
+from magcore.uncertainty import derived_confidence, window_mean  # noqa: E402
+from .project_grids import LOW_CONFIDENCE  # noqa: E402
+
+
 class InterpretationMixin:
     def export_targets_csv(self) -> bytes:
         """The last run_target_detection() result (self.target_summary_cache)
@@ -173,8 +177,12 @@ class InterpretationMixin:
             flight_agl_m=req.flight_agl_m,
         )
         depths = [s.depth_m for s in solutions]
+        confidence = self._euler_confidence(grid, solutions, req)
         summary = {
             "n_solutions": len(solutions),
+            # how many solutions sit where the derivatives they were solved from rest on interpolation
+            "n_low_confidence": int(sum(1 for c in confidence if c is not None and c < LOW_CONFIDENCE)),
+            "low_confidence_threshold": LOW_CONFIDENCE,
             "structural_index": req.structural_index,
             "depth_reference": solutions[0].depth_reference if solutions else (
                 "ground_surface" if req.flight_agl_m is not None else "flat_datum"
@@ -187,12 +195,35 @@ class InterpretationMixin:
                     "depth_m": s.depth_m,
                     "base_level_nt": s.base_level_nt,
                     "uncertainty_m": s.uncertainty_m,
+                    "confidence": c,
                 }
-                for s in solutions
+                for s, c in zip(solutions, confidence)
             ],
         }
         self.euler_summary_cache = summary
         return summary
+
+    def _euler_confidence(self, grid, solutions, req) -> list:
+        """Support score of each Euler solution: the grid's confidence
+        carried through the three first derivatives the method solves
+        from, averaged over the solution's window, read at the solution.
+        A solution in a gap between lines gets a low score here even when
+        its own least-squares uncertainty is small - the window fitted
+        interpolated gradients very consistently."""
+        if not solutions:
+            return []
+        try:
+            base = self._grid_confidence(grid, req.max_distance_m)
+            derivative = derived_confidence(base, self._transform_components("as", req, grid.cell_size_m))
+            window = window_mean(derivative, int(round(req.window_size_m / grid.cell_size_m)))
+            to_xy = Transformer.from_crs("EPSG:4326", f"EPSG:{self.utm_epsg}", always_xy=True)
+            x, y = to_xy.transform([s.lon for s in solutions], [s.lat for s in solutions])
+            ix = np.clip(np.round((np.asarray(x) - grid.easting[0]) / grid.cell_size_m).astype(int), 0, len(grid.easting) - 1)
+            iy = np.clip(np.round((np.asarray(y) - grid.northing[0]) / grid.cell_size_m).astype(int), 0, len(grid.northing) - 1)
+            values = window[iy, ix]
+            return [None if not np.isfinite(v) else round(float(v), 3) for v in values]
+        except Exception:  # noqa: BLE001 - the score is an annotation; the solutions stand without it
+            return [None] * len(solutions)
 
     def run_multiscale_edges(self, req: MultiscaleEdgeRequest) -> dict:
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)

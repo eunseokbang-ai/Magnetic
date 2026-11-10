@@ -71,6 +71,10 @@ class RepeatPair:
     hours_apart: float
     time_a: pd.Timestamp
     time_b: pd.Timestamp
+    # Where the two passes disagree, bin by bin: (x, y, a - b - offset_nt),
+    # the position being pass a's median in the bin. Not in to_dict - it is
+    # the raw material of the reproducibility map (store.repeat_pass_map).
+    profile: np.ndarray | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -137,6 +141,8 @@ def find_repeat_passes(
             ),
             "along": along,
             "across": across,
+            "x": data["x"].to_numpy(dtype=float),
+            "y": data["y"].to_numpy(dtype=float),
             "value": data[value].to_numpy(dtype=float),
             "timestamp": pd.to_datetime(data["timestamp"]).to_numpy(),
             "bin": np.round(along / BIN_M).astype(np.int64),
@@ -146,7 +152,9 @@ def find_repeat_passes(
     profiles: dict[int, dict] = {}
     for line_id, group in work.groupby("line_id"):
         binned = group.groupby("bin")["value"].median()
+        where = group.groupby("bin")[["x", "y"]].median()
         profiles[int(line_id)] = {
+            "xy": where,
             "across": float(np.median(group["across"])),
             "flight": int(np.median(group["flight"])),
             "time": pd.Timestamp(group["timestamp"].min()),
@@ -181,6 +189,7 @@ def find_repeat_passes(
                     hours_apart=abs((pa["time"] - pb["time"]).total_seconds()) / 3600.0,
                     time_a=pa["time"],
                     time_b=pb["time"],
+                    profile=np.column_stack([pa["xy"].loc[shared].to_numpy(), residual]),
                 )
             )
     pairs.sort(key=lambda p: -p.overlap_m)

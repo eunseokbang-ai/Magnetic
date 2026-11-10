@@ -92,6 +92,11 @@ export default function EulerPanel({
         {result && (
           <div style={{ color: "#4a3d28" }}>
             해 {result.n_solutions}개
+            {result.n_low_confidence > 0 && (
+              <span style={{ color: "#b45309" }} title="격자 신뢰도를 오일러가 쓰는 미분과 창 크기로 전파한 값이 0.5 미만인 해입니다. 측선 사이 빈 곳처럼 보간된 구배에서 나온 해이므로 위치·심도를 덜 믿어야 합니다.">
+                {" "}· 그중 {result.n_low_confidence}개는 보간에 기댄 해 (신뢰도 {result.low_confidence_threshold} 미만) ⓘ
+              </span>
+            )}
             {result.depth_reference && (
               <>
                 <br />

@@ -1,3 +1,16 @@
+"""Shared test setup."""
+import pathlib
+import sys
+
+# magcore lives at the repository root, next to backend/. The application
+# puts it on sys.path when `app` is imported; a test file that imports
+# magcore before app (several do) only worked when some other file had
+# been collected first, so it failed when run on its own. Done here, once.
+_ROOT = pathlib.Path(__file__).resolve().parents[2]
+for _path in (_ROOT / "backend", _ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
 import pytest
 
 

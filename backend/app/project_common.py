@@ -44,6 +44,25 @@ class OverlayState:
     label: str
 
 
+def azimuth_from_north(azimuth_deg: float | None) -> float | None:
+    """The survey's line direction as a compass azimuth (clockwise from
+    north, 0-180).
+
+    Project.dominant_azimuth_deg is atan2(dy, dx): measured from east,
+    counter-clockwise - the convention of lines.py, leveling,
+    microlevelling and the grid diagnostics. Two modules describe the
+    flight direction the other way, from north: line_resolution.py and
+    repeat_passes.py. Passing them the project's number unconverted makes
+    a north-south survey look east-west to them, and both then quietly
+    find nothing: the line-resolution diagnostic reported "진단 실패", and
+    the repeat-pass comparison found no repeated ground on any survey
+    flown north-south or east-west (found 2026-11, when the
+    reproducibility map was first tested through the API; the modules'
+    own tests call them with the right convention and passed all along).
+    Everything that calls either module goes through here."""
+    return None if azimuth_deg is None else (90.0 - float(azimuth_deg)) % 180.0
+
+
 class ProjectError(ValueError):
     pass
 

@@ -53,6 +53,8 @@ from magcore.transforms import (
 )
 from magcore.trend import remove_regional_trend
 from pyproj import Transformer
+from magcore.uncertainty import derived_confidence
+from .models import TransformConfidenceRequest
 from .models import DisplayBoundaryRequest, GridConfidenceRequest, GridRequest, TransformRequest
 from .project_common import (
     OverlayState,
@@ -63,6 +65,11 @@ from .project_common import (
     _stats,
     boundary_rings,
 )
+
+
+# Below this a cell rests more on interpolation than on readings - the line the
+# confidence layers' "low" share and the Euler solutions' flag are drawn at.
+LOW_CONFIDENCE = 0.5
 
 
 class GridMixin:
@@ -437,28 +444,34 @@ class GridMixin:
         if self.processed is None:
             raise ProjectError("자료 처리를 먼저 실행하세요.")
         grid = self._grid_for(req.value, req.cell_size_m, req.method, req.max_distance_m)
+        return self._confidence_overlay(self._grid_confidence(grid, req.max_distance_m), grid, req.colormap)
+
+    def _grid_confidence(self, grid: GridResult, max_distance_m: float | None = None) -> np.ndarray:
+        """The 0-1 support score of each cell of `grid` (gridding.grid_confidence)."""
         df = self.processed
         active = self._active_mask()
         easting_2d, northing_2d = np.meshgrid(grid.easting, grid.northing)
-        confidence = grid_confidence(
+        return grid_confidence(
             df.loc[active, "x"].to_numpy(),
             df.loc[active, "y"].to_numpy(),
             easting_2d,
             northing_2d,
             grid.cell_size_m,
-            max_distance_m=req.max_distance_m,
+            max_distance_m=max_distance_m,
             line_id=df.loc[active, "line_id"].to_numpy(),
             typical_line_spacing_m=self.line_spacing_m,
             tree_dist=grid.tree_dist,
             max_distance_grid=grid.max_distance_grid,
             hull_mask=grid.hull_mask,
         )
+
+    def _confidence_overlay(self, confidence: np.ndarray, grid: GridResult, colormap: str) -> dict:
         overlay = grid_to_png_overlay(
             confidence,
             grid.easting,
             grid.northing,
             self.utm_epsg,
-            cmap_name=req.colormap,
+            cmap_name=colormap,
             symmetric=False,
             vmin=0.0,
             vmax=1.0,
@@ -466,6 +479,62 @@ class GridMixin:
         )
         overlay["stats"] = _stats(pd.Series(confidence.ravel()))
         overlay["cell_size_m"] = grid.cell_size_m
+        finite = confidence[np.isfinite(confidence)]
+        # share of the covered cells that rest more on interpolation than on readings
+        overlay["low_fraction"] = round(float(np.mean(finite < LOW_CONFIDENCE)), 4) if finite.size else None
+        return overlay
+
+    def _transform_components(self, transform: str, req, cell_size_m: float) -> list:
+        """The linear operators a derived product is made of, as functions
+        of a grid - what magcore.uncertainty propagates confidence
+        through. One for a linear product; the field's derivatives for a
+        product that is not linear in the field; none for products that
+        do not read across cells (their confidence is the base layer's)."""
+        inc, dec = self.inclination_deg, self.declination_deg
+        linear = {
+            "rtp": lambda v: reduction_to_pole(v, cell_size_m, inc, dec),
+            "rte": lambda v: reduction_to_equator(v, cell_size_m, inc, dec),
+            "1vd": lambda v: vertical_derivative(v, cell_size_m, order=1),
+            "2vd": lambda v: vertical_derivative(v, cell_size_m, order=2),
+            "dx": lambda v: derivative_easting(v, cell_size_m),
+            "dy": lambda v: derivative_northing(v, cell_size_m),
+            "dxx": lambda v: second_derivative_ee(v, cell_size_m),
+            "dyy": lambda v: second_derivative_nn(v, cell_size_m),
+            "dxy": lambda v: second_derivative_en(v, cell_size_m),
+            "dxz": lambda v: second_derivative_ez(v, cell_size_m),
+            "dyz": lambda v: second_derivative_nz(v, cell_size_m),
+            "upward_continuation": lambda v: upward_continuation(v, cell_size_m, getattr(req, "continuation_height_m", None) or 2.0 * cell_size_m),
+        }
+        made_of = {"as": ("dx", "dy", "1vd"), "thdr": ("dx", "dy"), "tilt": ("dx", "dy", "1vd"), "theta": ("dx", "dy", "1vd")}
+        names = made_of.get(transform) or ((transform,) if transform in linear else ())
+        if transform in ("rtp", "rte") and inc is None:
+            raise ProjectError("자기장 방향을 알 수 없어 극자화 변환의 신뢰도를 계산할 수 없습니다.")
+        components = [linear[n] for n in names]
+        # the same pre-smoothing the product itself gets: it widens the footprint, so it belongs in it
+        if components and transform in _RESOLUTION_LIMITED_TRANSFORMS and getattr(req, "derivative_presmooth", True) and self.line_spacing_m:
+            factor = getattr(req, "derivative_presmooth_factor", 1.0)
+            smooth = lambda v: limit_to_line_spacing_resolution(v, cell_size_m, self.line_spacing_m, factor=factor)
+            components = [(lambda v, op=op: op(smooth(v))) for op in components]
+        return components
+
+    @_as_job("파생 그리드 신뢰도")
+    def get_transform_confidence_overlay(self, req: TransformConfidenceRequest) -> dict:
+        """The base grid's confidence carried through a transform - see
+        magcore/uncertainty.py. Lines up cell for cell with
+        get_transform_overlay's picture of the same request."""
+        if self.processed is None:
+            raise ProjectError("자료 처리를 먼저 실행하세요.")
+        grid = self._grid_for(
+            req.value, req.cell_size_m, req.method, req.max_distance_m,
+            req.along_line_smooth, req.along_line_smooth_wavelength_m,
+        )
+        base = self._grid_confidence(grid, req.max_distance_m)
+        progress.report("신뢰도 전파", None)
+        confidence = derived_confidence(base, self._transform_components(req.transform, req, grid.cell_size_m))
+        overlay = self._confidence_overlay(confidence, grid, req.colormap)
+        overlay["transform"] = req.transform
+        base_finite = base[np.isfinite(base)]
+        overlay["base_low_fraction"] = round(float(np.mean(base_finite < LOW_CONFIDENCE)), 4) if base_finite.size else None
         return overlay
 
     def _transform_values(self, grid: GridResult, req: TransformRequest) -> tuple[np.ndarray, bool]:

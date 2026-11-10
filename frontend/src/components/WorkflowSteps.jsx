@@ -1420,13 +1420,19 @@ export default function WorkflowSteps({
             onClick={() => onGridConfidence()}
             title="자료점으로부터의 거리(같은 그리드 빈 공간 채우기 기준)를 바탕으로, 각 셀이 실제 자료에 얼마나 가까이 구속되어 있는지(1=자료점 바로 위, 0=보간 한계 지점)를 색으로 보여줍니다. 붉은/노란 구간은 보간에 크게 의존한 값이니 해석 시 주의하세요."
           >
-            {confidenceLoading ? "신뢰도 계산 중..." : "격자 신뢰도 레이어 계산"}
+            {confidenceLoading ? "신뢰도 계산 중..." : activeTransform && activeTransform !== "none" ? `신뢰도 레이어 계산 (지금 보는 파생 그리드: ${activeTransform})` : "격자 신뢰도 레이어 계산"}
           </button>
           {confidenceOverlay && (
             <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <input type="checkbox" checked={showConfidenceOverlay} onChange={(e) => setShowConfidenceOverlay(e.target.checked)} />
               <span style={{ color: "#6b5c42" }}>지도에 신뢰도 레이어 표시 (초록=신뢰 높음, 빨강=보간 의존)</span>
             </label>
+          )}
+          {confidenceOverlay?.low_fraction != null && (
+            <div style={{ color: "#6b5c42" }}>
+              {confidenceOverlay.transform ? `파생 그리드(${confidenceOverlay.transform})` : "그리드"}에서 자료보다 보간에 더 기대는 셀: {(confidenceOverlay.low_fraction * 100).toFixed(1)}%
+              {confidenceOverlay.base_low_fraction != null && ` (원 그리드 ${(confidenceOverlay.base_low_fraction * 100).toFixed(1)}%)`}
+            </div>
           )}
         </div>
       </details>

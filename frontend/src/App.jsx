@@ -1012,12 +1012,25 @@ export default function App() {
     try {
       setError(null);
       setConfidenceLoading(true);
-      const resp = await api.getGridConfidence(projectId, {
-        value: valueField,
-        cell_size_m: gridCellSize,
-        method: gridMethod,
-        max_distance_m: gridMaxDistance,
-      });
+      // for the layer that is on the map: a derived grid has its own, carried through the transform
+      const derived = activeTransform && activeTransform !== "none";
+      const resp = derived
+        ? await api.getTransformConfidence(projectId, {
+            transform: activeTransform,
+            value: valueField,
+            cell_size_m: gridCellSize,
+            method: gridMethod,
+            max_distance_m: gridMaxDistance,
+            along_line_smooth: alongLineSmooth,
+            along_line_smooth_wavelength_m: alongLineSmoothWavelength,
+            ...transformExtraParams,
+          })
+        : await api.getGridConfidence(projectId, {
+            value: valueField,
+            cell_size_m: gridCellSize,
+            method: gridMethod,
+            max_distance_m: gridMaxDistance,
+          });
       setConfidenceOverlay(resp);
       setShowConfidenceOverlay(true);
     } catch (e) {
@@ -2766,6 +2779,7 @@ export default function App() {
         <RepeatPassPanel
           projectId={projectId}
           processSummary={processSummary}
+          onShowMap={showGeneratedLayer}
           onApplied={async (resp) => {
             setProcessSummary(resp);
             await refreshPoints(projectId, valueField);

@@ -239,3 +239,56 @@ def test_a_survey_with_no_repeats_refuses_to_level():
 
     assert r.status_code == 400
     assert "두 번 비행" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------- through the project
+def _two_pass_csv(north_south: bool):
+    """Five parallel lines 50 m apart with the first one flown again,
+    north-south or east-west."""
+    import numpy as np
+
+    rng = np.random.default_rng(3)
+    rows = ["Counter,Date,Time,Latitude,Longitude,Mag, MagValid,Altitude"]
+    t, counter, lat0, lon0 = 3 * 3600.0, 0, 36.5, 127.8
+    for k, across in enumerate([0.0, 50.0, 100.0, 150.0, 200.0, 0.0]):
+        along = np.arange(0.0, 700.0, 0.5)
+        if k % 2:
+            along = along[::-1]
+        for a in along:
+            east, north = (across, a) if north_south else (a, across)
+            lat = lat0 + north / 110950.0
+            lon = lon0 + east / (111320.0 * np.cos(np.radians(lat0)))
+            b = 50000.0 + 30.0 * np.sin(a / 90.0) + (6.0 if k == 5 else 0.0) + rng.normal(0, 0.5)
+            hh, mm, ss = int(t // 3600), int(t % 3600 // 60), t % 60
+            rows.append(f"{counter},2026-10-28,{hh:02d}:{mm:02d}:{ss:06.3f},{lat:.8f},{lon:.8f},{b:.3f},1,120.0")
+            t += 0.1
+            counter += 1
+        t += 20.0
+    return ("\n".join(rows) + "\n").encode()
+
+
+@pytest.mark.parametrize("north_south", [True, False])
+def test_the_app_finds_a_reflown_line_whichever_way_the_survey_runs(north_south):
+    """The comparison works in the lines' own frame and needs their
+    direction from north; the project keeps it from east. Until 2026-11
+    the number was handed over unconverted, and a survey flown north-south
+    or east-west - that is, most of them - was told it had no repeated
+    ground. The module's own tests above pass the direction correctly and
+    never saw it."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    pid = client.post("/api/projects").json()["project_id"]
+    assert client.post(f"/api/projects/{pid}/upload/drone", files=[("files", ("s.csv", _two_pass_csv(north_south), "text/csv"))]).status_code == 200
+    r = client.post(f"/api/projects/{pid}/process", json={"diurnal_params": {"mode": "assume_constant"}, "statistical_leveling": {"enabled": False},
+                                                          "heading_correction": {"enabled": False}})
+    assert r.status_code == 200, r.text
+    assert r.json()["dominant_azimuth_deg"] == pytest.approx(90.0 if north_south else 0.0, abs=2.0) or r.json()["dominant_azimuth_deg"] == pytest.approx(180.0, abs=2.0)
+    body = client.post(f"/api/projects/{pid}/repeat-passes", json={}).json()
+    assert body["n_pairs"] == 1, body
+    (pair,) = body["pairs"]
+    assert pair["overlap_m"] > 600.0 and pair["across_track_m"] < 2.0
+    assert abs(pair["offset_nt"]) == pytest.approx(6.0, abs=0.5)                 # the level step put on the second pass
+    assert pair["residual_rms_nt"] < 1.0
