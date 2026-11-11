@@ -30,6 +30,12 @@ class LineParams(BaseModel):
     merge_max_offset_m: float = Field(25.0, ge=0)
     merge_max_along_gap_m: float = Field(400.0, ge=0)
     merge_max_overlap_fraction: float = Field(0.35, ge=0, le=1)
+    # Take out the legs flown between the takeoff point and the block
+    # (and back) - see processing/lines.py::_exclude_transit_runs.
+    remove_transit: bool = True
+    transit_speed_factor: float = Field(1.1, gt=1.0)
+    transit_azimuth_deg: float = Field(5.0, gt=0, le=90)
+    transit_azimuth_spread_factor: float = Field(6.0, ge=0)
     # What to do with the stretch a resumed flight recorded twice - see
     # processing/line_overlap.py. "auto" keeps whichever recording is
     # quieter by the normalised 4th-difference metric; "keep_first" /

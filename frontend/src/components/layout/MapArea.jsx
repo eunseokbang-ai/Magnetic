@@ -6,6 +6,7 @@ import InversionSectionView from "../InversionSectionView";
 import LineProfileView from "../LineProfileView";
 import MapView from "../MapView";
 import NearestIntermagnetComparisonView from "../NearestIntermagnetComparisonView";
+import RunSelectionCard from "../RunSelectionCard";
 import { InversionVolumeView } from "./shared";
 
 // The middle of the screen: the map, and whichever view is open over its lower
@@ -30,8 +31,13 @@ export default function MapArea() {
     showGeologyUnits, showLineLabels, showLineaments, showMultiscaleLayer, showPointsOverGrid,
     showProspectivityOverlay, showProspectivityTargets, showTiltDepth, smoothDrawMode, smoothing,
     structureScanResult, structureScanShow, targetDetectionResult, tiltDepthResult, valueField, volumeData,
-    volumeOpacity, volumeSlices,
+    volumeOpacity, volumeSlices, handleMapPointClick, handleRunAction, handleShowLineProfile, runActionBusy,
+    runSelectEnabled, selectedRun, selectedRunInfo, setSelectedRun,
   } = useApp();
+
+  // a click on a survey point selects its stretch of flight - unless
+  // another map tool is waiting for clicks of its own
+  const otherToolActive = drawMode || sectionDrawMode || smoothDrawMode || geologyDrawMode || inspectMode || !!measureMode || boundaryMode;
 
   return (
     <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
@@ -59,6 +65,11 @@ export default function MapArea() {
         lines={processSummary?.lines}
         showLineLabels={showLineLabels}
         onHoverPoint={setHoverPoint}
+        onPointClick={handleMapPointClick}
+        pointsClickable={runSelectEnabled && !otherToolActive}
+        selectedRunLatLngs={selectedRunInfo?.latlngs}
+        selectedRunFit={!!selectedRun?.fit}
+        selectedRunFitKey={selectedRun?.nonce}
         drawMode={drawMode || sectionDrawMode || smoothDrawMode || geologyDrawMode}
         drawShapeType={sectionDrawMode ? "polyline" : "polygon"}
         onShapeDrawn={handleMapShapeDrawn}
@@ -89,6 +100,13 @@ export default function MapArea() {
         boundaryPolygon={boundaryPolygon}
         onBoundaryDrawn={handleBoundaryDrawn}
         flyToTarget={flyToTarget}
+      />
+      <RunSelectionCard
+        run={otherToolActive ? null : selectedRunInfo}
+        busy={runActionBusy}
+        onAction={handleRunAction}
+        onShowProfile={handleShowLineProfile}
+        onClose={() => setSelectedRun(null)}
       />
       {volumeData && (
         <Suspense

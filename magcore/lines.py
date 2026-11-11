@@ -136,6 +136,17 @@ class LineDetectionParams:
     merge_max_offset_m: float = 25.0
     merge_max_along_gap_m: float = 400.0
     merge_max_overlap_fraction: float = 0.35
+    # Drop the legs flown between the takeoff point and the survey block.
+    # See _exclude_transit_runs for the rule and where the numbers come from.
+    remove_transit: bool = True
+    # a leg flown this many times faster than the flight's cruise speed
+    # along its lines is a ferry leg, whatever its direction
+    transit_speed_factor: float = 1.1
+    # ... and so is one this far off the direction the lines were flown in
+    # (or transit_azimuth_spread_factor times the lines' own scatter, when
+    # that is larger - a survey flown in two directions has no "off")
+    transit_azimuth_deg: float = 5.0
+    transit_azimuth_spread_factor: float = 6.0
 
 
 def detect_lines(
@@ -207,6 +218,13 @@ def detect_lines(
     # everything else keeps its original takeoff/off-azimuth tag.
     out.loc[on_azimuth, "exclusion_reason"] = reasons[on_azimuth]
 
+    transit_runs: list[dict] = []
+    if params.remove_transit:
+        line_id, transit_reason, transit_runs = _exclude_transit_runs(
+            out, x, y, t_sec, line_id, out["exclusion_reason"].to_numpy(), dominant_azimuth, params)
+        out["line_id"] = line_id
+        out["exclusion_reason"] = transit_reason
+
     if params.bridge_gaps:
         bridged_line_id, bridged_reason = _bridge_line_gaps(out, x, y, line_id, out["exclusion_reason"].to_numpy(), dominant_azimuth, params)
         out["line_id"] = bridged_line_id
@@ -222,8 +240,14 @@ def detect_lines(
 
     out["exclusion_reason"] = _tag_takeoff_landing_ramps(out, out["line_id"].to_numpy(), out["exclusion_reason"].to_numpy())
 
+    # what a run that was kept but looked odd is called now, after merging
+    final_ids = out["line_id"].to_numpy()
+    for run in transit_runs:
+        run["line_id"] = int(final_ids[run["first_index"]]) if run["verdict"] == "suspect" else None
+
     out.attrs["utm_epsg"] = epsg
     out.attrs["dominant_azimuth_deg"] = dominant_azimuth
+    out.attrs["transit_runs"] = transit_runs
     return out
 
 
@@ -272,6 +296,195 @@ def _group_into_lines(
         line_id += 1
 
     return line_id_out, reason_out
+
+
+TRANSIT = "transit"
+# fewer along-line samples than this in a flight and its cruise speed is not
+# measured (no speed test for that flight)
+_MIN_CRUISE_SAMPLES = 200
+_CRUISE_DIRECTION_DEG = 1.0
+# Cruise speed is this percentile of a flight's along-line speeds. High,
+# because over hilly ground half of a flight can be spent crawling; not
+# higher, because a ferry leg that runs along the lines is among the
+# samples, and at the 90th it would have to be a tenth of the flight's
+# recording to pass for the cruise speed itself.
+_CRUISE_PERCENTILE = 90
+# a run shorter than this has no direction worth judging: end to end it is
+# a few metres of drift either way (the crawl up a cliff, a hover)
+_MIN_DIRECTION_CHORD_M = 50.0
+
+
+def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
+    order = np.argsort(values)
+    cum = np.cumsum(weights[order])
+    return float(values[order][np.searchsorted(cum, 0.5 * cum[-1])])
+
+
+def _exclude_transit_runs(
+    out: pd.DataFrame,
+    x: np.ndarray,
+    y: np.ndarray,
+    t_sec: np.ndarray,
+    line_id: np.ndarray,
+    reason: np.ndarray,
+    dominant_azimuth_deg: float,
+    params: LineDetectionParams,
+) -> tuple[np.ndarray, np.ndarray, list[dict]]:
+    """Take the ferry legs out of the candidate lines.
+
+    A flight does not start on its first line. The drone climbs, is flown
+    (usually by hand) to somewhere near the first line's start, and only
+    then switched to the automatic mission; at the end it flies home. Where
+    such a leg happens to point within heading_tolerance_deg of the line
+    direction it passes for a survey line - a diagonal one crossing the
+    block, levelled and gridded with the rest.
+
+    What gives a ferry leg away is where it sits in the flight and how it
+    was flown. Runs are examined flight by flight (source file), inwards
+    from each end, and taken out for as long as each one is either
+
+      * fast - its speed (the upper quartile of its samples, so that a
+        leg accelerating away from a line end counts) is
+        transit_speed_factor times the flight's cruise speed or more; or
+      * off the line direction by more than transit_azimuth_deg (or
+        transit_azimuth_spread_factor times the scatter of the line
+        directions themselves, when that is larger).
+
+    Cruise speed is the 90th percentile of the speed along that flight's
+    lines, not their average: a drone following terrain slows on every
+    slope, so its lines average anything from a quarter of the mission
+    speed upwards, but none of them is flown faster than the mission
+    speed, and the hand-flown legs are.
+
+    The first run from either end that is neither stops it: nothing
+    between two survey lines is removed, however it looks. A flight in
+    which every run would go is left alone - that is a block flown another
+    way, not a ferry leg - and reported instead.
+
+    Where the numbers come from (2026-11, every run of three surveys):
+
+      GaSaDo, 24 flights, 118 runs, hilly, mission speed 5.1 and 6.1 m/s:
+        survey lines at most 1.03 of cruise speed and, over 50 m long,
+        within 1.8 deg of the line direction; the 36 ferry legs at
+        1.28-2.68 of cruise speed, 17 of the 22 over 50 m long 7.6-19.8
+        deg off.
+      Andong, 18 flights, 50 runs: lines at most 1.03 and within 0.3 deg;
+        the 11 ferry legs at 1.15-2.99, the long ones 0.7-8.4 deg off.
+      HaeNam, 32 flights (already trimmed to the block), 92 runs: lines
+        at most 1.02; nothing to remove, and nothing is.
+
+    So the speed test does most of the work - every leg removed in these
+    surveys is fast - and 1.1 sits in the gap (nothing between 1.03 and
+    1.13; the two runs at 1.13-1.15 are 20-50 m scraps at the end of a
+    turn, 3 and 13 deg off). The direction test is for a leg flown at line
+    speed, and its floor is 5 deg rather than less because of HaeNam: a
+    few flights there start with a 50-60 m run-in 2.9-3.7 deg off, at line
+    speed, that is the drone settling onto its first line.
+
+    The direction the lines were flown in is measured here rather than
+    taken from the 2 deg heading histogram: the length-weighted median of
+    the runs' own directions (each the median heading of its samples).
+
+    Returns (line_id, reason, runs): the removed runs get line_id -1 and
+    the reason "transit"; `runs` lists them, and the runs that were kept
+    although one of the tests is met (verdict "suspect").
+    """
+    line_id = line_id.copy()
+    reason = reason.copy()
+    kept = np.flatnonzero(line_id >= 0)
+    if len(kept) == 0:
+        return line_id, reason, []
+    starts = kept[np.r_[True, line_id[kept][1:] != line_id[kept][:-1]]]
+    ends = kept[np.r_[line_id[kept][1:] != line_id[kept][:-1], True]]
+    n_runs = len(starts)
+    if n_runs < 3:
+        return line_id, reason, []
+
+    source = out["source_file_index"].to_numpy() if "source_file_index" in out.columns else np.zeros(len(out), dtype=int)
+    sample_speed = out["speed_mps"].to_numpy()
+
+    chord = np.hypot(x[ends] - x[starts], y[ends] - y[starts])
+    # a run's direction is the median of its samples' headings - the same
+    # headings that made it a run - not the bearing from its first point to
+    # its last, which says nothing sensible about a run that is not straight
+    sample_deviation = (out["heading_deg"].to_numpy() - dominant_azimuth_deg + 90.0) % 180.0 - 90.0
+    with np.errstate(invalid="ignore"):
+        deviation = np.array([np.nanmedian(sample_deviation[a:b + 1]) for a, b in zip(starts, ends)])
+        speed = np.array([np.nanpercentile(sample_speed[a:b + 1], 75) for a, b in zip(starts, ends)])
+    deviation = np.where(np.isfinite(deviation), deviation, 0.0)
+    speed = np.where(np.isfinite(speed), speed, 0.0)
+    flight = source[starts]
+
+    weights = np.maximum(chord, 1e-6)
+    line_direction = _weighted_median(deviation, weights)
+    deviation = deviation - line_direction
+    scatter = 1.4826 * _weighted_median(np.abs(deviation), weights)
+    off_limit = max(params.transit_azimuth_deg, params.transit_azimuth_spread_factor * scatter)
+    off = (np.abs(deviation) > off_limit) & (chord >= _MIN_DIRECTION_CHORD_M)
+
+    # each flight's cruise speed, from the samples of its runs that lie
+    # along the lines as closely as the lines do themselves (a ferry leg
+    # among those is over quickly: too few samples to move a high
+    # percentile; one a few degrees off can be a kilometre long)
+    on_line = np.abs(deviation) <= max(_CRUISE_DIRECTION_DEG, params.transit_azimuth_spread_factor * scatter)
+    line_speed = np.full(n_runs, np.nan)
+    for f in np.unique(flight):
+        mine = flight == f
+        along = [sample_speed[a:b + 1] for a, b in zip(starts[mine & on_line], ends[mine & on_line])]
+        along = np.concatenate(along) if along else np.array([])
+        along = along[np.isfinite(along)]
+        if len(along) >= _MIN_CRUISE_SAMPLES:
+            line_speed[mine] = float(np.percentile(along, _CRUISE_PERCENTILE))
+    with np.errstate(invalid="ignore"):
+        fast = speed >= params.transit_speed_factor * line_speed
+    transit_like = off | fast
+
+    remove = np.zeros(n_runs, dtype=bool)
+    where = np.full(n_runs, "middle", dtype=object)
+    whole_flight = np.zeros(n_runs, dtype=bool)
+    for f in np.unique(flight):
+        mine = np.flatnonzero(flight == f)  # already in time order
+        taken = np.zeros(len(mine), dtype=bool)
+        for k in range(len(mine)):
+            if not transit_like[mine[k]]:
+                break
+            taken[k] = True
+            where[mine[k]] = "start"
+        for k in range(len(mine) - 1, -1, -1):
+            if taken[k] or not transit_like[mine[k]]:
+                break
+            taken[k] = True
+            where[mine[k]] = "end"
+        if taken.all():
+            whole_flight[mine] = True
+        else:
+            remove[mine[taken]] = True
+
+    runs: list[dict] = []
+    for k in range(n_runs):
+        why = [name for name, hit in (("fast", bool(fast[k])), ("off_direction", bool(off[k]))) if hit]
+        if not why:
+            continue
+        if whole_flight[k]:
+            why.append("whole_flight")
+        a, b = int(starts[k]), int(ends[k])
+        if remove[k]:
+            line_id[a:b + 1] = -1
+            reason[a:b + 1] = TRANSIT
+        runs.append({
+            "verdict": "transit" if remove[k] else "suspect",
+            "why": why,
+            "where": where[k] if remove[k] else ("flight" if whole_flight[k] else "middle"),
+            "source_file_index": int(flight[k]),
+            "first_index": a,
+            "last_index": b,
+            "n_points": b - a + 1,
+            "length_m": round(float(chord[k]), 1),
+            "speed_mps": round(float(speed[k]), 2),
+            "line_speed_mps": None if not np.isfinite(line_speed[k]) else round(float(line_speed[k]), 2),
+            "azimuth_deviation_deg": round(float(deviation[k]), 2),
+        })
+    return line_id, reason, runs
 
 
 def _bridge_line_gaps(
@@ -501,8 +714,11 @@ def _tag_takeoff_landing_ramps(
         last_kept_pos = len(kept_mask) - 1 - int(np.argmax(kept_mask[::-1]))
         pre_idx = idx[:first_kept_pos]
         post_idx = idx[last_kept_pos + 1:]
-        reason_out[pre_idx[line_id_out[pre_idx] < 0]] = "takeoff_ramp"
-        reason_out[post_idx[line_id_out[post_idx] < 0]] = "landing_ramp"
+        # a ferry leg keeps its own name: it is shown, and can be put back
+        # with one click, where the ramps are hidden and protected
+        ramp = (line_id_out < 0) & (reason_out != TRANSIT)
+        reason_out[pre_idx[ramp[pre_idx]]] = "takeoff_ramp"
+        reason_out[post_idx[ramp[post_idx]]] = "landing_ramp"
     return reason_out
 
 

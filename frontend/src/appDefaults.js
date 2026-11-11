@@ -177,6 +177,7 @@ export const DEFAULT_PARAMS = {
     merge_max_offset_m: 25.0,
     merge_max_along_gap_m: 400.0,
     merge_max_overlap_fraction: 0.35,
+    remove_transit: true,
     overlap_resolution: "auto",
     overlap_overrides: {},
   },

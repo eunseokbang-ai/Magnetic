@@ -200,6 +200,12 @@ export default function ProcessingSection() {
         <Field label="터닝 여분 구간 (m) — 측선 양끝에서 추가로 자를 거리">
           <input type="number" style={inputStyle} value={lp.turn_buffer_m} onChange={(e) => updateLine("turn_buffer_m", parseFloat(e.target.value))} />
         </Field>
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 12, margin: "6px 0" }}>
+          <input type="checkbox" checked={lp.remove_transit !== false} onChange={(e) => updateLine("remove_transit", e.target.checked)} style={{ marginTop: 2 }} />
+          <span title="이륙 후 첫 측선 시작점까지, 마지막 측선에서 착륙 지점까지 날아가는 구간은 방향이 측선과 비슷하면 측선으로 잡힙니다. 비행마다 양 끝에서 안쪽으로 보면서, 그 비행의 측선 순항 속도보다 10% 이상 빠르거나 측선 방향에서 5° 넘게 벗어난 구간을 제외합니다. 측선 사이에 낀 구간은 제외하지 않고 '확인 필요'로만 알립니다. 제외된 구간은 지도에 회색으로 남고, 클릭해서 다시 포함할 수 있습니다.">
+            이착륙 지점↔측선 사이 이동 구간 자동 제외 ⓘ
+          </span>
+        </label>
         <Field label="주 측선 방향 검출 방식">
           <select style={inputStyle} value={lp.direction_method || "heading_histogram"} onChange={(e) => updateLine("direction_method", e.target.value)}>
             <option value="heading_histogram">진행방향 히스토그램 (기본값) — 순간 비행 방향 최빈값</option>

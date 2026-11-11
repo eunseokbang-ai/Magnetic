@@ -174,6 +174,66 @@ def _detection_params(line_params) -> LineDetectionParams:
     return LineDetectionParams(**dump)
 
 
+# What kind of stretch a point is in, for point_run_ids: a line, a ferry
+# leg, a ramp, or the rest (turns and the pieces trimmed around them).
+_RUN_KINDS = {"transit": 1, "takeoff_ramp": 2, "landing_ramp": 3}
+
+
+def point_run_ids(df: pd.DataFrame) -> np.ndarray:
+    """A number per point for the stretch of flight it belongs to: one
+    pass along a line, one ferry leg, one turn, one ramp.
+
+    This is what the map selects when a point is clicked. A line id will
+    not do for that - a line resumed in a second flight is one id and two
+    passes, and nothing that was excluded has an id at all - so a stretch
+    is defined by what is next to what in the record: consecutive points
+    of the same flight with the same line id and the same kind of
+    exclusion."""
+    line = df["line_id"].to_numpy()
+    kind = np.where(line >= 0, 0, df["exclusion_reason"].map(_RUN_KINDS).fillna(4).to_numpy()).astype(int)
+    source = df["source_file_index"].to_numpy() if "source_file_index" in df.columns else np.zeros(len(df), dtype=int)
+    if len(df) == 0:
+        return np.zeros(0, dtype=int)
+    change = np.r_[True, (line[1:] != line[:-1]) | (kind[1:] != kind[:-1]) | (source[1:] != source[:-1])]
+    return np.cumsum(change) - 1
+
+
+def transit_summary(runs: list[dict] | None, df: pd.DataFrame, enabled: bool, source_files: list | None = None) -> dict:
+    """The ferry legs detect_lines took out (and the runs it kept but was
+    not sure of), as the line editor lists them: each with the stretch of
+    the map it is (run_id, see point_run_ids) and where to look."""
+    runs = runs or []
+    if not runs:
+        return {"enabled": enabled, "n_removed": 0, "n_points_removed": 0, "length_removed_m": 0.0, "n_suspect": 0, "runs": []}
+    run_id = point_run_ids(df)
+    row_of = pd.Series(np.arange(len(df)), index=df["point_id"].to_numpy())
+    files = source_files or []
+    out = []
+    for run in runs:
+        first, last = int(row_of.get(run["first_point_id"], -1)), int(row_of.get(run["last_point_id"], -1))
+        if first < 0 or last < 0:
+            continue
+        mid = (first + last) // 2
+        src = run["source_file_index"]
+        out.append({
+            **{k: run[k] for k in ("verdict", "why", "where", "source_file_index", "n_points", "length_m", "speed_mps",
+                                   "line_speed_mps", "azimuth_deviation_deg", "line_id")},
+            "source_file": files[src] if 0 <= src < len(files) else None,
+            "run_id": int(run_id[mid]),
+            "lat": float(df["lat"].iloc[mid]),
+            "lon": float(df["lon"].iloc[mid]),
+        })
+    removed = [r for r in out if r["verdict"] == "transit"]
+    return {
+        "enabled": enabled,
+        "n_removed": len(removed),
+        "n_points_removed": int(sum(r["n_points"] for r in removed)),
+        "length_removed_m": round(float(sum(r["length_m"] for r in removed)), 1),
+        "n_suspect": len(out) - len(removed),
+        "runs": out,
+    }
+
+
 def _overlap_overrides_for(df, per_line: dict, forced: dict) -> dict:
     """Merge the global keep_first/keep_second choice with any per-line
     overrides, the per-line ones winning."""

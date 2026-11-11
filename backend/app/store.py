@@ -97,6 +97,8 @@ from .project_common import (
     _line_summaries,
     _median_speed_mps,
     _overlap_overrides_for,
+    point_run_ids,
+    transit_summary,
     _statistical_leveling_summary,
     _stats,
     boundary_rings,
@@ -163,6 +165,9 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
     base_leveling = None            # BaseLevelingResult when a base log was levelled
     base_leveling_info: dict | None = None
     overlap_info: dict | None = None
+    # the ferry legs line detection took out, as detect_lines reported them
+    # (rows named by point_id) - see project_common.transit_summary
+    transit_runs: list | None = None
     base_source: dict | None = None  # set when base_raw came from an INTERMAGNET observatory rather than a local upload
     # A parsed-but-not-yet-applied INTERMAGNET observatory fetch/upload -
     # see preview_intermagnet_text/fetch_intermagnet_preview and
@@ -537,6 +542,11 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
         df = detect_lines(df, line_params, utm_epsg_override=utm_epsg_override)
         self.utm_epsg = df.attrs["utm_epsg"]
         self.dominant_azimuth_deg = df.attrs["dominant_azimuth_deg"]
+        point_ids = df["point_id"].to_numpy()
+        self.transit_runs = [
+            {**run, "first_point_id": int(point_ids[run["first_index"]]), "last_point_id": int(point_ids[run["last_index"]])}
+            for run in df.attrs.get("transit_runs", [])
+        ]
 
         # A line the flight was interrupted on carries a stretch recorded
         # twice, because the drone backs up before resuming. Left in, the
@@ -1092,6 +1102,9 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
             "tmi_stats": _stats(df.loc[active, "tmi"]),
             "lines": _line_summaries(df, self.heading_leveling, self.heading_correction_applied),
             "line_overlaps": self.overlap_info,
+            "transit": transit_summary(
+                self.transit_runs, df, bool(self.last_params.line_params.remove_transit) if self.last_params else True,
+                self.drone_raw.attrs.get("source_files") if self.drone_raw is not None else None),
             "display_boundary_polygon": self.display_boundary_polygon,
             "auto_boundary": self.auto_boundary_info,
         }
@@ -1149,6 +1162,8 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
                 "tie_line_id": df["tie_line_id"],
                 "excluded": ~active,
                 "is_ramp": df["exclusion_reason"].isin(["takeoff_ramp", "landing_ramp"]),
+                # the stretch of flight a click on this point selects
+                "run_id": point_run_ids(df),
                 "timestamp": df["timestamp"].astype(str),
             }
         )
@@ -1262,9 +1277,18 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
         # action="include" force-includes points regardless of automatic
         # line detection (e.g. restoring a turbulence segment the auto
         # detector dropped); action="exclude" force-excludes regardless.
+        # An edit that asks for what detection decided anyway is not an
+        # override: putting back a line that was excluded by hand a moment
+        # ago leaves nothing behind, where it used to leave every point of
+        # it counted as "manually included".
         forced_value = req.action == "include"
-        for pid in target_ids:
-            self.manual_overrides[int(pid)] = forced_value
+        auto = pd.Series(df["line_id"].to_numpy() >= 0, index=df["point_id"].to_numpy())
+        ids = [int(pid) for pid in target_ids]
+        for pid, is_auto in zip(ids, auto.reindex(ids).tolist()):
+            if is_auto == forced_value:
+                self.manual_overrides.pop(pid, None)
+            else:
+                self.manual_overrides[pid] = forced_value
         self.grid_cache = {}
         self.transform_cache = {}
         self.mark_changed()

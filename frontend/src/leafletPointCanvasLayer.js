@@ -18,6 +18,11 @@ const PointCanvasLayer = L.Layer.extend({
     this._points = points || [];
     this._colorScale = options && options.colorScale;
     this._onHover = options && options.onHover;
+    // onClick(point | null): the point under a click, or null for a click
+    // on nothing. clickable() says whether clicks mean anything just now
+    // (not while another map tool owns them) - it also decides the cursor.
+    this._onClick = options && options.onClick;
+    this._clickable = (options && options.clickable) || (() => true);
     this._drawn = [];
     this._padding = 0.15; // overscan fraction of viewport, like L.Canvas
   },
@@ -29,13 +34,18 @@ const PointCanvasLayer = L.Layer.extend({
     pane.appendChild(this._canvas);
     this._ctx = this._canvas.getContext("2d");
 
-    this._canvas.style.pointerEvents = this._onHover ? "auto" : "none";
-    if (this._onHover) {
-      this._moveHandler = this._handleMouseMove.bind(this);
-      this._canvas.addEventListener("mousemove", this._moveHandler);
-      this._leaveHandler = () => this._onHover(null);
-      this._canvas.addEventListener("mouseleave", this._leaveHandler);
+    // Pointer events are taken from the map, not from this canvas. The
+    // canvas is one of several stacked in the overlay pane - Leaflet's own
+    // canvas renderer (the boundary outline, markers drawn as paths...)
+    // sits on top of it and would swallow every click and hover meant for
+    // a point. The map hears them all, and does not report the click that
+    // ends a drag.
+    this._canvas.style.pointerEvents = "none";
+    if (this._onHover || this._onClick) {
+      map.on("mousemove", this._handleMouseMove, this);
+      map.on("mouseout", this._handleMouseOut, this);
     }
+    if (this._onClick) map.on("click", this._handleClick, this);
 
     map.on("moveend", this._reset, this);
     map.on("zoomend", this._reset, this);
@@ -45,8 +55,10 @@ const PointCanvasLayer = L.Layer.extend({
   },
 
   onRemove(map) {
-    if (this._moveHandler) this._canvas.removeEventListener("mousemove", this._moveHandler);
-    if (this._leaveHandler) this._canvas.removeEventListener("mouseleave", this._leaveHandler);
+    map.off("mousemove", this._handleMouseMove, this);
+    map.off("mouseout", this._handleMouseOut, this);
+    map.off("click", this._handleClick, this);
+    if (this._pointerCursor) map.getContainer().style.cursor = "";
     this._canvas.remove();
     map.off("moveend", this._reset, this);
     map.off("zoomend", this._reset, this);
@@ -114,12 +126,13 @@ const PointCanvasLayer = L.Layer.extend({
     this._drawn = drawn;
   },
 
-  _handleMouseMove(e) {
-    const rect = this._canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  // the drawn point nearest a map mouse event, within `radius` pixels
+  _nearest(e, radius) {
+    if (!this._origin) return null;
+    const x = e.layerPoint.x - this._origin.x;
+    const y = e.layerPoint.y - this._origin.y;
     let closest = null;
-    let minDistSq = 8 * 8;
+    let minDistSq = radius * radius;
     const drawn = this._drawn;
     for (let i = 0; i < drawn.length; i++) {
       const dx = drawn[i][0] - x;
@@ -130,7 +143,30 @@ const PointCanvasLayer = L.Layer.extend({
         closest = drawn[i][2];
       }
     }
+    return closest;
+  },
+
+  _handleMouseMove(e) {
+    const closest = this._nearest(e, 8);
+    if (this._onClick) {
+      // a hand over a point that can be clicked; left alone while another
+      // tool has set a cursor of its own
+      const pointer = !!closest && this._clickable();
+      if (pointer !== !!this._pointerCursor) {
+        this._pointerCursor = pointer;
+        if (pointer || this._clickable()) this._map.getContainer().style.cursor = pointer ? "pointer" : "";
+      }
+    }
     if (closest && this._onHover) this._onHover(closest);
+  },
+
+  _handleMouseOut() {
+    if (this._onHover) this._onHover(null);
+  },
+
+  _handleClick(e) {
+    if (!this._clickable()) return;
+    this._onClick(this._nearest(e, 8));
   },
 });
 

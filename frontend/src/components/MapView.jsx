@@ -14,14 +14,22 @@ import pointCanvasLayer from "../leafletPointCanvasLayer";
 // event-listener registration is the actual bottleneck, and it was rebuilt
 // from scratch on every color-range/value-field tweak. The layer is created
 // once and only re-painted via setData() afterwards.
-function PointLayer({ points, vmin, vmax, cmapName, colorStops, onHover }) {
+function PointLayer({ points, vmin, vmax, cmapName, colorStops, onHover, onClick, clickable }) {
   const map = useMap();
   const layerRef = useRef(null);
   const onHoverRef = useRef(onHover);
   onHoverRef.current = onHover;
+  const onClickRef = useRef(onClick);
+  onClickRef.current = onClick;
+  const clickableRef = useRef(clickable);
+  clickableRef.current = clickable;
 
   useEffect(() => {
-    const layer = pointCanvasLayer([], { onHover: (p) => onHoverRef.current && onHoverRef.current(p) });
+    const layer = pointCanvasLayer([], {
+      onHover: (p) => onHoverRef.current && onHoverRef.current(p),
+      onClick: (p) => onClickRef.current && onClickRef.current(p),
+      clickable: () => !!clickableRef.current && !!onClickRef.current,
+    });
     layer.addTo(map);
     layerRef.current = layer;
     return () => {
@@ -35,6 +43,41 @@ function PointLayer({ points, vmin, vmax, cmapName, colorStops, onHover }) {
     const colorScale = makeColorScale(cmapName, vmin, vmax, colorStops);
     layerRef.current.setData(points || [], colorScale);
   }, [points, vmin, vmax, cmapName, colorStops]);
+
+  return null;
+}
+
+// The stretch of flight selected by a click (see lib/runSelection.js): a
+// wide light band under a thin dark line, so it reads on a satellite image
+// and on a colour-scaled grid alike. In a pane of its own, above the point
+// canvas and below the markers. `fit` (with `fitKey` to re-trigger) moves
+// the map to it - for a run picked from a list, not one just clicked.
+function RunHighlightLayer({ latlngs, fit, fitKey }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map.getPane("runSelection")) {
+      const pane = map.createPane("runSelection");
+      pane.style.zIndex = 450;
+      pane.style.pointerEvents = "none";
+    }
+  }, [map]);
+
+  useEffect(() => {
+    if (!latlngs || latlngs.length === 0) return undefined;
+    const pane = map.getPane("runSelection") ? "runSelection" : "overlayPane";
+    const renderer = L.svg({ pane });
+    const group = L.layerGroup([
+      L.polyline(latlngs, { pane, renderer, color: "#fde047", weight: 11, opacity: 0.75, interactive: false, lineCap: "round" }),
+      L.polyline(latlngs, { pane, renderer, color: "#111827", weight: 2, opacity: 0.95, interactive: false }),
+    ]).addTo(map);
+    return () => group.remove();
+  }, [map, latlngs]);
+
+  useEffect(() => {
+    if (!fit || !latlngs || latlngs.length === 0) return;
+    map.fitBounds(L.latLngBounds(latlngs).pad(0.6), { maxZoom: 17, animate: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, fit, fitKey]);
 
   return null;
 }
@@ -987,6 +1030,11 @@ export default function MapView({
   lines,
   showLineLabels,
   onHoverPoint,
+  onPointClick,
+  pointsClickable,
+  selectedRunLatLngs,
+  selectedRunFit,
+  selectedRunFitKey,
   drawMode,
   drawShapeType,
   onShapeDrawn,
@@ -1149,7 +1197,10 @@ export default function MapView({
         cmapName={overlay?.cmap || cmapName}
         colorStops={overlay?.color_stops}
         onHover={onHoverPoint}
+        onClick={onPointClick}
+        clickable={pointsClickable}
       />
+      <RunHighlightLayer latlngs={pointsVisible ? selectedRunLatLngs : null} fit={selectedRunFit} fitKey={selectedRunFitKey} />
 
       <LineLabels lines={lines} visible={showLineLabels} />
 

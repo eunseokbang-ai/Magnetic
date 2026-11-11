@@ -33,7 +33,7 @@ export default function EditingPanels() {
     setStructureScanShow, showGeneratedLayer, showLineLabels, showPointsOverGrid, showRampPoints,
     smoothDrawMode, smoothHistory, smoothing, structureScanApplying, structureScanError, structureScanParams,
     structureScanResult, structureScanRunning, structureScanShow, tileFolderError, tileFolderRegistering,
-    valueField,
+    valueField, handleSelectRun, runSelectEnabled, selectedRun, setRunSelectEnabled, setSelectedRun,
   } = useApp();
 
   return (
@@ -76,6 +76,17 @@ export default function EditingPanels() {
         onUndoSourceRemoval={() => handleSourceRemovalHistory("undo")}
         onResetSourceRemovals={() => handleSourceRemovalHistory("reset")}
         onResetManual={handleResetManual}
+        runSelectEnabled={runSelectEnabled}
+        onToggleRunSelect={(on) => {
+          setRunSelectEnabled(on);
+          if (!on) setSelectedRun(null);
+        }}
+        transit={processSummary?.transit}
+        onSelectRun={(runId) => {
+          exitAllDrawModes();
+          handleSelectRun(runId);
+        }}
+        selectedRunId={selectedRun?.runId}
         nManualIncluded={processSummary?.n_manual_included}
         nManualExcluded={processSummary?.n_manual_excluded}
         overlapFor={(lineId) =>

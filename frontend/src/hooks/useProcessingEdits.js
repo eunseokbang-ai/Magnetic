@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import * as api from "../api";
 import { DEFAULT_PARAMS } from "../appDefaults";
+import { summariseRun } from "../lib/runSelection";
 
 // 처리 실행과 그 뒤의 편집: 처리 설정, 측점 제외, 측선 프로파일, 평활, 측선 편집기.
 //
@@ -22,6 +23,12 @@ export default function useProcessingEdits(app) {
   // 숨기고 제외/복원 드로잉의 영향도 받지 않도록 보호한다 - 켜면 다시 보이고
   // 편집도 가능해진다 (backend: ManualExcludeRequest.include_ramp).
   const [showRampPoints, setShowRampPoints] = useState(false);
+  // 지도에서 측점을 클릭하면 그 점이 속한 연속 구간(한 번의 측선 통과, 이동
+  // 구간, 선회 하나)이 선택되고 제외/복원을 묻는 카드가 뜬다 (lib/runSelection.js).
+  // selectedRun = { runId, fit }: fit은 목록에서 골랐을 때 지도를 그 구간으로 옮기라는 표시.
+  const [runSelectEnabled, setRunSelectEnabled] = useState(true);
+  const [selectedRun, setSelectedRun] = useState(null);
+  const [runActionBusy, setRunActionBusy] = useState(false);
   const [flightPathEditorOpen, setFlightPathEditorOpen] = useState(false);
   const [lineProfileData, setLineProfileData] = useState(null);
   const [lineProfileLoadingId, setLineProfileLoadingId] = useState(null);
@@ -56,6 +63,7 @@ export default function useProcessingEdits(app) {
       setSectionResult(null);
       setVolumeData(null);
       setLineProfileData(null);
+      setSelectedRun(null);
       await refreshPoints(projectId, valueField);
     } catch (e) {
       handleError(e);
@@ -122,6 +130,45 @@ export default function useProcessingEdits(app) {
       setOverlay(null);
     } catch (e) {
       handleError(e);
+    }
+  };
+
+  // A click on the map: the point under it (or null for a click on nothing).
+  const handleMapPointClick = useCallback((point) => {
+    setSelectedRun(point && point.run_id != null ? { runId: point.run_id, fit: false } : null);
+  }, []);
+
+  // From a list (the ferry legs the detection took out): select and show.
+  const handleSelectRun = useCallback((runId) => {
+    setSelectedRun(runId == null ? null : { runId, fit: true, nonce: Date.now() });
+  }, []);
+
+  const selectedRunInfo = useMemo(
+    () => (selectedRun ? summariseRun(points, selectedRun.runId, processSummary?.transit?.runs) : null),
+    [selectedRun, points, processSummary]
+  );
+
+  // The card's buttons: exclude or put back the selected run, or the whole
+  // line it is a pass of. A ramp is protected from edits unless asked for
+  // by name, and clicking one is asking for it by name.
+  const handleRunAction = async (action, scope) => {
+    if (!selectedRunInfo) return;
+    try {
+      setError(null);
+      setRunActionBusy(true);
+      const body =
+        scope === "line"
+          ? { mode: "lines", action, line_ids: [selectedRunInfo.lineId] }
+          : { mode: "point_ids", action, point_ids: selectedRunInfo.pointIds, include_ramp: showRampPoints || selectedRunInfo.isRamp };
+      const summary = await api.manualExclude(projectId, body);
+      setProcessSummary(summary);
+      applyExclusionDelta(summary.exclusion);
+      setOverlay(null);
+      setSelectedRun(null);
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setRunActionBusy(false);
     }
   };
 
@@ -236,6 +283,8 @@ export default function useProcessingEdits(app) {
     setSmoothing, smoothDrawMode, setSmoothDrawMode, smoothHistory, setSmoothHistory, applyExclusionDelta,
     handleProcess, handleSetValueField, handleToggleLines, handleShapeDrawn, handleResetManual,
     handleManualExcludePointIds, handleShowLineProfile, _afterSmoothingApplied, handleApplySmoothing,
-    handleUndoSmoothing, handleResetAllSmoothing, editablePoints,
+    handleUndoSmoothing, handleResetAllSmoothing, editablePoints, runSelectEnabled, setRunSelectEnabled,
+    selectedRun, setSelectedRun, runActionBusy, handleMapPointClick, handleSelectRun, selectedRunInfo,
+    handleRunAction,
   };
 }
