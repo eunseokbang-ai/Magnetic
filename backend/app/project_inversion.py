@@ -27,7 +27,10 @@ from magcore.inversion import (
     build_sensitivity_matrix,
     horizontal_slice,
     internal_slice,
+    interpretable_cells,
+    interpretable_susceptibility,
     invert,
+    padding_share,
     path_slice_3d as _inversion_path_slice_3d,
     render_section_png,
     upsample_susceptibility,
@@ -53,6 +56,33 @@ from .project_common import ProjectError, _as_job, _stats
 
 # How many of the block's strongest anomalies the inversion's remanence check looks at.
 REMANENCE_CHECK_CANDIDATES = 6
+
+# How far beyond the columns that have data the inversion mesh reaches, in
+# cells. The mesh is the survey's bounding rectangle, and a survey seldom
+# fills it (GaSaDo: 61% of the columns have data above them). Every column
+# used to be solved for and shown alike: on GaSaDo a quarter of the model
+# above 0.05 SI stood under columns with no data, drawn as bodies along
+# the rectangle's edges. Those cells cannot simply be dropped - they are
+# where the solve puts what sources outside the survey do to its edge.
+# Measured on GaSaDo's geometry (73 m cells, strength 1.0 on the real
+# data; a 0.08 SI block inside plus one outside the data, 2 nT noise):
+#
+#   reach      real data         model under data    block 2.8 cells out:
+#   (cells)    rms               vs. whole rectangle largest false cell under data
+#   0          13.0 nT           corr 0.13           0.27 SI
+#   1           5.0              0.80                0.014
+#   2           4.9              0.92                0.017
+#   3           4.9              0.97                0.014
+#   5           4.9              0.99                0.013
+#   rectangle   4.8              1                   0.013
+#
+# With no padding the outside block is rebuilt inside the survey's rim at
+# three times its susceptibility; one cell of padding is enough to stop
+# that, and three give the model the whole rectangle gives (and a fifth
+# fewer cells to solve for). So: the columns within this reach stay in the
+# solve as padding and are not shown or counted; the ones beyond are left
+# out. See magcore.inversion.interpretable_cells.
+INVERSION_PADDING_CELLS = 3.0
 
 
 class InversionMixin:
@@ -272,6 +302,10 @@ class InversionMixin:
             )
             ground_elev = ground_result.values
 
+        obs_mask = np.isfinite(obs_grid.values) & np.isfinite(alt_grid.values)
+        if int(obs_mask.sum()) < 10:
+            raise ProjectError("역산을 위한 유효 관측 격자점이 부족합니다.")
+
         growth_factor = params.depth_growth_factor or DEFAULT_DEPTH_GROWTH_FACTOR
         try:
             progress.report("메시 구성", 0.05)
@@ -279,6 +313,7 @@ class InversionMixin:
                 obs_grid.easting, obs_grid.northing, ground_elev,
                 cell_size_m=obs_cell_size_m, depth_extent_m=depth_extent_m, n_layers=n_layers,
                 growth_factor=growth_factor,
+                data_support=obs_mask, padding_cells=INVERSION_PADDING_CELLS,
             )
         except InversionError as exc:
             raise ProjectError(str(exc)) from exc
@@ -290,13 +325,10 @@ class InversionMixin:
             )
 
         easting_2d, northing_2d = np.meshgrid(obs_grid.easting, obs_grid.northing)
-        obs_mask = np.isfinite(obs_grid.values) & np.isfinite(alt_grid.values)
         obs_x = easting_2d[obs_mask]
         obs_y = northing_2d[obs_mask]
         obs_z = alt_grid.values[obs_mask]
         data_nt = obs_grid.values[obs_mask]
-        if len(data_nt) < 10:
-            raise ProjectError("역산을 위한 유효 관측 격자점이 부족합니다.")
 
         field_intensity_nt = mean_field_intensity_nt(
             sub["lat"].to_numpy(), sub["lon"].to_numpy(), sub["altitude_ellipsoidal_m"].to_numpy(), sub["timestamp"]
@@ -337,12 +369,13 @@ class InversionMixin:
         self.inversion_obs_grid = obs_grid
         self.inversion_value_field = params.value
 
-        active_chi = result.susceptibility[result.susceptibility > 0]
+        active_chi = _shown_positive(result)
         summary = {
             "n_obs": result.n_obs,
             "n_active_cells": result.n_active_cells,
             "rms_misfit_nt": result.rms_misfit_nt,
             "iterations": result.iterations,
+            "data_support": _data_support_summary(result, INVERSION_PADDING_CELLS),
             "n_layers": n_layers,
             "obs_cell_size_m": obs_cell_size_m,
             "depth_extent_m": depth_extent_m,
@@ -472,7 +505,9 @@ class InversionMixin:
         # blocky voxel shape - the inversion itself is unaffected, this
         # only changes how the already-solved model is displayed. See
         # processing/inversion.upsample_susceptibility.
-        fine_x, fine_y, fine_z, fine_chi = upsample_susceptibility(mesh, result.susceptibility)
+        # Only the cells under data: the padding around the survey is part
+        # of the model and not a result (magcore.inversion.interpretable_cells).
+        fine_x, fine_y, fine_z, fine_chi = upsample_susceptibility(mesh, interpretable_susceptibility(result, fill=0.0))
 
         chi = fine_chi
         if threshold is not None:
@@ -481,7 +516,7 @@ class InversionMixin:
             chi = np.where(chi <= threshold_max, chi, 0.0)
 
         Y, X, Z = np.meshgrid(fine_y - y0, fine_x - x0, fine_z, indexing="ij")
-        active_chi = result.susceptibility[result.susceptibility > 0]
+        active_chi = _shown_positive(result)
 
         # Drape the actual observed anomaly/TMI map used as inversion
         # input on the terrain-following top of the mesh, matching the
@@ -576,7 +611,7 @@ class InversionMixin:
 
         face["x"] = (np.asarray(face["x"]) - x0).tolist()
         face["y"] = (np.asarray(face["y"]) - y0).tolist()
-        active_chi = self.inversion_result.susceptibility[self.inversion_result.susceptibility > 0]
+        active_chi = _shown_positive(self.inversion_result)
         face["vmin"] = 0.0
         face["vmax"] = float(active_chi.max()) if active_chi.size else 1.0
         return face
@@ -612,6 +647,8 @@ class InversionMixin:
             field_intensity_nt=np.array(self.inversion_field_intensity_nt if self.inversion_field_intensity_nt is not None else np.nan),
             value_field=np.array(self.inversion_value_field or "anomaly"),
         )
+        if mesh.data_support is not None:
+            payload["data_support"] = mesh.data_support
         if self.inversion_obs_grid is not None:
             g = self.inversion_obs_grid
             payload.update(
@@ -640,6 +677,7 @@ class InversionMixin:
                     layer_thickness_m=np.atleast_1d(npz["layer_thickness_m"]).astype(float),
                     ground_elevation=npz["ground_elevation"],
                     active=npz["active"],
+                    data_support=_saved_data_support(npz),
                 )
                 result = InversionResult(
                     mesh=mesh,
@@ -677,12 +715,14 @@ class InversionMixin:
         self.inversion_value_field = value_field
         self.inversion_obs_grid = obs_grid
 
-        active_chi = result.susceptibility[result.susceptibility > 0]
+        active_chi = _shown_positive(result)
         summary = {
             "n_obs": result.n_obs,
             "n_active_cells": result.n_active_cells,
             "rms_misfit_nt": result.rms_misfit_nt,
             "iterations": result.iterations,
+            # the padding width is not recorded in a model file
+            "data_support": _data_support_summary(result, None),
             "n_layers": int(mesh.active.shape[2]),
             "obs_cell_size_m": mesh.cell_size_m,
             "depth_extent_m": float(np.sum(mesh.layer_thickness_m)),
@@ -730,7 +770,56 @@ class InversionMixin:
                 "susceptibility_si": result.susceptibility[rows, cols, layers],
             }
         )
+        if mesh.data_support is not None:
+            # 0 = padding: in the model (needed to reproduce its predicted
+            # data), outside the survey, and not to be read as a result.
+            out["under_data"] = mesh.data_support[rows, cols].astype(int)
         return out.to_csv(index=False).encode("utf-8")
+
+
+def _shown_positive(result: InversionResult) -> np.ndarray:
+    """The non-zero susceptibilities that are read as a result (under
+    data, below ground) - what the summary statistics and the colour
+    range describe."""
+    chi = result.susceptibility[interpretable_cells(result.mesh)]
+    return chi[chi > 0]
+
+
+def _saved_data_support(npz) -> np.ndarray | None:
+    """A saved model's data-support mask; for a file from before it was
+    recorded, the columns its saved observation grid has values in (the
+    mesh has always been laid out on that grid)."""
+    if "data_support" in npz:
+        return np.asarray(npz["data_support"], dtype=bool)
+    if "obs_values" in npz and npz["obs_values"].shape == npz["ground_elevation"].shape:
+        support = np.isfinite(npz["obs_values"])
+        return support if support.any() else None
+    return None
+
+
+def _data_support_summary(result: InversionResult, padding_cells: float | None) -> dict | None:
+    mesh = result.mesh
+    if mesh.data_support is None:
+        return None
+    support = mesh.data_support
+    in_model = mesh.active.any(axis=2)
+    n_padding = int((in_model & ~support).sum())
+    share = padding_share(result)
+    note = None
+    if n_padding and share is not None and share >= 0.2:
+        note = (
+            f"모델(자화율×부피)의 {share * 100:.0f}%가 자료 밖 여유 띠에 있습니다. 탐사 범위 가장자리의 이상이 범위 밖 원천으로 "
+            "설명되고 있다는 뜻으로, 가장자리 근처의 결과는 조심해서 읽어야 합니다."
+        )
+    return {
+        "n_columns": int(support.size),
+        "n_columns_with_data": int(support.sum()),
+        "coverage_frac": float(support.mean()),
+        "padding_cells": padding_cells,
+        "n_padding_columns": n_padding,
+        "padding_model_share": share,
+        "note": note,
+    }
 
 
 # Size caps for the 3D inversion mesh/observation grid. The normal

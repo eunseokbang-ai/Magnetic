@@ -148,7 +148,9 @@ class PersistenceMixin:
                 col = int(np.argmin(np.abs(mesh.x_centers - x)))
                 row_i = int(np.argmin(np.abs(mesh.y_centers - y)))
                 col_dist_m = float(np.hypot(mesh.x_centers[col] - x, mesh.y_centers[row_i] - y))
-                if col_dist_m <= 2.0 * mesh.cell_size_m:
+                if mesh.data_support is not None and not mesh.data_support[row_i, col]:
+                    result["inversion_susceptibility_profile"] = {"note": "자료가 없는 곳이라 역산 결과가 없습니다."}
+                elif col_dist_m <= 2.0 * mesh.cell_size_m:
                     chi = self.inversion_result.susceptibility[row_i, col, :]
                     result["inversion_susceptibility_profile"] = {
                         "distance_from_mesh_column_m": col_dist_m,

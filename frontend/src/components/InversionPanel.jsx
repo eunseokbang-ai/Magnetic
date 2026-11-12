@@ -300,6 +300,20 @@ export default function InversionPanel({
           </div>
           <div>고도 범위: {summary.elevation_range_m?.[0]?.toFixed(0)} ~ {summary.elevation_range_m?.[1]?.toFixed(0)} m</div>
           <div>DEM 사용: {summary.used_dem ? "예" : "아니오 (GPS 등고비행 추정)"}</div>
+          {summary.data_support && (
+            <div
+              data-testid="inversion-data-support"
+              title="역산 격자는 탐사 범위를 감싼 직사각형이라, 위에 자료가 없는 칸이 생깁니다. 그 칸의 자화율은 자료가 정해 주지 않으므로 결과로 그리지 않습니다. 탐사 범위 바로 바깥의 좁은 띠는 범위 밖 원천의 영향을 받아 주는 용도로 풀이에만 넣습니다."
+            >
+              표시 범위: 자료가 있는 칸만 (격자의 {(summary.data_support.coverage_frac * 100).toFixed(0)}%)
+              {summary.data_support.n_padding_columns > 0 &&
+                summary.data_support.padding_model_share != null &&
+                ` · 자료 밖 여유 띠${summary.data_support.padding_cells != null ? ` ${summary.data_support.padding_cells}칸` : ""}은 풀이에만 사용 (모델의 ${(summary.data_support.padding_model_share * 100).toFixed(0)}%)`}
+            </div>
+          )}
+          {summary.data_support?.note && (
+            <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>⚠ {summary.data_support.note}</div>
+          )}
           {summary.sensor_height?.corrected && (
             <div>센서 고도: 보정됨 (남는 불확실성 중앙값 {summary.sensor_height.sigma_median_m} m)</div>
           )}

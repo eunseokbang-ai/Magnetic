@@ -39,6 +39,7 @@ from choclo.prism import magnetic_field
 from numba import njit, prange
 from scipy.interpolate import RegularGridInterpolator
 from scipy.linalg import cho_factor, cho_solve
+from scipy.ndimage import distance_transform_edt
 
 MU0 = 4.0 * np.pi * 1e-7
 # Newton steps the bounded solve may take. It ends by itself in the step
@@ -69,6 +70,13 @@ class InversionMesh:
     layer_thickness_m: np.ndarray  # (nz,) per-layer thickness, index 0 = shallowest (see build_mesh's growth_factor)
     ground_elevation: np.ndarray  # (ny, nx)
     active: np.ndarray  # (ny, nx, nz) bool - False = air/inactive cell
+    # (ny, nx) bool - True where the column has data above it. The mesh is
+    # the survey's bounding rectangle and a survey seldom fills it; the
+    # columns outside are either left out of the solve or kept as padding
+    # (see build_mesh), and in neither case read as a result - see
+    # interpretable_susceptibility. None = every column counts (a model
+    # from before this was recorded, or one built without it).
+    data_support: np.ndarray | None = None
 
 
 @dataclass
@@ -93,8 +101,20 @@ def build_mesh(
     depth_extent_m: float,
     n_layers: int,
     growth_factor: float = 1.0,
+    data_support: np.ndarray | None = None,
+    padding_cells: float | None = None,
 ) -> InversionMesh:
-    """growth_factor grades the per-layer thickness geometrically with
+    """data_support marks the columns that have data above them, and
+    padding_cells how far beyond them (in cells) the model reaches: the
+    columns farther out are inactive. The columns within reach but without
+    data are padding - cells the solve may fill to explain what sources
+    outside the survey do to the data at its edge, and which nothing
+    constrains from above. They are part of the model and its predicted
+    data, and are not shown (interpretable_susceptibility). Without
+    data_support every column of the rectangle is active and counts, as
+    before.
+
+    growth_factor grades the per-layer thickness geometrically with
     depth (thickness_k = thickness_0 * growth_factor^k, k=0 = shallowest)
     instead of dividing depth_extent_m into n_layers equal slabs - the
     standard UBC-GIF/SimPEG "core mesh" scheme (Li & Oldenburg's own
@@ -131,6 +151,17 @@ def build_mesh(
     for k in range(n_layers):
         active[:, :, k] = z_centers[k] < ground_filled
 
+    support = None
+    if data_support is not None:
+        support = np.asarray(data_support, dtype=bool)
+        if support.shape != (ny, nx):
+            raise InversionError("자료 범위 격자와 역산 격자의 크기가 일치하지 않습니다.")
+        if not support.any():
+            raise InversionError("자료가 있는 격자 칸이 없습니다.")
+        if padding_cells is not None:
+            within_reach = distance_transform_edt(~support) <= float(padding_cells) + 1e-9
+            active &= within_reach[:, :, None]
+
     return InversionMesh(
         x_centers=np.asarray(x_centers, dtype=float),
         y_centers=np.asarray(y_centers, dtype=float),
@@ -139,6 +170,7 @@ def build_mesh(
         layer_thickness_m=layer_thickness,
         ground_elevation=ground_filled,
         active=active,
+        data_support=support,
     )
 
 
@@ -683,6 +715,38 @@ def invert(
     )
 
 
+def interpretable_cells(mesh: InversionMesh) -> np.ndarray:
+    """(ny, nx, nz) bool - the cells whose susceptibility is a result:
+    below ground and under a column with data above it. The padding
+    around the survey is in the model (the solve needs somewhere to put
+    what lies outside) and is not one of them: with no data above, what
+    the solve puts there is whatever is cheapest, not what is there."""
+    if mesh.data_support is None:
+        return mesh.active
+    return mesh.active & mesh.data_support[:, :, None]
+
+
+def interpretable_susceptibility(result: InversionResult, fill: float = np.nan) -> np.ndarray:
+    """The model as it is shown and summarised: susceptibility where
+    interpretable_cells, `fill` everywhere else (NaN for the slices and
+    sections, which draw it transparent; 0 for the iso-surface)."""
+    return np.where(interpretable_cells(result.mesh), result.susceptibility.astype(float), fill)
+
+
+def padding_share(result: InversionResult) -> float | None:
+    """The fraction of the model (susceptibility x volume) that sits in
+    the padding, outside the data - how much of the fit rests on sources
+    the survey did not fly over. None when the mesh records no support."""
+    mesh = result.mesh
+    if mesh.data_support is None:
+        return None
+    weight = result.susceptibility * mesh.layer_thickness_m[None, None, :]
+    total = float(weight[mesh.active].sum())
+    if total <= 0:
+        return 0.0
+    return float(weight[mesh.active & ~mesh.data_support[:, :, None]].sum() / total)
+
+
 def upsample_susceptibility(
     mesh: InversionMesh,
     chi: np.ndarray,
@@ -760,9 +824,7 @@ def horizontal_slice(
     processing.render.grid_to_png_overlay renders them transparent."""
     n_layers = result.mesh.active.shape[2]
     layer_index = int(np.clip(layer_index, 0, n_layers - 1))
-    slice_2d = result.susceptibility[:, :, layer_index].copy()
-    active_2d = result.mesh.active[:, :, layer_index]
-    slice_2d[~active_2d] = np.nan
+    slice_2d = interpretable_susceptibility(result)[:, :, layer_index]
     slice_2d = _apply_range(slice_2d, threshold, threshold_max)
     return slice_2d
 
@@ -824,9 +886,7 @@ def vertical_section(
     seg_len = np.hypot(np.diff(path_x), np.diff(path_y))
     distance = np.concatenate([[0.0], np.cumsum(seg_len)])
 
-    section = result.susceptibility[row_idx, col_idx, :].T  # (n_layers, n_samples)
-    active = mesh.active[row_idx, col_idx, :].T
-    section = np.where(active, section, np.nan)
+    section = interpretable_susceptibility(result)[row_idx, col_idx, :].T  # (n_layers, n_samples)
     section = _apply_range(section, threshold, threshold_max)
     ground_elevation = mesh.ground_elevation[row_idx, col_idx]
 
@@ -852,9 +912,7 @@ def path_slice_3d(
     path_y = np.asarray(path_y, dtype=float)
     row_idx, col_idx = _sample_along_path(mesh, path_x, path_y)
 
-    section = result.susceptibility[row_idx, col_idx, :].T  # (n_layers, n_samples)
-    active = mesh.active[row_idx, col_idx, :].T
-    section = np.where(active, section, np.nan)
+    section = interpretable_susceptibility(result)[row_idx, col_idx, :].T  # (n_layers, n_samples)
     section = _apply_range(section, threshold, threshold_max)
 
     n_layers, n_samples = section.shape
@@ -875,11 +933,9 @@ def _wall_along_x(result: InversionResult, row_idx: int) -> dict:
     (called at the row 0 / ny-1 mesh boundary) and internal_slice
     (called at an arbitrary interior row for an "ew"-oriented cut)."""
     mesh = result.mesh
-    chi = result.susceptibility
     x, z = mesh.x_centers, mesh.z_centers
     x_grid_w, z_grid_w = np.meshgrid(x, z)  # (nz, nx)
-    val = chi[row_idx, :, :].T.astype(float).copy()
-    val[~mesh.active[row_idx, :, :].T] = np.nan
+    val = interpretable_susceptibility(result)[row_idx, :, :].T
     return {
         "x": x_grid_w.tolist(),
         "y": np.full_like(x_grid_w, float(mesh.y_centers[row_idx])).tolist(),
@@ -894,11 +950,9 @@ def _wall_along_y(result: InversionResult, col_idx: int) -> dict:
     box_faces (mesh boundary) and internal_slice (arbitrary interior
     column for an "ns"-oriented cut)."""
     mesh = result.mesh
-    chi = result.susceptibility
     y, z = mesh.y_centers, mesh.z_centers
     y_grid_w, z_grid_w = np.meshgrid(y, z)  # (nz, ny)
-    val = chi[:, col_idx, :].T.astype(float).copy()
-    val[~mesh.active[:, col_idx, :].T] = np.nan
+    val = interpretable_susceptibility(result)[:, col_idx, :].T
     return {
         "x": np.full_like(y_grid_w, float(mesh.x_centers[col_idx])).tolist(),
         "y": y_grid_w.tolist(),
@@ -967,7 +1021,7 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
     not the surface a user asking to "see the 3D terrain shape" wants."""
     mesh = result.mesh
     chi = result.susceptibility
-    active = mesh.active
+    active = interpretable_cells(mesh)
     x, y, z = mesh.x_centers, mesh.y_centers, mesh.z_centers
     ny, nx, nz = chi.shape
     top_layer_index = int(np.clip(top_layer_index, 0, nz - 1))
@@ -990,7 +1044,7 @@ def box_faces(result: InversionResult, top_layer_index: int = 0) -> dict:
         "value": top_chi.tolist(),
     }
 
-    active_chi = chi[chi > 0]
+    active_chi = chi[active & (chi > 0)]
     return {
         "top": top,
         "south": _wall_along_x(result, 0),
