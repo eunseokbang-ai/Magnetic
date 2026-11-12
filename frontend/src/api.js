@@ -717,6 +717,22 @@ export function applyRepeatPassLeveling(projectId, req) {
   return request(`/projects/${projectId}/repeat-passes/apply`, { method: "POST", body: JSON.stringify(req || {}) });
 }
 
+// Sensor height correction: the state of it (with its ground checks), and
+// apply / reset. The terrain model goes with the request when one is
+// chosen; without it the backend uses the project's DEM.
+export function getSensorHeight(projectId) {
+  return request(`/projects/${projectId}/sensor-height`);
+}
+
+export function applySensorHeight(projectId, { mode = "apply", file = null, resting_offset_m = 0, exclude_sea_level = true } = {}) {
+  const form = new FormData();
+  form.append("mode", mode);
+  form.append("resting_offset_m", String(resting_offset_m));
+  form.append("exclude_sea_level", exclude_sea_level ? "true" : "false");
+  if (file) form.append("file", file);
+  return request(`/projects/${projectId}/sensor-height/apply`, { method: "POST", body: form });
+}
+
 // Flight-height normalisation: the altitude spread and the state of the
 // normalisation (cheap), and the fit-and-apply / reset (a minute or two on
 // a large survey).

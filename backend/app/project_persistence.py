@@ -18,6 +18,7 @@ from magcore import local_raster, local_tiles, progress
 from magcore.geology_sample import GeologySampleError, sample_geotiff_at_point
 from magcore.gridding import _nearest_axis_index
 from magcore.height_normalization import HeightNormalization
+from magcore.sensor_height import SensorHeightCorrection
 from magcore.overlay_image import OverlayImageError, load_geotiff_overlay
 from magcore.source_removal import SourceRemoval
 from magcore.vector_layer import detect_vector_format, load_vector_layer
@@ -265,6 +266,7 @@ class PersistenceMixin:
             "height_normalization": (
                 self.height_normalization.to_dict() if self.height_normalization is not None else None
             ),
+            "sensor_height": self.sensor_height.to_dict() if self.sensor_height is not None else None,
             "display_boundary_polygon": self.display_boundary_polygon,
             "dem_name": self.dem_name,
             "has_base": self.base_raw is not None,
@@ -354,6 +356,13 @@ class PersistenceMixin:
                         int(k): float(v) for k, v in (meta.get("repeat_pass_offsets") or {}).items()
                     }
                     self.block_shifts = [dict(s) for s in (meta.get("block_shifts") or [])]
+                    # The sensor heights the layers below were fitted at:
+                    # the saved checks and model, not a re-measurement (the
+                    # terrain model they were made against need not be here).
+                    saved_sh = meta.get("sensor_height")
+                    self.sensor_height = SensorHeightCorrection.from_dict(saved_sh) if saved_sh else None
+                    if self.sensor_height is not None and self.processed_base is not None:
+                        self.processed_base = self._write_sensor_height(self.processed_base)
                     # Likewise the fitted layers, not a refit.
                     saved_hn = meta.get("height_normalization")
                     self.height_normalization = HeightNormalization.from_dict(saved_hn) if saved_hn else None
@@ -365,7 +374,8 @@ class PersistenceMixin:
                     smooth_ids = meta.get("manual_smooth_point_ids") or []
                     if smooth_ids:
                         self.set_manual_smoothing(ManualSmoothRequest(mode="point_ids", point_ids=smooth_ids))
-                    elif self.source_removals or self.height_normalization is not None or self.block_shifts or self.repeat_pass_offsets:
+                    elif (self.source_removals or self.height_normalization is not None or self.block_shifts
+                          or self.repeat_pass_offsets or self.sensor_height is not None):
                         self._rebuild_processed()
                     # Restore the saved boundary state exactly, including
                     # "none". The run_pipeline replay above regenerates an

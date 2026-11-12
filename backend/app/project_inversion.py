@@ -191,6 +191,22 @@ class InversionMixin:
             ref[inside] = unit["susceptibility_si"]
         return ref
 
+    def _inversion_height_note(self, sub: pd.DataFrame) -> dict:
+        """What the observation heights of this inversion are worth: whether
+        they were anchored to the ground (project_sensor_height.py) and how
+        uncertain they remain; or, with a terrain model in use and no
+        correction, a reminder that the two are not known to agree."""
+        if self.sensor_height is not None:
+            sigma = sub["altitude_sigma_m"].to_numpy(dtype=float) if "altitude_sigma_m" in sub.columns else np.array([np.nan])
+            return {"corrected": True, "sigma_median_m": round(float(np.nanmedian(sigma)), 1), "note": None}
+        note = None
+        if self.dem_bytes is not None:
+            note = (
+                "센서 고도가 보정되지 않았습니다. 견인 센서의 GPS 고도는 수 m에서 10 m 이상 틀릴 수 있고(가사도: 평균 +9.7 m), "
+                "그만큼 센서와 지면 사이 거리가 달라져 자화율 크기가 수십 % 변합니다. '센서 고도 보정'을 적용한 뒤 역산하세요."
+            )
+        return {"corrected": False, "sigma_median_m": None, "note": note}
+
     @_as_job("3차원 역산")
     def run_inversion(self, params: InversionParams) -> dict:
         if self.processed is None:
@@ -341,6 +357,7 @@ class InversionMixin:
             },
             "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "used_dem": self.dem_bytes is not None,
+            "sensor_height": self._inversion_height_note(sub),
             "regional_removal": regional_info,
             "regional_warning": _regional_warning(regional_info),
             "auto_params": auto_used,
@@ -679,6 +696,7 @@ class InversionMixin:
             },
             "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "used_dem": None,
+            "sensor_height": None,
             # not recorded in an imported model file
             "regional_removal": None,
             "regional_warning": None,

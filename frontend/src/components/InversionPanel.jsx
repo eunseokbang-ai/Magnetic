@@ -300,6 +300,12 @@ export default function InversionPanel({
           </div>
           <div>고도 범위: {summary.elevation_range_m?.[0]?.toFixed(0)} ~ {summary.elevation_range_m?.[1]?.toFixed(0)} m</div>
           <div>DEM 사용: {summary.used_dem ? "예" : "아니오 (GPS 등고비행 추정)"}</div>
+          {summary.sensor_height?.corrected && (
+            <div>센서 고도: 보정됨 (남는 불확실성 중앙값 {summary.sensor_height.sigma_median_m} m)</div>
+          )}
+          {summary.sensor_height?.note && (
+            <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>⚠ {summary.sensor_height.note}</div>
+          )}
           {summary.regional_removal && (
             <div data-testid="inversion-regional-summary">
               광역 배경 제거:{" "}

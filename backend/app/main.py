@@ -9,7 +9,7 @@ import subprocess
 from datetime import date, timedelta
 
 import orjson
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.gzip import GZipMiddleware
@@ -674,6 +674,33 @@ def transform_confidence(project_id: str, req: TransformConfidenceRequest):
 @app.post("/api/projects/{project_id}/repeat-passes/apply")
 def apply_repeat_pass_leveling(project_id: str, req: RepeatPassApplyRequest):
     return store.get(project_id).apply_repeat_pass_leveling(req)
+
+
+@app.get("/api/projects/{project_id}/sensor-height")
+def sensor_height_status(project_id: str):
+    return store.get(project_id).sensor_height_status()
+
+
+@app.post("/api/projects/{project_id}/sensor-height/apply")
+async def apply_sensor_height(
+    project_id: str,
+    mode: str = Form("apply"),
+    resting_offset_m: float = Form(0.0),
+    exclude_sea_level: bool = Form(True),
+    file: UploadFile | None = File(None),
+):
+    """Anchor the sensor's GPS height to the ground at takeoff and landing
+    (mode="apply"), against the terrain model sent with the request or,
+    without one, the project's; or take the correction off (mode="reset").
+    See project_sensor_height.py."""
+    if mode not in ("apply", "reset"):
+        raise HTTPException(status_code=422, detail="mode는 apply 또는 reset이어야 합니다.")
+    project = store.get(project_id)
+    content = await file.read() if file is not None else None
+    return project.apply_sensor_height(
+        mode=mode, dem_bytes=content or None, dem_name=(file.filename if file is not None else None),
+        resting_offset_m=resting_offset_m, exclude_sea_level=exclude_sea_level,
+    )
 
 
 @app.get("/api/projects/{project_id}/height-normalization")

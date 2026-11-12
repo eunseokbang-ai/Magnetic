@@ -104,6 +104,8 @@ from .project_common import (
     boundary_rings,
 )
 from .project_block_leveling import BlockLevelingMixin
+from .project_sensor_height import SensorHeightMixin
+from magcore.sensor_height import SensorHeightCorrection
 from .project_report import ReportMixin
 from .project_observatory import ObservatoryMixin
 from magcore.sensor_pair import sensor_pair_report
@@ -156,7 +158,7 @@ def _sensor_pair_summary(df: pd.DataFrame, labels: list | None, used: str) -> di
 
 
 @dataclass
-class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
+class Project(BlockLevelingMixin, SensorHeightMixin, ReportMixin, ObservatoryMixin, GridMixin, InterpretationMixin, InversionMixin, PersistenceMixin):
     id: str
     drone_raw: pd.DataFrame | None = None
     base_raw: pd.DataFrame | None = None
@@ -288,6 +290,10 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
     # large survey and the chain is rebuilt on every edit.
     height_normalization: HeightNormalization | None = None
     _height_correction_cache: tuple | None = field(default=None, repr=False, compare=False)
+    # The sensor's GPS height anchored to the ground it stood on at takeoff
+    # and landing - see project_sensor_height.py. Survives reprocessing
+    # (it depends on time only); cleared when other flights are loaded.
+    sensor_height: SensorHeightCorrection | None = None
     # Operator decisions about anomaly candidates: which were confirmed as
     # ground structures, which turned out to be geology, which are on
     # hold. Kept by position, not by rank - see set_candidate_note.
@@ -308,6 +314,7 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
     @_as_job("드론 자료 읽기", rollback=True)
     def _load_drone_unlocked(self, buffers: list) -> dict:
         self.drone_raw = load_drone_csvs(buffers)
+        self.sensor_height = None       # measured on the flights that were here before
         self.mark_changed()
         return self.drone_summary()
 
@@ -833,6 +840,7 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
 
         self.file_level_info = self._check_file_level_offsets(df)
 
+        df = self._with_sensor_height(df)
         self.processed = df
         self.processed_base = df.copy()
         self.manual_overrides = {}
@@ -1077,6 +1085,7 @@ class Project(BlockLevelingMixin, ReportMixin, ObservatoryMixin, GridMixin, Inte
             },
             "block_leveling": {"applied": bool(self.block_shifts), "shifts": self._block_shift_summaries()},
             "height_normalization": self._height_normalization_summary(),
+            "sensor_height": self._sensor_height_summary(),
             "n_manual_excluded": sum(1 for v in self.manual_overrides.values() if not v),
             "utm_epsg": self.utm_epsg,
             "dominant_azimuth_deg": self.dominant_azimuth_deg,

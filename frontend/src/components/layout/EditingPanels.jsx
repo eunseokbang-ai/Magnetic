@@ -6,6 +6,7 @@ import FlightPathEditor from "../FlightPathEditor";
 import HeightNormalizationPanel from "../HeightNormalizationPanel";
 import LayerManager from "../LayerManager";
 import LineEditor from "../LineEditor";
+import SensorHeightPanel from "../SensorHeightPanel";
 import RepeatPassPanel from "../RepeatPassPanel";
 import StructureDistortionPanel from "../StructureDistortionPanel";
 
@@ -38,6 +39,16 @@ export default function EditingPanels() {
 
   return (
     <>
+      <SensorHeightPanel
+        projectId={projectId}
+        processSummary={processSummary}
+        onApplied={async (resp) => {
+          setProcessSummary(resp);
+          await refreshPoints(projectId, valueField);
+        }}
+        onError={handleError}
+      />
+
       <HeightNormalizationPanel
         projectId={projectId}
         processSummary={processSummary}

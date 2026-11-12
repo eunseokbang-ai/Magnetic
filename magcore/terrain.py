@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 import rasterio
+from pyproj import Transformer
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
 from rasterio.warp import reproject
@@ -22,6 +23,27 @@ def estimate_ground_elevation(altitude_ellipsoidal_m: np.ndarray, assumed_agl_m:
     Only the relative shape of the terrain is recovered correctly this way;
     the absolute elevation depends entirely on the assumed AGL constant."""
     return np.asarray(altitude_ellipsoidal_m, dtype=float) - float(assumed_agl_m)
+
+
+def sample_dem_at(buffer, lon: np.ndarray, lat: np.ndarray) -> np.ndarray:
+    """The terrain model's elevation at geographic points (nearest cell),
+    NaN where it has none: outside it, on its nodata value, or on a value
+    no ground has (below -500 m - photogrammetric surface models carry
+    such spikes without flagging them)."""
+    lon = np.asarray(lon, dtype=float)
+    lat = np.asarray(lat, dtype=float)
+    try:
+        with rasterio.open(buffer) as src:
+            if src.crs is None:
+                raise TerrainError("DEM GeoTIFF에 좌표계(CRS) 정보가 없습니다.")
+            x, y = Transformer.from_crs("EPSG:4326", src.crs, always_xy=True).transform(lon, lat)
+            values = np.array([v[0] for v in src.sample(zip(x, y))], dtype=float)
+            if src.nodata is not None:
+                values[values == src.nodata] = np.nan
+    except rasterio.errors.RasterioIOError as exc:
+        raise TerrainError(f"DEM GeoTIFF 파일을 열 수 없습니다: {exc}") from exc
+    values[~np.isfinite(values) | (values < -500.0)] = np.nan
+    return values
 
 
 def load_dem_geotiff(buffer, x_centers: np.ndarray, y_centers: np.ndarray, target_epsg: int) -> np.ndarray:
