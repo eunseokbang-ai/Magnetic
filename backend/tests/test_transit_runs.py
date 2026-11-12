@@ -235,7 +235,9 @@ def gasado():
 
     client = TestClient(app)
     pid = client.post("/api/projects").json()["project_id"]
-    files = sorted(GASADO.glob("SRVY0-ACQU*.csv"), key=lambda f: int(f.name.split("ACQU")[1].split("-")[0]))
+    # the 24 flights the rule was measured on (2026-11-03..11); the survey went on after them
+    number = lambda f: int(f.name.split("ACQU")[1].split("-")[0])  # noqa: E731
+    files = sorted((f for f in GASADO.glob("SRVY0-ACQU*.csv") if 85 <= number(f) <= 108), key=number)
     r = client.post(f"/api/projects/{pid}/upload/drone", files=[("files", (f.name, f.read_bytes(), "text/csv")) for f in files])
     assert r.status_code == 200, r.text
     r = client.post(f"/api/projects/{pid}/process", json={"diurnal_params": {"mode": "assume_constant"}})

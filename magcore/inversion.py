@@ -38,8 +38,19 @@ from . import progress
 from choclo.prism import magnetic_field
 from numba import njit, prange
 from scipy.interpolate import RegularGridInterpolator
+from scipy.linalg import cho_factor, cho_solve
 
 MU0 = 4.0 * np.pi * 1e-7
+# Newton steps the bounded solve may take. It ends by itself in the step
+# after the set of cells at a bound stops changing (30 steps from a cold
+# start on the largest real case measured); this only keeps a pathological
+# one from running on.
+_BOUNDED_SOLVE_MAX_STEPS = 300
+# The regularization search (_select_regularization_strength) stops
+# weakening when half a decade more buys less than this fraction of
+# misfit, or at this strength.
+_SEARCH_MIN_GAIN = 0.10
+_SEARCH_WEAKEST = 1e-3
 
 
 class InversionError(ValueError):
@@ -231,127 +242,266 @@ def resolution_diagnostics(G: np.ndarray, layers: np.ndarray, n_layers: int) -> 
     }
 
 
-def _ridge_solve(
-    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, chi_max: float, m_ref: np.ndarray
-) -> np.ndarray:
-    """One regularized normal-equations solve in data space (see invert's
-    docstring for the Woodbury/dual reformulation this implements),
-    non-negativity clipped. p = 1/(depth_weight^2 * compact_weight).
-    m_ref: reference model (n_active,) the solve is regularized *toward*
-    instead of toward zero - see invert()'s m_ref parameter. Substituting
-    m = m' + m_ref turns "minimize ||Gm-d||^2 + alpha*||m-m_ref||^2_P"
-    into exactly the original zero-reference problem in m', just with the
-    reference model's own forward response (G @ m_ref) subtracted from
-    the data first. alpha0 is added directly to A_reduced's diagonal in
-    place (equivalent to + alpha0*I) rather than allocating/multiplying a
-    dense identity matrix just to add a scalar to the diagonal.
+class _FreeGram:
+    """G_F P_F G_F^T for a set F of mesh cells, kept up to date as F changes.
 
-    NOTE: _select_regularization_strength's inner misfit_at() deliberately
-    inlines this same arithmetic (it hoists the p0-invariant GPGt and
-    d_shifted out of its ~40-probe loop, which is the whole point of the
-    search being cheap). The two must stay numerically identical - if this
-    function's formulation ever changes, change misfit_at to match, or the
-    strength it selects will silently stop corresponding to the solve it
-    is selecting for."""
-    GP = Gw * p[np.newaxis, :]
-    A_reduced = GP @ Gw.T
-    A_reduced[np.diag_indices_from(A_reduced)] += alpha0
-    d_shifted = dw - Gw @ m_ref
-    lam = np.linalg.solve(A_reduced, d_shifted)
-    m_prime = p * (Gw.T @ lam)
-    return np.clip(m_prime + m_ref, 0.0, chi_max)
+    The bounded solve (_ridge_solve) needs this n_obs x n_obs product for
+    the cells that are strictly between their bounds, and that set changes
+    from one Newton step to the next - by a few cells late on, by half the
+    mesh at the start. Forming the product is the expensive part of the
+    whole inversion (n_obs^2 * n_cells), so it is updated by the columns
+    that entered or left instead of being rebuilt, whenever those are the
+    smaller number. Valid for one (G, p); p changes with every IRLS pass,
+    so each pass has its own."""
+
+    def __init__(self, Gw: np.ndarray, p: np.ndarray):
+        self.Gw = Gw
+        self.sqrt_p = np.sqrt(p)
+        self.free: np.ndarray | None = None
+        self.A: np.ndarray | None = None
+
+    def _gram(self, mask: np.ndarray) -> np.ndarray:
+        if mask.all():
+            Gs = self.Gw * self.sqrt_p[np.newaxis, :]
+        else:
+            cols = np.flatnonzero(mask)
+            if len(cols) == 0:
+                return np.zeros((self.Gw.shape[0], self.Gw.shape[0]))
+            Gs = self.Gw[:, cols] * self.sqrt_p[np.newaxis, cols]
+        return Gs @ Gs.T        # numpy does a @ a.T as a symmetric rank-k update: half a general product
+
+    def get(self, free: np.ndarray) -> np.ndarray:
+        if self.A is None:
+            self.A = self._gram(free)
+        else:
+            entered = free & ~self.free
+            left = self.free & ~free
+            n_changed = int(entered.sum()) + int(left.sum())
+            if n_changed > 0.5 * int(free.sum()):
+                self.A = self._gram(free)
+            elif n_changed:
+                if entered.any():
+                    self.A += self._gram(entered)
+                if left.any():
+                    self.A -= self._gram(left)
+        self.free = free.copy()
+        return self.A
+
+
+def _ridge_solve(
+    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, chi_max: float, m_ref: np.ndarray,
+    gram: _FreeGram | None = None, m_start: np.ndarray | None = None,
+) -> np.ndarray:
+    """_bounded_solve, or an InversionError if it did not converge - an
+    unconverged model is feasible but can be far from fitting anything,
+    and must not be handed on as a result."""
+    m, converged = _bounded_solve(Gw, dw, p, alpha0, chi_max, m_ref, gram=gram, m_start=m_start)
+    if not converged:
+        raise InversionError(
+            "역산 풀이가 수렴하지 않았습니다 - 정규화 강도가 너무 약합니다. 정규화 강도를 높이거나 "
+            "'정규화 강도 자동 선택'을 사용하세요."
+        )
+    return m
+
+
+def _bounded_solve(
+    Gw: np.ndarray, dw: np.ndarray, p: np.ndarray, alpha0: float, chi_max: float, m_ref: np.ndarray,
+    gram: _FreeGram | None = None, m_start: np.ndarray | None = None,
+) -> tuple[np.ndarray, bool]:
+    """The regularized least-squares model with every cell between 0 and
+    chi_max:
+
+        minimize  ||G m - d||^2 + alpha0 * sum((m - m_ref)^2 / p)
+        subject to 0 <= m <= chi_max
+
+    p = 1/(depth_weight^2 * compact_weight); m_ref is the reference model
+    the solution is pulled toward (zeros when there is none).
+
+    Until 2026-11 this solved the problem without the bounds and then
+    clipped the negative cells to zero. That is not the constrained
+    solution, and it is not close to it: the unconstrained model fits the
+    data *with* its negative cells, so removing them leaves a model whose
+    field overshoots everywhere they were compensating. On the GaSaDo
+    survey (strong negative anomalies) the clipped model missed the data
+    by 436 nT rms where the data themselves vary by 64 nT; on Andong by
+    708 nT against 438 nT.
+
+    How it is solved. With lambda = (d - G m) / alpha0, the optimality
+    conditions say m = clip(m_ref + p * G^T lambda, 0, chi_max): each cell
+    is where the unconstrained formula puts it, or at the bound it ran
+    into. Substituting gives n_obs equations in lambda,
+
+        alpha0 * lambda + G clip(m_ref + p G^T lambda, 0, chi_max) = d,
+
+    which are the gradient of a strongly convex function of lambda, so
+    there is exactly one solution and Newton's method with a line search
+    on that function reaches it from anywhere. Each step is one solve of
+
+        (G_F P_F G_F^T + alpha0 I) delta = -(residual of the equations),
+
+    F being the cells currently between their bounds - the same
+    data-space (Woodbury) solve as before, restricted to the free cells.
+    The equations are linear wherever F does not change, so the iteration
+    ends exactly, in the step after F settles. With no cell at a bound
+    the first step *is* the old unconstrained solve, and the result is
+    identical to it.
+
+    The line search is exact, and has to be. Along a Newton direction the
+    function is piecewise quadratic with a kink wherever a cell reaches a
+    bound - thousands of them - and its slope there is cheap to evaluate
+    (no product with G), so the minimum along the line is found by
+    bisection on the slope. With plain backtracking the same iteration
+    was still 70 nT from the answer after 25 steps on the GaSaDo survey
+    (1,884 data, 14,274 cells, 5,546 of them ending at zero); with the
+    exact search it is done in 30, and reaches a lower objective than
+    6,000 iterations of projected FISTA do.
+
+    The weaker the regularization, the more steps it takes (same survey,
+    plain depth weighting: 11 steps at strength 1000, 28 at 1, 90 at 0.01,
+    250 at 0.001), and far below the useful range it runs into
+    _BOUNDED_SOLVE_MAX_STEPS. Returns (m, converged); m is within its
+    bounds either way, but only a converged m is the solution.
+
+    gram: the free-cell product cache (_FreeGram) to use and update, for a
+    caller making several solves with the same p (the regularization
+    search). m_start: a model to start from (the previous IRLS pass, the
+    previous probe of the search) - it only saves steps, the answer does
+    not depend on it."""
+    if gram is None:
+        gram = _FreeGram(Gw, p)
+    n_obs = Gw.shape[0]
+    lam = np.zeros(n_obs) if m_start is None else (dw - Gw @ m_start) / alpha0
+    gtl = Gw.T @ lam
+    # Done when the equations hold to a part in 10^7 of the data (or of the
+    # reference model's field, when the data are zero). Far inside any
+    # noise; it is there for the degenerate case of a cell that belongs
+    # exactly on its bound and flickers across it in the last bits, which
+    # the free-set test below would otherwise never see settle.
+    scale = max(float(np.sqrt(np.mean(dw ** 2))), float(np.sqrt(np.mean((Gw @ np.clip(m_ref, 0.0, chi_max)) ** 2))))
+    tol = 1e-7 * max(scale, 1e-30)
+
+    z = m_ref + p * gtl
+    m = np.clip(z, 0.0, chi_max)
+    converged = False
+    for _ in range(_BOUNDED_SOLVE_MAX_STEPS):
+        equations = alpha0 * lam + Gw @ m - dw
+        if float(np.sqrt(np.mean(equations ** 2))) <= tol:
+            converged = True
+            break
+        free = (z >= 0.0) & (z <= chi_max)
+        J = gram.get(free).copy()
+        J[np.diag_indices_from(J)] += alpha0
+        delta = cho_solve(cho_factor(J, lower=True, overwrite_a=True, check_finite=False), -equations, check_finite=False)
+        gtd = Gw.T @ delta
+
+        # slope of the function along delta, at step t: nondecreasing in t,
+        # negative at 0. The full step if it is still downhill there,
+        # otherwise the step where the slope crosses zero.
+        a0 = alpha0 * float(lam @ delta) - float(dw @ delta)
+        a1 = alpha0 * float(delta @ delta)
+        pg = p * gtd
+
+        def slope(t: float) -> float:
+            return a0 + a1 * t + float(np.clip(z + t * pg, 0.0, chi_max) @ gtd)
+
+        step = 1.0
+        if slope(1.0) > 0.0:
+            lo, hi = 0.0, 1.0
+            for _bisect in range(50):
+                mid = 0.5 * (lo + hi)
+                if slope(mid) > 0.0:
+                    hi = mid
+                else:
+                    lo = mid
+            step = 0.5 * (lo + hi)
+        lam = lam + step * delta
+        gtl = gtl + step * gtd
+        z = m_ref + p * gtl
+        m = np.clip(z, 0.0, chi_max)
+        if step == 1.0 and np.array_equal(free, (z >= 0.0) & (z <= chi_max)):
+            converged = True    # the free set held through a full step: that step solved the equations exactly
+            break
+    return m, converged
 
 
 def _select_regularization_strength(
     Gw: np.ndarray, dw: np.ndarray, p0: np.ndarray, alpha_scale: float, chi_max: float, target_rms_nt: float, m_ref: np.ndarray
 ) -> float:
-    """Discrepancy-principle style search for the regularization_strength
-    multiplier that brings the misfit under weighting p0 close to a
-    target RMS level derived from the survey's own assumed noise floor -
-    the standard, principled way to pick "how much" Tikhonov
-    regularization to apply (UBC-GIF/SimPEG "beta search"), instead of
-    leaving it purely to the user's own trial-and-error multiplier. p0
-    should already fold in a representative compact-weight snapshot (see
-    invert(), which builds one before calling this) - searching only
-    against the plain depth-weighted (compact_weight=1) misfit
-    systematically undershoots because the IRLS focusing that follows
-    concentrates the model further and increases the final misfit several-
-    fold past what the flat first pass alone predicts (confirmed
-    empirically). Only cheap n_obs x n_obs solves are used for the search
-    itself - misfit increases monotonically with regularization strength,
-    so log-space bisection converges in a fixed, small number of solves
-    regardless of mesh size (the expensive part, building G, already
-    happened once before this is called).
+    """Discrepancy-principle search for the regularization_strength
+    multiplier that brings the misfit under weighting p0 to a target RMS
+    level derived from the survey's assumed noise floor - the standard,
+    principled way to pick "how much" Tikhonov regularization to apply
+    (UBC-GIF/SimPEG "beta search"), instead of leaving it to trial and
+    error. p0 should already fold in a representative compact-weight
+    snapshot (see invert(), which builds one before calling this) -
+    searching against the plain depth-weighted misfit undershoots,
+    because the IRLS focusing that follows concentrates the model and
+    raises the final misfit past what the flat first pass predicts.
 
-    p0 is fixed for the whole search (only alpha0 varies between probes),
-    so G @ diag(p0) @ Gt and d - G@m_ref are computed once here and
-    reused across all ~40 probes below, instead of recomputing that
-    O(n_obs^2 * n_active) product from scratch on every single probe -
-    that product otherwise dominates the search's entire cost. That
-    hoisting is why misfit_at below inlines _ridge_solve's arithmetic
-    rather than calling it; the two are numerically identical today and
-    must be kept that way (see _ridge_solve's own note)."""
-    GPGt = (Gw * p0[np.newaxis, :]) @ Gw.T
-    d_shifted = dw - Gw @ m_ref
+    The misfit of the constrained solution never decreases as the
+    regularization grows (true of Tikhonov regularization over any convex
+    set), so there is one crossing to find. (The search used to scan a
+    grid for a minimum first: with the old clipped solve the misfit rose
+    again at weak regularization, an artefact of the clip - see
+    _bounded_solve.)
 
-    def misfit_at(reg_strength: float) -> float:
-        alpha0 = alpha_scale * reg_strength
-        A_reduced = GPGt.copy()
-        A_reduced[np.diag_indices_from(A_reduced)] += alpha0
-        lam = np.linalg.solve(A_reduced, d_shifted)
-        m = np.clip(p0 * (Gw.T @ lam) + m_ref, 0.0, chi_max)
-        predicted = Gw @ m
-        return float(np.sqrt(np.mean((predicted - dw) ** 2)))
+    It is looked for from the strong side down, half a decade at a time,
+    each solve starting from the last: strongly regularized solves are
+    the cheap ones (see _bounded_solve), and the walk usually ends long
+    before the expensive ones. It ends
 
-    # Misfit-vs-regularization is *not* globally monotonic here, unlike
-    # plain (unclipped) Tikhonov: at very low regularization the
-    # non-negativity clip on m starts binding hard (the near-unregularized
-    # solve wants large positive/negative oscillations to chase noise,
-    # which get clipped to 0), which makes the *clipped* misfit rise again
-    # instead of continuing to fall toward an unregularized fit - verified
-    # empirically (misfit can be several times *worse* at reg_strength
-    # 1e-4 than at a moderate 0.3-1). The curve is instead roughly
-    # U-shaped: misfit falls from a very regularized/oversmoothed high,
-    # bottoms out at some "natural" regularization level, then rises
-    # again toward the clipped-noise regime at very low regularization.
-    # So a plain bisection (which assumes one monotonic crossing) isn't
-    # safe over the whole range - first locate the minimum with a coarse
-    # log-spaced scan, then bisect only within the reliably-monotonic
-    # increasing branch from there upward.
-    grid = np.geomspace(1e-3, 1e3, num=13)
-    misfits = []
-    for k, g in enumerate(grid):
-        progress.report("정규화 강도 탐색", 0.5 * k / len(grid))
-        misfits.append(misfit_at(float(g)))
-    misfits = np.array(misfits)
-    i_min = int(np.argmin(misfits))
+      * where the misfit first comes under the target - the crossing is
+        then pinned down by bisection inside that half decade; or
+      * where another half decade of weakening buys less than
+        _SEARCH_MIN_GAIN of misfit, or the bottom of the range
+        (_SEARCH_WEAKEST) is reached, or a solve does not converge. The
+        target is then out of reach - a noise floor set too tight, or
+        data an induced-only model cannot explain (remanence) - and
+        weakening further would trade a rougher model for no better fit.
 
-    if misfits[i_min] > target_rms_nt:
-        # Even the best achievable point on this grid can't reach the
-        # target (noise floor set unrealistically tight, or the survey
-        # geometry just can't fit the data that closely) - this is the
-        # closest achievable regularization strength.
-        return float(grid[i_min])
+    Every probe is a bounded solve with the same p0, so they share one
+    free-cell product cache."""
+    gram = _FreeGram(Gw, p0)
+    state: dict = {"m": None, "n": 0}
 
-    if i_min == len(grid) - 1:
-        # Minimum sits at the top of the grid - nothing above it to bisect
-        # against, just use it (misfits[i_min] <= target_rms_nt is already
-        # guaranteed here by the `> target_rms_nt` check above, so that
-        # condition doesn't need to be tested again).
-        return float(grid[i_min])
+    def misfit_at(reg_strength: float) -> tuple[float, bool]:
+        progress.report("정규화 강도 탐색", min(0.5, 0.5 * state["n"] / 20.0))
+        state["n"] += 1
+        m, converged = _bounded_solve(Gw, dw, p0, alpha_scale * reg_strength, chi_max, m_ref, gram=gram, m_start=state["m"])
+        if converged:
+            state["m"] = m
+        return float(np.sqrt(np.mean((Gw @ m - dw) ** 2))), converged
 
-    lo, hi = float(grid[i_min]), float(grid[-1])
+    target = float(target_rms_nt)
+    hi = 1e3
+    hi_misfit, _ = misfit_at(hi)
     for _ in range(8):
-        if misfit_at(hi) >= target_rms_nt:
+        if hi_misfit >= target:
             break
         hi *= 10.0
+        hi_misfit, _ = misfit_at(hi)
+    else:
+        return float(hi)        # fits within the target however hard it is regularized
 
-    for _ in range(20):
+    step = 10.0 ** 0.5
+    while True:
+        lo = hi / step
+        lo_misfit, converged = misfit_at(lo)
+        if not converged:
+            return float(hi)
+        if lo_misfit <= target:
+            break
+        if lo_misfit > (1.0 - _SEARCH_MIN_GAIN) * hi_misfit or lo <= _SEARCH_WEAKEST:
+            return float(lo)
+        hi, hi_misfit = lo, lo_misfit
+
+    for _ in range(7):        # pins the strength down to within 1 %
         mid = float(np.sqrt(lo * hi))
-        if misfit_at(mid) > target_rms_nt:
-            hi = mid
-        else:
+        mid_misfit, converged = misfit_at(mid)
+        if not converged or mid_misfit <= target:
             lo = mid
+        else:
+            hi = mid
     return float(np.sqrt(lo * hi))
 
 
@@ -370,10 +520,12 @@ def invert(
     """Depth-weighted Tikhonov inversion with IRLS compact/focusing
     reweighting (Li & Oldenburg 1996 + Portniaguine & Zhdanov 2002).
 
-    Each iteration solves the regularized normal equations
-        (GtG + alpha * diag(depth_weight^2 * compact_weight)) m = Gt d
-    with a non-negativity clip, then recomputes the compact ("minimum
-    support") weight from the new model before the next pass. A fixed
+    Each iteration solves the regularized least-squares problem
+        min ||G m - d||^2 + alpha * sum(depth_weight^2 * compact_weight * (m - m_ref)^2)
+    with every cell held between 0 and chi_max (a real bound-constrained
+    solve, see _ridge_solve - not a clip of the unconstrained answer),
+    then recomputes the compact ("minimum support") weight from the new
+    model before the next pass. A fixed
     IRLS iteration count is used (keeps run time predictable at this mesh
     scale) - but the regularization strength itself can now be chosen
     automatically: if assumed_noise_nt is given, regularization_strength
@@ -481,7 +633,7 @@ def invert(
         progress.report("반복 역산 (IRLS)", 0.5 + 0.5 * it / n_iter)
         wm2 = (depth_weight ** 2) * compact_weight
         p = 1.0 / wm2
-        m = _ridge_solve(Gw, dw, p, alpha0, chi_max, m_ref_arr)
+        m = _ridge_solve(Gw, dw, p, alpha0, chi_max, m_ref_arr, m_start=m if it else None)
 
         # The stabilizing epsilon is fixed from the first (plain
         # depth-weighted L2) solve and held constant afterwards - if it
