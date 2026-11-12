@@ -740,6 +740,13 @@ class InversionParams(BaseModel):
     # None (default) uses processing/inversion_auto.DEFAULT_DEPTH_GROWTH_FACTOR.
     # 1.0 reproduces the old uniform-thickness mesh.
     depth_growth_factor: Optional[float] = Field(None, ge=1.0, le=2.0)
+    # The background taken out of the data before they are inverted - see
+    # processing/trend.py::separate_regional. The model has no unknown for
+    # a level (see `value` above), so one left in is explained with
+    # susceptibility that is not there. "level" (the median) is the default
+    # because it is the one that assumes least; "none" inverts the data as
+    # they are.
+    regional_removal: Literal["none", "level", "plane", "quadratic"] = "level"
     assumed_agl_m: float = Field(50.0, gt=0)  # used only when no DEM is uploaded
     # Most published DEMs report orthometric height (above the geoid,
     # i.e. mean sea level) while the drone's own GPS records ellipsoidal

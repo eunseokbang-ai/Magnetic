@@ -9,6 +9,8 @@ own) and are only meant to be used through it.
 from __future__ import annotations
 
 import io
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import rasterio
@@ -34,6 +36,7 @@ from magcore.inversion import (
 from magcore.inversion_auto import DEFAULT_DEPTH_GROWTH_FACTOR, suggest_mesh_params
 from magcore.render import grid_to_geotiff_bytes, grid_to_png_overlay
 from magcore.terrain import TerrainError, estimate_ground_elevation, load_dem_geotiff
+from magcore.trend import separate_regional
 from matplotlib.path import Path as MplPath
 from pyproj import Transformer
 from .models import (
@@ -220,6 +223,16 @@ class InversionMixin:
             obs_cell_size_m, method="nearest", max_distance_m=max_distance,
         )
 
+        # The background the model is not asked to explain (it could only do
+        # so with susceptibility that is not there). What is inverted, kept
+        # and shown from here on is the residual.
+        try:
+            residual, _regional, regional_info = separate_regional(
+                obs_grid.values, obs_grid.easting, obs_grid.northing, params.regional_removal)
+        except ValueError as exc:
+            raise ProjectError(str(exc)) from exc
+        obs_grid = replace(obs_grid, values=residual)
+
         ny, nx = obs_grid.values.shape
         if nx * ny > N_OBS_CAP:
             raise ProjectError(
@@ -328,6 +341,8 @@ class InversionMixin:
             },
             "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "used_dem": self.dem_bytes is not None,
+            "regional_removal": regional_info,
+            "regional_warning": _regional_warning(regional_info),
             "auto_params": auto_used,
             "source_depth_estimate_m": auto_suggestion["source_depth_estimate_m"] if auto_suggestion else None,
             "resolution_warning": _resolution_warning(obs_cell_size_m, self.line_spacing_m, nx, ny),
@@ -664,6 +679,9 @@ class InversionMixin:
             },
             "susceptibility_stats": _stats(pd.Series(active_chi)) if active_chi.size else _stats(pd.Series(dtype=float)),
             "used_dem": None,
+            # not recorded in an imported model file
+            "regional_removal": None,
+            "regional_warning": None,
             "auto_params": False,
             "source_depth_estimate_m": None,
             "resolution_warning": None,
@@ -707,6 +725,22 @@ class InversionMixin:
 # these caps - not just the (now fixed) depth_extent_m ceiling - can
 # still force the auto-suggested cell size above the line spacing; see
 # the resolution_warning field in run_inversion's response.
+def _regional_warning(info: dict) -> str | None:
+    """Said when the data go into the inversion sitting well off zero:
+    more than a quarter of their own spread. Below that a level does
+    little; above it the susceptibilities start to be about the level."""
+    if info["method"] != "none":
+        return None
+    level, spread = info["data_median_after_nt"], info["data_std_nt"]
+    if spread <= 0 or abs(level) < 0.25 * spread:
+        return None
+    return (
+        f"역산에 들어간 자료의 중앙값이 {level:+.0f} nT로 0에서 벗어나 있습니다(자료 표준편차 {spread:.0f} nT). "
+        "이 모델에는 배경 수준을 나타내는 미지수가 없어서, 그 수준까지 자화율로 설명하게 됩니다 - "
+        "자화율 크기가 부풀고 실제로 없는 암체가 생길 수 있습니다. '광역 배경 제거'를 켜고 다시 역산하세요."
+    )
+
+
 N_OBS_CAP = 3500
 
 

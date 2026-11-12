@@ -48,3 +48,93 @@ def remove_regional_trend(
     trend = np.where(finite, trend, np.nan)
     residual = grid_values - trend
     return residual, trend
+
+
+REGIONAL_METHODS = ("none", "level", "plane", "quadratic")
+_REGIONAL_ORDER = {"plane": 1, "quadratic": 2}
+
+
+def separate_regional(
+    grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray, method: str = "level"
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Split a gridded anomaly into the part a 3D inversion should explain
+    and a background it should not: (residual, regional, info), both grids
+    shaped like grid_values with NaN preserved.
+
+    The inversion has no unknown for a background. Its model is
+    susceptibility between 0 and a ceiling, cell by cell, and whatever
+    level the data sit at has to be produced by that: a negative level by
+    bodies placed so that their side lobes cover the block, a positive one
+    by a blanket of susceptibility. It fits - and the susceptibilities are
+    well above what the anomalies themselves call for (GaSaDo 2026-11,
+    41 flights: the anomaly sits at -100 nT; left in, the model averages
+    0.16 SI over its cells with 5.4 % of them at the 1 SI ceiling, with
+    the level out 0.09 SI and 1.7 %, at 3.9 and 4.8 nT misfit).
+
+    method:
+      "none"       nothing removed.
+      "level"      the median. One number, and the choice that assumes
+                   least: that half the block is above background.
+      "plane"      a first-order surface, for a block on a gradient.
+      "quadratic"  a second-order surface. It can swallow an anomaly as
+                   wide as the block; look at what it removed.
+
+    The surfaces are fitted robustly (Tukey biweight, iteratively
+    reweighted), unlike remove_regional_trend above, whose plain
+    least-squares surface is the display transform's: here the fit must
+    follow the background, not be pulled toward the anomalies standing on
+    it. A least-squares plane under one strong positive anomaly tilts up
+    toward it and takes part of it away; the median does not move, and
+    neither should the plane.
+
+    info: method, the removed surface's median/min/max (nT), and the
+    data's median before and after.
+    """
+    if method not in REGIONAL_METHODS:
+        raise ValueError(f"unknown regional method: {method}")
+    values = np.asarray(grid_values, dtype=float)
+    finite = np.isfinite(values)
+    if method == "none" or finite.sum() < 3:
+        regional = np.where(finite, 0.0, np.nan)
+    elif method == "level":
+        regional = np.where(finite, float(np.median(values[finite])), np.nan)
+    else:
+        order = _REGIONAL_ORDER[method]
+        x2d, y2d = np.meshgrid(easting, northing)
+        x0, y0 = float(np.mean(easting)), float(np.mean(northing))
+        scale = max(float(np.ptp(easting)), float(np.ptp(northing)), 1.0)
+        A = _design_matrix(((x2d - x0) / scale)[finite], ((y2d - y0) / scale)[finite], order)
+        b = values[finite]
+        if len(b) <= A.shape[1]:
+            raise ValueError("추세면을 맞추기 위한 유효 셀이 부족합니다.")
+        # start from the median level rather than from least squares, so the
+        # first set of weights is not already tilted toward the anomalies
+        coeffs = np.zeros(A.shape[1])
+        coeffs[0] = float(np.median(b))
+        for _ in range(30):
+            resid = b - A @ coeffs
+            spread = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
+            if spread <= 0:
+                break
+            u = resid / (4.685 * spread)
+            w = np.where(np.abs(u) < 1.0, (1.0 - u * u) ** 2, 0.0)
+            sw = np.sqrt(w)
+            new, *_ = np.linalg.lstsq(A * sw[:, None], b * sw, rcond=None)
+            done = np.max(np.abs(A @ (new - coeffs))) < 1e-6 * max(spread, 1e-12)
+            coeffs = new
+            if done:
+                break
+        regional = np.full(values.shape, np.nan)
+        regional[finite] = A @ coeffs
+    residual = values - regional
+    has = bool(finite.any())
+    info = {
+        "method": method,
+        "level_nt": float(np.median(regional[finite])) if has else 0.0,
+        "min_nt": float(np.min(regional[finite])) if has else 0.0,
+        "max_nt": float(np.max(regional[finite])) if has else 0.0,
+        "data_median_before_nt": float(np.median(values[finite])) if has else 0.0,
+        "data_median_after_nt": float(np.median(residual[finite])) if has else 0.0,
+        "data_std_nt": float(np.std(residual[finite])) if has else 0.0,
+    }
+    return residual, regional, info

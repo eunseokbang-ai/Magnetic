@@ -42,10 +42,13 @@ from scipy.linalg import cho_factor, cho_solve
 
 MU0 = 4.0 * np.pi * 1e-7
 # Newton steps the bounded solve may take. It ends by itself in the step
-# after the set of cells at a bound stops changing (30 steps from a cold
-# start on the largest real case measured); this only keeps a pathological
-# one from running on.
-_BOUNDED_SOLVE_MAX_STEPS = 300
+# after the set of cells at a bound stops changing: 30 steps from a cold
+# start on GaSaDo, 301 on Andong with its level removed (13,046 of 15,395
+# cells end at zero there, and the deep ones, whose weights are a million
+# times the shallow ones', come off their bound a few per step). The
+# limit is an order of magnitude above that; it only keeps a pathological
+# case from running on.
+_BOUNDED_SOLVE_MAX_STEPS = 3000
 # The regularization search (_select_regularization_strength) stops
 # weakening when half a decade more buys less than this fraction of
 # misfit, or at this strength.
@@ -358,8 +361,9 @@ def _bounded_solve(
 
     The weaker the regularization, the more steps it takes (same survey,
     plain depth weighting: 11 steps at strength 1000, 28 at 1, 90 at 0.01,
-    250 at 0.001), and far below the useful range it runs into
-    _BOUNDED_SOLVE_MAX_STEPS. Returns (m, converged); m is within its
+    250 at 0.001), and so do data that leave most of the mesh at zero
+    (Andong: 301 at strength 1). Far outside the useful range it runs
+    into _BOUNDED_SOLVE_MAX_STEPS. Returns (m, converged); m is within its
     bounds either way, but only a converged m is the solution.
 
     gram: the free-cell product cache (_FreeGram) to use and update, for a
@@ -384,6 +388,7 @@ def _bounded_solve(
     m = np.clip(z, 0.0, chi_max)
     converged = False
     for _ in range(_BOUNDED_SOLVE_MAX_STEPS):
+        progress.check()        # a long solve stays cancellable
         equations = alpha0 * lam + Gw @ m - dw
         if float(np.sqrt(np.mean(equations ** 2))) <= tol:
             converged = True

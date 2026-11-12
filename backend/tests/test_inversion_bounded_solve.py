@@ -232,3 +232,6 @@ def test_gasado_inversion_fits_the_data():
     chi = result.susceptibility[result.mesh.active]
     assert chi.min() >= 0.0 and chi.max() <= 1.0
     assert summary["used_dem"] is True
+    # the level these flights sit at is taken out first (see test_inversion_regional.py)
+    regional = summary["regional_removal"]
+    assert regional["method"] == "level" and -130 < regional["level_nt"] < -60

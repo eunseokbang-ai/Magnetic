@@ -18,6 +18,7 @@ export const DEFAULT_INVERSION_PARAMS = {
   depth_extent_m: 150.0,
   n_layers: 8,
   depth_growth_factor: null,
+  regional_removal: "level",
   assumed_agl_m: 50.0,
   dem_geoid_offset_m: 0.0,
   regularization_strength: 1.0,

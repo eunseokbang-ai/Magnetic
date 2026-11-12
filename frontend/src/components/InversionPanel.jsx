@@ -240,6 +240,23 @@ export default function InversionPanel({
             />
           </>
         )}
+        <div
+          style={{ marginBottom: 8 }}
+          title="이 역산의 모델은 셀마다 0 이상의 자화율뿐이고, 자료의 배경 수준을 나타내는 미지수가 없습니다. 배경을 빼지 않으면 그 수준까지 자화율로 설명하게 되어 자화율 크기가 부풀고 실제로 없는 암체가 생깁니다(가사도: 배경 -100 nT를 두면 평균 0.16 SI에 셀의 5.4%가 상한 1 SI, 빼면 0.09 SI에 1.7%, 잔차는 비슷). 수준 = 자료의 중앙값 하나를 뺌(가정이 가장 적음). 1차/2차 추세면 = 이상에 끌려가지 않도록 강건하게 맞춘 면을 뺌 - 2차는 구역만큼 넓은 이상을 같이 지울 수 있으니 결과에 표시되는 제거량을 확인하세요."
+        >
+          <div style={{ fontSize: 12, marginBottom: 3 }}>광역 배경 제거 ⓘ</div>
+          <select
+            data-testid="inversion-regional"
+            style={inputStyle}
+            value={params.regional_removal ?? "level"}
+            onChange={(e) => setParams((p) => ({ ...p, regional_removal: e.target.value }))}
+          >
+            <option value="level">수준 (자료의 중앙값) — 기본</option>
+            <option value="plane">1차 추세면 (기울어진 배경)</option>
+            <option value="quadratic">2차 추세면 (휘어진 배경)</option>
+            <option value="none">제거하지 않음 (자료 그대로)</option>
+          </select>
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 8 }}>
           <input
             type="checkbox"
@@ -269,7 +286,7 @@ export default function InversionPanel({
           격자를 촘촘하게/레이어를 많이 설정할수록 더 상세하지만 실행 시간이 길어집니다(최대 1~2분 정도).
         </div>
         <button style={{ ...btnStyle, width: "100%", opacity: ready && !running ? 1 : 0.5 }} disabled={!ready || running} onClick={onRun}>
-          {running ? "역산 실행 중... (최대 1~2분)" : "3차원 역산 실행"}
+          {running ? "역산 실행 중... (구역이 넓으면 수 분)" : "3차원 역산 실행"}
         </button>
         {error && <div style={{ fontSize: 11, color: "#dc2626", marginTop: 6 }}>{error}</div>}
       </div>
@@ -283,6 +300,20 @@ export default function InversionPanel({
           </div>
           <div>고도 범위: {summary.elevation_range_m?.[0]?.toFixed(0)} ~ {summary.elevation_range_m?.[1]?.toFixed(0)} m</div>
           <div>DEM 사용: {summary.used_dem ? "예" : "아니오 (GPS 등고비행 추정)"}</div>
+          {summary.regional_removal && (
+            <div data-testid="inversion-regional-summary">
+              광역 배경 제거:{" "}
+              {summary.regional_removal.method === "none"
+                ? `안 함 (자료 중앙값 ${summary.regional_removal.data_median_after_nt >= 0 ? "+" : ""}${summary.regional_removal.data_median_after_nt.toFixed(1)} nT)`
+                : summary.regional_removal.method === "level"
+                  ? `수준 ${summary.regional_removal.level_nt >= 0 ? "+" : ""}${summary.regional_removal.level_nt.toFixed(1)} nT`
+                  : `${summary.regional_removal.method === "plane" ? "1차" : "2차"} 추세면 ${summary.regional_removal.min_nt.toFixed(0)} ~ ${summary.regional_removal.max_nt.toFixed(0)} nT (중앙값 ${summary.regional_removal.level_nt.toFixed(1)} nT)`}
+              {" "}· 역산한 자료의 표준편차 {summary.regional_removal.data_std_nt.toFixed(1)} nT
+            </div>
+          )}
+          {summary.regional_warning && (
+            <div style={{ marginTop: 4, color: "#92400e", background: "#fffbeb", padding: 6, borderRadius: 4 }}>⚠ {summary.regional_warning}</div>
+          )}
           {summary.n_geology_units > 0 && (
             <div>
               지질 정보 반영: {summary.geology_reference_used ? "예" : "아니오 (해제됨)"}
