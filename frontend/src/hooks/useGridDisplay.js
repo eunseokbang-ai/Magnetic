@@ -92,6 +92,7 @@ export default function useGridDisplay(app) {
         contour_interval_nt: contourInterval,
         contour_n_levels: contourNLevels,
         stretch,
+        regional_removal: transformExtraParams.regional_removal,
         microlevel_pre_apply: transformExtraParams.microlevel_pre_apply,
         microlevel_strength: transformExtraParams.microlevel_strength,
         microlevel_angle_tolerance_deg: transformExtraParams.microlevel_angle_tolerance_deg,

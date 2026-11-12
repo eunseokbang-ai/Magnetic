@@ -114,6 +114,12 @@ export const DEFAULT_TRANSFORM_EXTRA_PARAMS = {
   microlevel_mode: "decorrugation",
   microlevel_cutoff_factor: 4.0,
   microlevel_pre_apply: false,
+  // The base grid everything is made from: the anomaly as it is ("none"),
+  // or with its background taken out (level / plane / quadratic). And
+  // whether the edge-reading products are made from its RTP. Both off:
+  // results stay what they were until asked for.
+  regional_removal: "none",
+  derive_from_rtp: false,
   derivative_presmooth: true,
   derivative_presmooth_factor: 1.0,
   boundary_continuation: true,

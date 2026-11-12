@@ -55,6 +55,36 @@ export default function DerivedGridSection() {
           ))}
         </div>
         {transformLoading && <div style={{ color: "#8a7a5c" }}>계산 중...</div>}
+        <div style={{ border: "1px solid #e6dac0", borderRadius: 6, padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <div
+            title="'측정값 - IGRF'의 0은 물리적 기준이 아닙니다(광역 지각 자기장, 일변화 수준에 따라 수십~100 nT 움직임). 배경을 빼면 지도의 색과 0 등치선이 '주변보다 높다/낮다'와 일치합니다. 원본 그리드, 내보내기, 모든 파생그리드가 이 기준 격자에서 만들어집니다. RTP·상방연속은 배경 수준을 그대로 옮기므로 눈에 띄게 달라지고, 미분 계열(AS, 틸트, 1VD 등)은 거의 그대로입니다. 수준 = 중앙값 하나를 뺌(가정이 가장 적음). 1차/2차 = 강한 이상에 끌려가지 않게 강건하게 맞춘 면을 뺌 - 2차는 구역만 한 이상을 같이 지울 수 있으니 지도 아래에 표시되는 제거량을 확인하세요."
+          >
+            <div style={{ marginBottom: 3 }}>기준 격자 ⓘ</div>
+            <select
+              data-testid="base-grid-regional"
+              style={inputStyle}
+              value={transformExtraParams.regional_removal ?? "none"}
+              onChange={(e) => setTransformExtraParams((p) => ({ ...p, regional_removal: e.target.value }))}
+            >
+              <option value="none">자력이상 그대로 (측정값 − IGRF)</option>
+              <option value="level">광역 배경 제거 — 수준 (중앙값)</option>
+              <option value="plane">광역 배경 제거 — 1차 추세면</option>
+              <option value="quadratic">광역 배경 제거 — 2차 추세면</option>
+            </select>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              data-testid="derive-from-rtp"
+              checked={!!transformExtraParams.derive_from_rtp}
+              onChange={(e) => setTransformExtraParams((p) => ({ ...p, derive_from_rtp: e.target.checked }))}
+            />
+            <span title="틸트각, 세타맵, 1VD/2VD, THDR, dX~dYZ처럼 경계나 정점의 위치를 읽는 격자를 기준 격자가 아니라 그 RTP에서 계산합니다. 복각 때문에 밀려 있던 경계가 암체 위로 옵니다(해석용 지도의 일반적인 만드는 순서: 자력이상 → RTP → RTP의 미분). AS는 자화 방향에 덜 민감하다는 점 때문에 쓰는 격자라 RTP를 거치지 않고, 상방연속은 순서를 바꿔도 같아서 해당이 없습니다.">
+              경계·정점 격자(틸트, 미분 계열)를 RTP에서 계산 ⓘ
+            </span>
+          </label>
+          <div style={{ fontSize: 11, color: "#8a7a5c" }}>바꾼 뒤 위의 격자 버튼을 다시 누르면 적용됩니다.</div>
+        </div>
         <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"

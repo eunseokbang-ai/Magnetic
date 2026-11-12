@@ -54,6 +54,44 @@ REGIONAL_METHODS = ("none", "level", "plane", "quadratic")
 _REGIONAL_ORDER = {"plane": 1, "quadratic": 2}
 
 
+def robust_trend_surface(grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray, order: int = 1) -> np.ndarray:
+    """An order-N polynomial surface through the background of a gridded
+    field: fitted with Tukey biweights, iteratively reweighted, from the
+    median level, so that it follows the bulk of the cells and is not
+    pulled toward the anomalies standing on them. NaN where grid_values
+    is. See separate_regional for why a plain least-squares surface will
+    not do for this."""
+    values = np.asarray(grid_values, dtype=float)
+    finite = np.isfinite(values)
+    x2d, y2d = np.meshgrid(easting, northing)
+    x0, y0 = float(np.mean(easting)), float(np.mean(northing))
+    scale = max(float(np.ptp(easting)), float(np.ptp(northing)), 1.0)
+    A = _design_matrix(((x2d - x0) / scale)[finite], ((y2d - y0) / scale)[finite], order)
+    b = values[finite]
+    if len(b) <= A.shape[1]:
+        raise ValueError("추세면을 맞추기 위한 유효 셀이 부족합니다.")
+    # start from the median level rather than from least squares, so the
+    # first set of weights is not already tilted toward the anomalies
+    coeffs = np.zeros(A.shape[1])
+    coeffs[0] = float(np.median(b))
+    for _ in range(30):
+        resid = b - A @ coeffs
+        spread = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
+        if spread <= 0:
+            break
+        u = resid / (4.685 * spread)
+        w = np.where(np.abs(u) < 1.0, (1.0 - u * u) ** 2, 0.0)
+        sw = np.sqrt(w)
+        new, *_ = np.linalg.lstsq(A * sw[:, None], b * sw, rcond=None)
+        done = np.max(np.abs(A @ (new - coeffs))) < 1e-6 * max(spread, 1e-12)
+        coeffs = new
+        if done:
+            break
+    surface = np.full(values.shape, np.nan)
+    surface[finite] = A @ coeffs
+    return surface
+
+
 def separate_regional(
     grid_values: np.ndarray, easting: np.ndarray, northing: np.ndarray, method: str = "level"
 ) -> tuple[np.ndarray, np.ndarray, dict]:
@@ -79,11 +117,10 @@ def separate_regional(
       "quadratic"  a second-order surface. It can swallow an anomaly as
                    wide as the block; look at what it removed.
 
-    The surfaces are fitted robustly (Tukey biweight, iteratively
-    reweighted), unlike remove_regional_trend above, whose plain
-    least-squares surface is the display transform's: here the fit must
-    follow the background, not be pulled toward the anomalies standing on
-    it. A least-squares plane under one strong positive anomaly tilts up
+    The surfaces are fitted robustly (robust_trend_surface), unlike
+    remove_regional_trend above, a plain least-squares surface: the fit
+    must follow the background, not be pulled toward the anomalies
+    standing on it. A least-squares plane under one strong positive anomaly tilts up
     toward it and takes part of it away; the median does not move, and
     neither should the plane.
 
@@ -99,33 +136,7 @@ def separate_regional(
     elif method == "level":
         regional = np.where(finite, float(np.median(values[finite])), np.nan)
     else:
-        order = _REGIONAL_ORDER[method]
-        x2d, y2d = np.meshgrid(easting, northing)
-        x0, y0 = float(np.mean(easting)), float(np.mean(northing))
-        scale = max(float(np.ptp(easting)), float(np.ptp(northing)), 1.0)
-        A = _design_matrix(((x2d - x0) / scale)[finite], ((y2d - y0) / scale)[finite], order)
-        b = values[finite]
-        if len(b) <= A.shape[1]:
-            raise ValueError("추세면을 맞추기 위한 유효 셀이 부족합니다.")
-        # start from the median level rather than from least squares, so the
-        # first set of weights is not already tilted toward the anomalies
-        coeffs = np.zeros(A.shape[1])
-        coeffs[0] = float(np.median(b))
-        for _ in range(30):
-            resid = b - A @ coeffs
-            spread = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
-            if spread <= 0:
-                break
-            u = resid / (4.685 * spread)
-            w = np.where(np.abs(u) < 1.0, (1.0 - u * u) ** 2, 0.0)
-            sw = np.sqrt(w)
-            new, *_ = np.linalg.lstsq(A * sw[:, None], b * sw, rcond=None)
-            done = np.max(np.abs(A @ (new - coeffs))) < 1e-6 * max(spread, 1e-12)
-            coeffs = new
-            if done:
-                break
-        regional = np.full(values.shape, np.nan)
-        regional[finite] = A @ coeffs
+        regional = robust_trend_surface(values, easting, northing, _REGIONAL_ORDER[method])
     residual = values - regional
     has = bool(finite.any())
     info = {

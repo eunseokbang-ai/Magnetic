@@ -116,6 +116,25 @@ export default function MapReadout() {
           ⚠ {overlay.altitude_warning}
         </div>
       )}
+      {(overlay?.regional_removal?.method && overlay.regional_removal.method !== "none") || overlay?.derived_from_rtp?.requested ? (
+        // What the grid on the map was made from, when it is not the
+        // anomaly as it comes: a number on it means something else then.
+        <div data-testid="base-grid-readout" style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#4a3d28", background: "#f7f2e6", border: "1px solid #e6dac0", borderRadius: 6 }}>
+          {overlay.regional_removal?.method && overlay.regional_removal.method !== "none" && (
+            <div>
+              기준 격자: 광역 배경 제거 —{" "}
+              {overlay.regional_removal.method === "level"
+                ? `수준 ${overlay.regional_removal.level_nt >= 0 ? "+" : ""}${overlay.regional_removal.level_nt.toFixed(1)} nT`
+                : `${overlay.regional_removal.method === "plane" ? "1차" : "2차"} 추세면 ${overlay.regional_removal.min_nt.toFixed(0)} ~ ${overlay.regional_removal.max_nt.toFixed(0)} nT`}
+              {overlay.regional_removal.method !== "level" && ` (제거 전 중앙값 ${overlay.regional_removal.data_median_before_nt.toFixed(1)} nT)`}
+            </div>
+          )}
+          {overlay.derived_from_rtp?.applied && <div>RTP 기준 파생: 기준 격자를 RTP한 것에서 계산했습니다.</div>}
+          {overlay.derived_from_rtp?.requested && !overlay.derived_from_rtp.applied && overlay.derived_from_rtp.reason && (
+            <div style={{ color: "#8a7a5c" }}>RTP 기준 파생 미적용: {overlay.derived_from_rtp.reason}</div>
+          )}
+        </div>
+      ) : null}
       {overlay?.rtp_latitude_warning && (
         <div style={{ marginTop: 8, padding: "6px 8px", fontSize: 11, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6 }}>
           ⚠ {overlay.rtp_latitude_warning}

@@ -51,7 +51,7 @@ from magcore.transforms import (
     upward_continuation,
     vertical_derivative,
 )
-from magcore.trend import remove_regional_trend
+from magcore.trend import robust_trend_surface, separate_regional
 from pyproj import Transformer
 from magcore.export_formats import ExportError, geotiff_grid, geotiff_to_gpkg, grid_to_xyz_in_crs, reproject_geotiff
 from magcore.uncertainty import derived_confidence
@@ -76,6 +76,10 @@ LOW_CONFIDENCE = 0.5
 # GridMixin._altitude_warning for why that matters and when it is said.
 _LEVEL_PLANE_TRANSFORMS = frozenset({"rtp", "rte", "1vd", "2vd", "as", "thdr", "tilt", "theta", "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz", "upward_continuation"})
 ALTITUDE_SPREAD_FRACTION = 0.1
+# Products that are computed from the RTP of the base grid when the request
+# asks for it (TransformRequest.derive_from_rtp): the ones read for where
+# an edge or a peak is.
+_RTP_DERIVED_TRANSFORMS = frozenset({"1vd", "2vd", "thdr", "tilt", "theta", "dx", "dy", "dxx", "dyy", "dxy", "dxz", "dyz"})
 ALTITUDE_SPREAD_FLOOR_M = 3.0
 
 
@@ -400,14 +404,47 @@ class GridMixin:
             "5-1 비행 고도 정규화를 먼저 적용하는 것을 권장합니다."
         )
 
-    def _rtp_latitude_warning(self, transform: str) -> str | None:
+    def _regional_split(self, grid: GridResult, req) -> tuple[GridResult, dict]:
+        """The base grid with the request's background taken out of it,
+        and what was taken (processing/trend.py::separate_regional).
+
+        The background is fitted on the gridded survey as it comes from
+        _grid_for - before the continuation into empty ground, the
+        display boundary or any filter - so the map and every product
+        derived from it have had exactly the same surface removed."""
+        method = getattr(req, "regional_removal", None) or "none"
+        try:
+            residual, _regional, info = separate_regional(grid.values, grid.easting, grid.northing, method)
+        except ValueError as exc:
+            raise ProjectError(str(exc)) from exc
+        if method == "none":
+            return grid, info
+        return replace(grid, values=residual), info
+
+    def _derives_from_rtp(self, req) -> bool:
+        return bool(getattr(req, "derive_from_rtp", False)) and getattr(req, "transform", None) in _RTP_DERIVED_TRANSFORMS
+
+    def _rtp_derivation_report(self, req) -> dict:
+        """Whether this product was computed from the RTP of the base grid,
+        and if it was asked for and was not, why."""
+        requested = bool(getattr(req, "derive_from_rtp", False))
+        applied = self._derives_from_rtp(req)
+        reason = None
+        if requested and not applied:
+            reason = {
+                "as": "해석신호(AS)는 자화 방향에 덜 민감하다는 점 때문에 쓰는 격자라, RTP를 거치지 않고 기준 격자에서 계산합니다.",
+                "upward_continuation": "상향연속은 RTP와 순서를 바꿔도 결과가 같아 해당이 없습니다.",
+            }.get(req.transform, "이 변환에는 해당이 없습니다.")
+        return {"requested": requested, "applied": applied, "reason": reason}
+
+    def _rtp_latitude_warning(self, transform: str, via_rtp: bool = False) -> str | None:
         """RTP's operator diverges toward the magnetic equator (see
         processing/transforms.py::reduction_to_pole) - the amplitude cap
         there bounds the blowup, but a low-inclination RTP map is still
         unreliable and streaky along strike. Purely informational, and
         points at RTE, which is stable at any latitude and is already
         offered as its own transform."""
-        if transform != "rtp" or self.inclination_deg is None:
+        if (transform != "rtp" and not via_rtp) or self.inclination_deg is None:
             return None
         if abs(self.inclination_deg) >= RTP_LOW_LATITUDE_INCLINATION_DEG:
             return None
@@ -447,6 +484,7 @@ class GridMixin:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid, regional_info = self._regional_split(grid, req)
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
@@ -456,7 +494,8 @@ class GridMixin:
             grid.northing,
             self.utm_epsg,
             cmap_name=cmap,
-            symmetric=(req.value == "anomaly"),
+            # a residual is about zero whatever it was the residual of
+            symmetric=(req.value == "anomaly" or regional_info["method"] != "none"),
             vmin=req.vmin,
             vmax=req.vmax,
             hillshade=req.hillshade,
@@ -471,6 +510,7 @@ class GridMixin:
         overlay["cell_size_m"] = grid.cell_size_m
         overlay["cell_size_guideline_warning"] = self._cell_size_guideline_warning(grid.cell_size_m)
         overlay["striping"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
+        overlay["regional_removal"] = regional_info
         # contours always come with the grid; the map's checkbox only shows or
         # hides them, so toggling it never needs a re-grid
         overlay["contours"] = compute_contours(
@@ -561,6 +601,11 @@ class GridMixin:
         if transform in ("rtp", "rte") and inc is None:
             raise ProjectError("자기장 방향을 알 수 없어 극자화 변환의 신뢰도를 계산할 수 없습니다.")
         components = [linear[n] for n in names]
+        if components and self._derives_from_rtp(req):
+            if inc is None:
+                raise ProjectError("자기장 방향을 알 수 없어 극자화 변환의 신뢰도를 계산할 수 없습니다.")
+            to_pole = linear["rtp"]
+            components = [(lambda v, op=op: op(to_pole(v))) for op in components]
         # the same pre-smoothing the product itself gets: it widens the footprint, so it belongs in it
         if components and transform in _RESOLUTION_LIMITED_TRANSFORMS and getattr(req, "derivative_presmooth", True) and self.line_spacing_m:
             factor = getattr(req, "derivative_presmooth_factor", 1.0)
@@ -607,6 +652,8 @@ class GridMixin:
             resolved_max_distance,
             effective_smooth_wavelength,
             req.transform,
+            getattr(req, "regional_removal", "none"),
+            self._derives_from_rtp(req),
             req.continuation_height_m,
             req.trend_order,
             req.microlevel_strength,
@@ -670,6 +717,12 @@ class GridMixin:
         # ground the error a derivative inherits from the boundary drops
         # from 19-47x the true signal to 1.4-2.2x, with the strongest
         # anomalies keeping 100.0% of their amplitude.
+        # The base grid first: the anomaly, or its residual once a
+        # background has been taken out (see _regional_split). Before the
+        # continuation, which then fits its source layer to the residual
+        # too, and before any FFT, which a level or a slope left in the
+        # grid only hands a step at the edges to ring on.
+        grid, _regional_info = self._regional_split(grid, req)
         if transform in _CONTINUATION_TRANSFORMS and getattr(req, "boundary_continuation", True):
             grid = replace(grid, values=source_continuation_fill(grid.values))
         # Then, optionally, replace the field itself with what a source
@@ -697,6 +750,10 @@ class GridMixin:
             # etc.), which amplify whatever line-parallel corrugation is
             # still present in the input grid.
             grid = self._maybe_pre_level(grid, req)
+        if self._derives_from_rtp(req):
+            # the edge- and peak-reading products, made from the field as it
+            # would be measured at the pole: see TransformRequest.derive_from_rtp
+            grid = replace(grid, values=reduction_to_pole(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg))
         if transform == "rtp":
             return reduction_to_pole(grid.values, grid.cell_size_m, self.inclination_deg, self.declination_deg), True
         if transform == "rte":
@@ -731,8 +788,14 @@ class GridMixin:
             height_m = req.continuation_height_m or (2.0 * grid.cell_size_m)
             return upward_continuation(grid.values, grid.cell_size_m, height_m), True
         if transform == "detrend":
-            residual, _trend = remove_regional_trend(grid.values, grid.easting, grid.northing, order=req.trend_order)
-            return residual, True
+            # robust, like the base grid's own background removal: a plain
+            # least-squares surface leans toward the strongest anomalies and
+            # takes part of them away (processing/trend.py::separate_regional)
+            try:
+                surface = robust_trend_surface(grid.values, grid.easting, grid.northing, order=req.trend_order)
+            except ValueError as exc:
+                raise ProjectError(str(exc)) from exc
+            return grid.values - surface, True
         if transform == "microlevel":
             if not self.line_spacing_m:
                 raise ProjectError("측선 간격을 추정할 수 없어 micro-leveling을 적용할 수 없습니다 (측선이 2개 이상 필요).")
@@ -914,7 +977,9 @@ class GridMixin:
         # transform introduced it or only revealed what was already there.
         overlay["striping"] = self._striping_diagnostic(values, grid.cell_size_m)
         overlay["striping_base_grid"] = self._striping_diagnostic(grid.values, grid.cell_size_m)
-        overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform)
+        overlay["rtp_latitude_warning"] = self._rtp_latitude_warning(req.transform, self._derives_from_rtp(req))
+        overlay["regional_removal"] = self._regional_split(grid, req)[1]
+        overlay["derived_from_rtp"] = self._rtp_derivation_report(req)
         overlay["altitude_warning"] = self._altitude_warning(req.transform)
         overlay["raw_cell_derivative_warning"] = self._raw_cell_derivative_warning(req)
         overlay["derivative_presmooth"] = self._presmooth_report(req, grid.cell_size_m)
@@ -935,13 +1000,15 @@ class GridMixin:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._regional_split(grid, req)[0]
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         if req.colored:
             cmap = req.cmap or (DEFAULT_CMAPS["anomaly_grid"] if req.value == "anomaly" else DEFAULT_CMAPS["tmi_grid"])
             return self._in_export_crs(grid_to_geotiff_bytes_colored(
                 grid.values, grid.easting, grid.northing, self.utm_epsg,
-                cmap_name=cmap, symmetric=(req.value == "anomaly"), vmin=req.vmin, vmax=req.vmax,
+                cmap_name=cmap, symmetric=(req.value == "anomaly" or (getattr(req, "regional_removal", None) or "none") != "none"),
+                vmin=req.vmin, vmax=req.vmax,
                 hillshade=req.hillshade, hillshade_azimuth_deg=req.hillshade_azimuth_deg,
                 hillshade_altitude_deg=req.hillshade_altitude_deg, hillshade_exaggeration=req.hillshade_exaggeration,
                 stretch=req.stretch,
@@ -972,6 +1039,7 @@ class GridMixin:
             values = self._apply_display_boundary(values, grid)
             values, _margin = self._boundary_margin(values, grid, req, with_outline=False)
             return values, grid
+        grid = self._regional_split(grid, req)[0]
         grid = self._maybe_pre_level(grid, req)
         return self._apply_display_boundary(grid.values, grid), grid
 
@@ -1030,6 +1098,7 @@ class GridMixin:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._regional_split(grid, req)[0]
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         return self._xyz_bytes(grid.values, grid, req)
@@ -1049,6 +1118,7 @@ class GridMixin:
             req.value, req.cell_size_m, req.method, req.max_distance_m,
             req.along_line_smooth, req.along_line_smooth_wavelength_m,
         )
+        grid = self._regional_split(grid, req)[0]
         grid = self._maybe_pre_level(grid, req)
         grid = replace(grid, values=self._apply_display_boundary(grid.values, grid))
         return self._grd_bytes(grid.values, grid, req)

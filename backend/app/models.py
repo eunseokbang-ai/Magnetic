@@ -435,6 +435,14 @@ class GridRequest(_ExportCrs, HillshadeParams, ContourParams):
     # estimated line spacing; see processing.gridding._along_line_lowpass.
     along_line_smooth: bool = True
     along_line_smooth_wavelength_m: Optional[float] = Field(None, gt=0)
+    # The base grid: the anomaly as it is ("none"), or with a background
+    # taken out of it first - its median ("level") or a robust first- or
+    # second-order surface. Everything made from the grid is then made
+    # from that residual: the map, its exports, and (TransformRequest)
+    # every derived grid. See processing/trend.py::separate_regional and
+    # GridMixin._regional_split. Off by default: results stay what they
+    # were until it is asked for.
+    regional_removal: Literal["none", "level", "plane", "quadratic"] = "none"
     # See TransformRequest.microlevel_pre_apply - applies here too so the
     # plain "그리드(원본)" view can show the same pre-leveled surface that
     # derived transforms are computed from, instead of only being
@@ -474,6 +482,17 @@ class TransformRequest(_ExportCrs, HillshadeParams, ContourParams):
     continuation_height_m: Optional[float] = Field(None, gt=0)
     # transform="detrend" only: order of the polynomial regional surface removed (1=plane, 2=quadratic, 3=cubic).
     trend_order: int = Field(1, ge=1, le=3)
+    # The base grid's background removal - see GridRequest.regional_removal.
+    regional_removal: Literal["none", "level", "plane", "quadratic"] = "none"
+    # Compute the edge- and peak-reading products (tilt, theta, the
+    # vertical and horizontal derivatives) from the base grid reduced to
+    # the pole instead of from the base grid itself, which is how they are
+    # conventionally made: on RTP an edge sits over the edge of the body,
+    # on the anomaly it sits where the inclination pushed it. Not applied
+    # to the analytic signal (used because it depends little on the
+    # magnetization direction; reducing it first would undo that), nor to
+    # products RTP commutes with. See GridMixin._RTP_DERIVED_TRANSFORMS.
+    derive_from_rtp: bool = False
     # Low-pass the base grid to its real across-line resolution before
     # any derivative-based transform (see
     # processing/transforms.py:limit_to_line_spacing_resolution). On by
